@@ -186,8 +186,11 @@ services:
     restart: always
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./data/certbot/www:/var/www/certbot:ro
+      - ./data/certbot/conf:/etc/letsencrypt:ro
       - ./data/uploads:/var/www/uploads:ro
       - ./data/staticfiles:/var/www/staticfiles:ro
     depends_on:

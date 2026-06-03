@@ -125,6 +125,12 @@ http://localhost:8888/
 | `DJANGO_SECRET_KEY` | Django secret key. 실제 운영에서는 반드시 변경해야 합니다. |
 | `DJANGO_ALLOWED_HOSTS` | 접속을 허용할 도메인 또는 IP |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | 브라우저 요청을 신뢰할 origin |
+| `LETSENCRYPT_DOMAIN` | Let’s Encrypt 인증서를 발급받을 운영 도메인 |
+| `LETSENCRYPT_EMAIL` | Let’s Encrypt 인증서 발급/만료 알림 이메일 |
+| `DJANGO_SECURE_PROXY_SSL_HEADER` | Nginx HTTPS 프록시 헤더를 Django가 신뢰할지 여부 |
+| `DJANGO_SECURE_SSL_REDIRECT` | Django 레벨 HTTPS 리다이렉트 여부 |
+| `DJANGO_SESSION_COOKIE_SECURE` | 세션 쿠키를 HTTPS 전용으로 설정 |
+| `DJANGO_CSRF_COOKIE_SECURE` | CSRF 쿠키를 HTTPS 전용으로 설정 |
 | `POSTGRES_*` | PostgreSQL 접속 정보 |
 | `HF_TOKEN` | 모델 다운로드에 필요한 Hugging Face token |
 | `EMBEDDING_MODEL` | 임베딩 모델. 기본값은 BGE-M3 |
@@ -136,6 +142,8 @@ http://localhost:8888/
 | `RAG_RETRIEVAL_THRESHOLD` | RAG dense similarity threshold |
 | `RAG_EVIDENCE_LIMIT` | RAG prompt에 넣을 최대 근거 수 |
 | `QUERY_FRONTEND_MODE` | Query parser 사용 방식. 기본은 passthrough |
+
+운영 HTTPS 인증서는 별도 [docker-compose.certbot.yml](docker-compose.certbot.yml)로 발급/갱신합니다. Nginx는 `./data/certbot/www`와 `./data/certbot/conf`만 공유해서 challenge 파일과 인증서를 읽습니다. `LETSENCRYPT_DOMAIN`은 [nginx/default.conf](nginx/default.conf)의 `server_name` 및 인증서 경로 도메인과 같아야 합니다.
 
 ## 테스트
 
