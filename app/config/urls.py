@@ -25,6 +25,11 @@ from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from document_ai.search.views import SandboxPageView
 
+handler400 = "accounts.views.bad_request"
+handler403 = "accounts.views.permission_denied"
+handler404 = "accounts.views.page_not_found"
+handler500 = "accounts.views.server_error"
+
 schema_view = get_schema_view(
     openapi.Info(
         title="Openshelf API",

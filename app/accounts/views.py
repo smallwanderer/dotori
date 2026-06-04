@@ -1,7 +1,11 @@
+from pathlib import Path
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView, LogoutView
+from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
+from django.template.loader import get_template
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.conf import settings
@@ -10,6 +14,100 @@ from .forms import EmailAuthenticationForm, ResendVerificationEmailForm, UserReg
 from .models import User, APIToken, SyncQuota
 from .services import send_account_activation_email
 from .tokens import account_activation_token
+
+
+TERMS_VERSION = "2026-06-03"
+PRIVACY_VERSION = "2026-06-03"
+
+LEGAL_DOCUMENTS = {
+    "terms": {
+        "title": "Terms of Use",
+        "filename": "terms.md",
+        "version": TERMS_VERSION,
+    },
+    "privacy": {
+        "title": "Privacy Policy",
+        "filename": "privacy.md",
+        "version": PRIVACY_VERSION,
+    },
+}
+
+ERROR_DETAILS = {
+    400: {
+        "title": "잘못된 요청",
+        "message": "요청 내용을 처리할 수 없습니다. 입력 내용이나 요청 주소를 확인해 주세요.",
+    },
+    403: {
+        "title": "접근 권한 없음",
+        "message": "이 페이지 또는 작업에 접근할 권한이 없습니다.",
+    },
+    404: {
+        "title": "페이지를 찾을 수 없음",
+        "message": "요청한 페이지가 없거나 이동 또는 삭제되었습니다.",
+    },
+    500: {
+        "title": "서버 오류",
+        "message": "요청 처리 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+    },
+}
+
+
+def _render_error(request, status_code, *, message=None):
+    details = ERROR_DETAILS[status_code]
+    content = get_template("errors/error.html").render(
+        {
+            "status_code": status_code,
+            "error_title": details["title"],
+            "error_message": message or details["message"],
+        }
+    )
+    return HttpResponse(content, status=status_code)
+
+
+def bad_request(request, exception=None):
+    return _render_error(request, 400)
+
+
+def permission_denied(request, exception=None):
+    return _render_error(request, 403)
+
+
+def page_not_found(request, exception=None):
+    return _render_error(request, 404)
+
+
+def server_error(request):
+    return _render_error(request, 500)
+
+
+def csrf_failure(request, reason=""):
+    return _render_error(
+        request,
+        403,
+        message="보안 확인에 실패했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.",
+    )
+
+
+def legal_document_view(request, document):
+    spec = LEGAL_DOCUMENTS.get(document)
+    if spec is None:
+        raise Http404("Legal document not found.")
+
+    document_path = Path(__file__).resolve().parent / "legal" / spec["filename"]
+    try:
+        content = document_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise Http404("Legal document not found.")
+
+    return render(
+        request,
+        "accounts/legal_document.html",
+        {
+            "title": spec["title"],
+            "content": content,
+            "version": spec["version"],
+        },
+    )
 
 
 def signup_view(request):
@@ -190,5 +288,3 @@ def settings_view(request):
         "file_count": file_count,
     }
     return render(request, "accounts/settings.html", ctx)
-
-

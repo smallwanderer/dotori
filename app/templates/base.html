@@ -403,7 +403,7 @@
                 {% endblock %}
             </nav>
 
-            <!-- 통합 검색 바 -->
+            {% comment %} <!-- 통합 검색 바 -->
             <div class="global-search" id="globalSearch">
                 <span class="global-search-icon">
                     <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -412,7 +412,7 @@
                 <div class="search-results-dropdown" id="searchDropdown">
                     <div class="search-hint" data-i18n-html="globalSearchHint">검색어를 입력하세요. <strong>#태그명</strong>으로 태그 검색 가능</div>
                 </div>
-            </div>
+            </div> {% endcomment %}
 
             <div class="navbar-actions">
                 <button type="button" class="theme-toggle language-toggle" id="languageToggle" title="Korean / English" data-i18n-title="languageToggleTitle">ENG</button>

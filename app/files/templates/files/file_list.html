@@ -1006,7 +1006,7 @@
 <!-- 브레드크럼 -->
 <div class="breadcrumb" id="breadcrumb" 
      ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'root')">
-  <a href="{% url 'files:index' %}">📁 내 파일</a>
+  <a href="{% url 'files:index' %}">📁 Home</a>
   {% if breadcrumbs %}
     {% for crumb in breadcrumbs %}
       <span class="sep">/</span>
@@ -1023,7 +1023,7 @@
 </div>
 
 <div class="section-header">
-  <h2>{% if current_folder_name %}{{ current_folder_name }}{% else %}모든 파일{% endif %}</h2>
+  <h2>{% if current_folder_name %}{{ current_folder_name }}{% else %}<span data-i18n="allFiles">모든 파일</span>{% endif %}</h2>
   <div class="section-actions" style="display: flex; align-items: center; gap: 12px;">
     <span class="meta-text" id="fileCount" style="margin-right: 4px;">0개 파일</span>
     <input type="file" id="inlineUploadInput" multiple style="display:none;">
@@ -1171,8 +1171,8 @@
 <div class="recent-history-section" id="recentHistorySection" style="display: none;">
   <div class="recent-history-header">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-    <h3 style="margin:0; font-size: 14px;">최근 AI 검색 기록</h3>
-    <a href="{% url 'files:page_ai_history' %}" style="margin-left:auto; font-size:12px; color:var(--accent); text-decoration:none; font-weight: 500;">전체 보기 &rarr;</a>
+    <h3 style="margin:0; font-size: 14px;" data-i18n="recentAiHistory">최근 AI 검색 기록</h3>
+    <a href="{% url 'files:page_ai_history' %}" style="margin-left:auto; font-size:12px; color:var(--accent); text-decoration:none; font-weight: 500;"><span data-i18n="viewAll">전체 보기</span> &rarr;</a>
   </div>
   <div class="recent-history-grid" id="recentHistoryGrid">
     <!-- JS 렌더링 -->
@@ -1283,6 +1283,8 @@
       newFolder: '새 폴더',
       normalSearch: '일반 검색',
       aiSearch: 'AI 검색',
+      recentAiHistory: '최근 AI 검색 기록',
+      viewAll: '전체 보기',
       searchPlaceholder: '파일 검색...',
       aiPlaceholder: '문서 본문 AI 검색...',
       move: '이동',
@@ -1319,6 +1321,8 @@
       newFolder: 'New folder',
       normalSearch: 'Search',
       aiSearch: 'AI search',
+      recentAiHistory: 'Recent AI search history',
+      viewAll: 'View all',
       searchPlaceholder: 'Search files...',
       aiPlaceholder: 'Search document content with AI...',
       move: 'Move',

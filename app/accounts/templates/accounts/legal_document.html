@@ -1,0 +1,17 @@
+{% extends "accounts/base.html" %}
+
+{% block title %}{{ title }} | Openshelf{% endblock %}
+{% block auth_card_class %}legal-card{% endblock %}
+
+{% block auth_header %}
+<h1>{{ title }}</h1>
+<p>회원가입 전에 내용을 확인해 주세요. Version {{ version }}</p>
+{% endblock %}
+
+{% block auth_body %}
+<article class="legal-content">{{ content }}</article>
+{% endblock %}
+
+{% block auth_footer %}
+<a href="{% url 'accounts:signup' %}">Back to signup</a>
+{% endblock %}

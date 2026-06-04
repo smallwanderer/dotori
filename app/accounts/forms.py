@@ -5,6 +5,17 @@ from .models import User
 
 
 class UserRegistrationForm(forms.ModelForm):
+    terms_agreed = forms.BooleanField(
+        required=True,
+        widget=forms.CheckboxInput(attrs={"class": "auth-checkbox"}),
+        error_messages={"required": "You must agree to the Terms of Use."},
+    )
+    privacy_agreed = forms.BooleanField(
+        required=True,
+        widget=forms.CheckboxInput(attrs={"class": "auth-checkbox"}),
+        error_messages={"required": "You must agree to the Privacy Policy."},
+        help_text="We use your personal information to provide and improve our services.",
+    )
     password = forms.CharField(
         widget=forms.PasswordInput(
             attrs={
