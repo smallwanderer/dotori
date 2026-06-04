@@ -1,4 +1,4 @@
-name: openshelf-certbot
+name: dotori-certbot
 
 services:
   certbot:

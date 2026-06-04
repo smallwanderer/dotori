@@ -1,7 +1,7 @@
 {% extends "files/base.html" %}
 {% load static %}
 
-{% block title %}{{ file.name }} | Openshelf{% endblock %}
+{% block title %}{{ file.name }} | 도토리 문서{% endblock %}
 
 {% block extra_head %}
 {{ block.super }}
@@ -94,7 +94,7 @@
     .viewer-content { background: #0f172a; }
   }
   html.dark .viewer-content { background: #0f172a; }
-  html.dark .tag-chip { background: rgba(37, 99, 235, 0.2); border-color: rgba(37, 99, 235, 0.4); color: #60A5FA; }
+  html.dark .tag-chip { background: rgba(168, 102, 56, 0.2); border-color: rgba(168, 102, 56, 0.4); color: #DDA574; }
 
   /* Right: Meta Section */
   .meta-section {
@@ -128,15 +128,15 @@
     align-items: center;
     gap: 6px;
     padding: 4px 10px;
-    background: #EFF6FF;
-    color: #2563EB;
-    border: 1px solid #BFDBFE;
+    background: #F5E5D3;
+    color: #A86638;
+    border: 1px solid #E4C8AA;
     border-radius: 999px;
     font-size: 12px;
     font-weight: 500;
   }
   @media (prefers-color-scheme: dark) {
-    .tag-chip { background: rgba(37, 99, 235, 0.2); border-color: rgba(37, 99, 235, 0.4); color: #60A5FA; }
+    .tag-chip { background: rgba(168, 102, 56, 0.2); border-color: rgba(168, 102, 56, 0.4); color: #DDA574; }
   }
   .tag-remove {
     cursor: pointer;
@@ -405,8 +405,8 @@
 {% block extra_scripts %}
 {{ block.super }}
 <script>
-  if (window.OpenShelfI18n) {
-    window.OpenShelfI18n.register({
+  if (window.DotoriI18n) {
+    window.DotoriI18n.register({
       ko: {
         download: '다운로드',
         previewUnavailable: '미리보기 준비 중이거나 지원하지 않는 형식입니다.',
@@ -563,7 +563,7 @@
     // Add Tag Input
     const wrap = document.createElement('div');
     wrap.className = 'tag-input-wrap';
-    wrap.innerHTML = `<input type="text" class="tag-input" placeholder="${window.OpenShelfI18n ? window.OpenShelfI18n.t('addTagPlaceholder') : '+ 태그 추가'}" onkeydown="handleTagInput(event)">`;
+    wrap.innerHTML = `<input type="text" class="tag-input" placeholder="${window.DotoriI18n ? window.DotoriI18n.t('addTagPlaceholder') : '+ 태그 추가'}" onkeydown="handleTagInput(event)">`;
     list.appendChild(wrap);
   }
 
@@ -604,10 +604,10 @@
       },
       body: JSON.stringify(payload)
     }).then(res => res.json()).then(data => {
-      if (!data.ok) alert(data.errors ? data.errors.join('\\n') : (window.OpenShelfI18n ? window.OpenShelfI18n.t('updateFailed') : '업데이트 실패'));
+      if (!data.ok) alert(data.errors ? data.errors.join('\\n') : (window.DotoriI18n ? window.DotoriI18n.t('updateFailed') : '업데이트 실패'));
       return data.ok;
     }).catch(err => {
-      alert(window.OpenShelfI18n ? window.OpenShelfI18n.t('errorOccurredAlert') : '오류가 발생했습니다.');
+      alert(window.DotoriI18n ? window.DotoriI18n.t('errorOccurredAlert') : '오류가 발생했습니다.');
       return false;
     });
   }
@@ -631,7 +631,7 @@
   }
 
   function deleteFile(uid) {
-    const msg = window.OpenShelfI18n ? window.OpenShelfI18n.t('confirmTrash') : '이 파일을 휴지통으로 이동하시겠습니까?';
+    const msg = window.DotoriI18n ? window.DotoriI18n.t('confirmTrash') : '이 파일을 휴지통으로 이동하시겠습니까?';
     if (confirm(msg)) {
       fetch(`/files/api/v1/${uid}/delete/`, {
         method: 'POST',
@@ -646,8 +646,8 @@
     const button = document.getElementById('aiProcessingToggleBtn');
     if (button) {
       button.textContent = aiProcessingEnabled 
-        ? (window.OpenShelfI18n ? window.OpenShelfI18n.t('disableAi') : 'AI 분석 제외')
-        : (window.OpenShelfI18n ? window.OpenShelfI18n.t('enableAi') : 'AI 분석 허용');
+        ? (window.DotoriI18n ? window.DotoriI18n.t('disableAi') : 'AI 분석 제외')
+        : (window.DotoriI18n ? window.DotoriI18n.t('enableAi') : 'AI 분석 허용');
     }
   }
 
@@ -661,13 +661,13 @@
       body: JSON.stringify({ enabled: !aiProcessingEnabled })
     }).then(res => res.json()).then(data => {
       if (!data.ok) {
-        alert(data.errors ? data.errors.join('\n') : (window.OpenShelfI18n ? window.OpenShelfI18n.t('updateFailed') : '업데이트 실패'));
+        alert(data.errors ? data.errors.join('\n') : (window.DotoriI18n ? window.DotoriI18n.t('updateFailed') : '업데이트 실패'));
         return;
       }
       aiProcessingEnabled = data.enabled;
       window.location.reload();
     }).catch(() => {
-      alert(window.OpenShelfI18n ? window.OpenShelfI18n.t('errorOccurredAlert') : '오류가 발생했습니다.');
+      alert(window.DotoriI18n ? window.DotoriI18n.t('errorOccurredAlert') : '오류가 발생했습니다.');
     });
   }
 
@@ -716,7 +716,7 @@
             const htmlContent = marked.parse(data.text);
             vc.innerHTML = `
               <div style="background:#FEF3C7; color:#92400E; padding:10px 14px; border-radius:6px; font-size:13px; margin-bottom:20px; border:1px solid #FCD34D;">
-                ${window.OpenShelfI18n ? window.OpenShelfI18n.t('previewWarning') : '💡 참고: 이 파일은 브라우저 미리보기를 지원하지 않아 <strong>AI가 추출한 텍스트 구조</strong>로 보여집니다. 원본 양식이 깨져 보일 수 있습니다.'}
+                ${window.DotoriI18n ? window.DotoriI18n.t('previewWarning') : '💡 참고: 이 파일은 브라우저 미리보기를 지원하지 않아 <strong>AI가 추출한 텍스트 구조</strong>로 보여집니다. 원본 양식이 깨져 보일 수 있습니다.'}
               </div>
               <div style="color:var(--text); line-height:1.6;" class="markdown-body">
                 ${htmlContent}
@@ -733,9 +733,9 @@
               <p style="text-align:center; margin-bottom: 10px;">
                 <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.5;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
               </p>
-              <p>${window.OpenShelfI18n ? window.OpenShelfI18n.t('previewUnavailable') : '미리보기 준비 중이거나 지원하지 않는 형식입니다.'}</p>
+              <p>${window.DotoriI18n ? window.DotoriI18n.t('previewUnavailable') : '미리보기 준비 중이거나 지원하지 않는 형식입니다.'}</p>
               <div style="text-align:center; margin-top:20px;">
-                <a href="${downloadUrl}" class="btn btn-primary">${window.OpenShelfI18n ? window.OpenShelfI18n.t('downloadDirectly') : '직접 다운로드하여 열기'}</a>
+                <a href="${downloadUrl}" class="btn btn-primary">${window.DotoriI18n ? window.DotoriI18n.t('downloadDirectly') : '직접 다운로드하여 열기'}</a>
               </div>
             </div>
           `;
@@ -750,7 +750,7 @@
     renderViewer();
   });
 
-  document.addEventListener('openshelf:languagechange', () => {
+  document.addEventListener('dotori:languagechange', () => {
     renderTags();
     renderViewer();
     renderAIProcessingState();

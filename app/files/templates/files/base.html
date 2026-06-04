@@ -39,7 +39,7 @@
   .rag-entry-card:hover,
   .rag-entry-card.active {
     border-color: var(--accent);
-    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.11);
+    box-shadow: 0 6px 18px rgba(168, 102, 56, 0.13);
     transform: translateY(-1px);
   }
   .rag-entry-card img {
@@ -368,8 +368,8 @@
 {% block extra_scripts %}
 {{ block.super }}
 <script>
-  if (window.OpenShelfI18n) {
-    window.OpenShelfI18n.register({
+  if (window.DotoriI18n) {
+    window.DotoriI18n.register({
       ko: {
         sidebarUpload: '+ 파일 업로드',
         ragQuestion: 'RAG 질문',

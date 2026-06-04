@@ -1,6 +1,6 @@
-# OpenShelf
+# 도토리 문서
 
-**OpenShelf는 개인 또는 소규모 팀이 직접 운영할 수 있는 가벼운 문서 검색 및 RAG 시스템입니다.**
+**도토리 문서는 개인 또는 소규모 팀이 직접 운영할 수 있는 가벼운 문서 검색 및 RAG 시스템입니다.**
 
 파일 저장소, 문서 파싱, 하이브리드 벡터 검색, RAG 답변 생성을 하나의 Docker Compose 환경에서 실행할 수 있도록 구성되어 있습니다. 서버에서도 실행할 수 있고, Windows에서는 Docker Desktop과 WSL2 기반으로 실행할 수 있습니다.
 
@@ -8,7 +8,7 @@
 
 ## 무엇을 하는 시스템인가요?
 
-OpenShelf는 개인 문서나 팀 문서를 웹 화면에서 관리하고, 업로드된 문서에 대해 검색과 질문 답변을 수행하는 시스템입니다.
+도토리 문서는 개인 문서나 팀 문서를 웹 화면에서 관리하고, 업로드된 문서에 대해 검색과 질문 답변을 수행하는 시스템입니다.
 
 - 파일과 폴더를 웹 UI에서 관리합니다.
 - 문서를 비동기 worker가 파싱하고 임베딩합니다.
@@ -82,8 +82,8 @@ Windows에서는 Docker Desktop의 WSL2 backend 사용을 권장합니다.
 ## 빠른 시작
 
 ```bash
-git clone https://github.com/smallwanderer/local-openshelf.git
-cd local-openshelf
+git clone https://github.com/smallwanderer/dotori.git
+cd dotori
 cp .env.example .env
 docker compose up -d --build
 docker compose exec app python manage.py createsuperuser

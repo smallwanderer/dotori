@@ -1,11 +1,13 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="ko">
-<script>if(localStorage.getItem('openshelf-theme')==='dark')document.documentElement.classList.add('dark');</script>
+<script>if(localStorage.getItem('dotori-theme')==='dark')document.documentElement.classList.add('dark');</script>
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Openshelf{% endblock %}</title>
+    <title>{% block title %}도토리 문서{% endblock %}</title>
+    <link rel="icon" href="{% static 'assets/brand/dotori-mark.svg' %}" type="image/svg+xml">
 
     <!-- Google Fonts: Pretendard 계열 대체 (Noto Sans KR + DM Sans) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -24,31 +26,35 @@
 
         :root {
             --font: 'DM Sans', 'Noto Sans KR', sans-serif;
-            --bg: #F7F7F5;
-            --surface: #FFFFFF;
-            --border: #E4E4E0;
-            --text: #1A1A18;
-            --muted: #6B6B66;
-            --accent: #2563EB;
-            --accent-bg: #EFF4FF;
+            --bg: #FBF7F1;
+            --surface: #FFFDFC;
+            --surface-warm: #F6EBDD;
+            --border: #E8D8C6;
+            --text: #34271E;
+            --muted: #786759;
+            --accent: #A86638;
+            --accent-hover: #8F542D;
+            --accent-bg: #F5E5D3;
             --danger: #DC2626;
             --success: #16A34A;
             --warn: #D97706;
-            --radius: 10px;
-            --radius-lg: 14px;
-            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
-            --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            --radius: 12px;
+            --radius-lg: 18px;
+            --shadow-sm: 0 1px 3px rgba(92, 58, 34, 0.07);
+            --shadow: 0 8px 24px rgba(92, 58, 34, 0.09);
         }
 
         /* Dark Mode */
         html.dark {
-            --bg: #111113;
-            --surface: #1C1C1E;
-            --border: #2C2C2E;
-            --text: #E5E5E7;
-            --muted: #8E8E93;
-            --accent: #3B82F6;
-            --accent-bg: rgba(59, 130, 246, 0.15);
+            --bg: #211A16;
+            --surface: #2B221D;
+            --surface-warm: #38291F;
+            --border: #4A392E;
+            --text: #F6EEE6;
+            --muted: #B7A596;
+            --accent: #D59A68;
+            --accent-hover: #E5AE7B;
+            --accent-bg: rgba(213, 154, 104, 0.16);
             --danger: #EF4444;
             --success: #22C55E;
             --warn: #F59E0B;
@@ -69,7 +75,8 @@
 
         /* ── 네비게이션 ── */
         .navbar {
-            background: var(--surface);
+            background: color-mix(in srgb, var(--surface) 94%, transparent);
+            backdrop-filter: blur(14px);
             border-bottom: 1px solid var(--border);
             position: sticky;
             top: 0;
@@ -87,30 +94,34 @@
         }
 
         .navbar-brand {
-            font-size: 17px;
+            font-size: 16px;
             font-weight: 600;
             color: var(--text);
             text-decoration: none;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
             letter-spacing: -0.3px;
         }
 
         .navbar-brand .brand-icon {
-            width: 26px;
-            height: 26px;
-            background: var(--accent);
-            border-radius: 7px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            width: 32px;
+            height: 32px;
+            display: block;
         }
 
-        .navbar-brand .brand-icon svg {
-            width: 14px;
-            height: 14px;
-            fill: white;
+        .navbar-brand .brand-copy {
+            display: grid;
+            line-height: 1.05;
+            gap: 3px;
+        }
+
+        .navbar-brand .brand-copy small {
+            color: var(--muted);
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
         }
 
         .navbar-nav {
@@ -175,7 +186,7 @@
         }
 
         .btn-primary:hover {
-            background: #1d4ed8;
+            background: var(--accent-hover);
         }
 
         /* ── 메시지 알림 ── */
@@ -220,14 +231,14 @@
         .message.info {
             background: var(--accent-bg);
             color: var(--accent);
-            border-color: #BFDBFE;
+            border-color: #E4C8AA;
         }
 
         /* 태그 없으면 info 스타일 기본 적용 */
         .message:not([class*="success"]):not([class*="error"]):not([class*="warning"]) {
             background: var(--accent-bg);
             color: var(--accent);
-            border-color: #BFDBFE;
+            border-color: #E4C8AA;
         }
 
         /* ── 메인 컨텐츠 ── */
@@ -287,7 +298,7 @@
         }
         .global-search input:focus {
             border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
+            box-shadow: 0 0 0 3px rgba(168, 102, 56,0.12);
         }
         .global-search input::placeholder { color: var(--muted); }
         .global-search-icon {
@@ -386,13 +397,11 @@
     <nav class="navbar">
         <div class="navbar-inner">
             <a href="/" class="navbar-brand">
-                <span class="brand-icon">
-                    <svg viewBox="0 0 24 24">
-                        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-                        <polyline points="13 2 13 9 20 9" style="fill:none;stroke:white;stroke-width:2" />
-                    </svg>
+                <img class="brand-icon" src="{% static 'assets/brand/dotori-mark.svg' %}" alt="">
+                <span class="brand-copy">
+                    <span>도토리 문서</span>
+                    <small>Dotori for Document</small>
                 </span>
-                Openshelf
             </a>
 
             <nav class="navbar-nav">
@@ -457,16 +466,15 @@
     <!-- 푸터 -->
     <footer class="footer">
         <div class="footer-inner">
-            <p>© 2025 Openshelf</p>
-            <p data-i18n="footerTagline">AI 파일 관리 서비스</p>
+            <p>© 2026 Dotori for Document</p>
+            <p data-i18n="footerTagline">문서를 모으고, 찾고, 질문하는 공간</p>
         </div>
     </footer>
 
     <script>
     // ── Global Language Toggle ──
     (function() {
-        const STORAGE_KEY = 'openshelf:lang';
-        const LEGACY_STORAGE_KEY = 'openshelf:file-list:lang';
+        const STORAGE_KEY = 'dotori:lang';
         const dictionaries = {
             ko: {
                 navFiles: '파일',
@@ -478,7 +486,7 @@
                 logout: '로그아웃',
                 login: '로그인',
                 getStarted: '시작하기',
-                footerTagline: 'AI 파일 관리 서비스',
+                footerTagline: '문서를 모으고, 찾고, 질문하는 공간',
                 sidebarUpload: '+ 파일 업로드',
                 ragQuestion: 'RAG 질문',
                 ragSubtitle: '문서 근거 기반 답변',
@@ -536,7 +544,7 @@
                 logout: 'Log out',
                 login: 'Log in',
                 getStarted: 'Get started',
-                footerTagline: 'AI file management service',
+                footerTagline: 'A place to collect, find, and ask your documents',
                 sidebarUpload: '+ Upload files',
                 ragQuestion: 'RAG question',
                 ragSubtitle: 'Document-grounded answers',
@@ -589,7 +597,7 @@
 
         function loadSavedLanguage() {
             try {
-                const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
+                const saved = localStorage.getItem(STORAGE_KEY);
                 return saved === 'en' ? 'en' : 'ko';
             } catch (error) {
                 return 'ko';
@@ -599,7 +607,6 @@
         function saveLanguage(lang) {
             try {
                 localStorage.setItem(STORAGE_KEY, lang);
-                localStorage.setItem(LEGACY_STORAGE_KEY, lang);
             } catch (error) {
                 // Ignore storage errors.
             }
@@ -637,7 +644,7 @@
             });
             const toggle = document.getElementById('languageToggle');
             if (toggle) toggle.textContent = currentLang === 'ko' ? 'ENG' : 'KOR';
-            document.dispatchEvent(new CustomEvent('openshelf:languagechange', { detail: { language: currentLang } }));
+            document.dispatchEvent(new CustomEvent('dotori:languagechange', { detail: { language: currentLang } }));
         }
 
         function setLanguage(lang) {
@@ -646,7 +653,7 @@
             apply();
         }
 
-        window.OpenShelfI18n = {
+        window.DotoriI18n = {
             apply,
             getLanguage: () => currentLang,
             register,
@@ -657,7 +664,7 @@
 
         document.addEventListener('DOMContentLoaded', () => {
             const toggle = document.getElementById('languageToggle');
-            if (toggle) toggle.addEventListener('click', window.OpenShelfI18n.toggle);
+            if (toggle) toggle.addEventListener('click', window.DotoriI18n.toggle);
             apply();
         });
     })();
@@ -669,7 +676,7 @@
     // ── Dark Mode Toggle ──
     (function() {
         const html = document.documentElement;
-        const saved = localStorage.getItem('openshelf-theme');
+        const saved = localStorage.getItem('dotori-theme');
         if (saved === 'dark') html.classList.add('dark');
 
         const btn = document.getElementById('themeToggle');
@@ -686,7 +693,7 @@
 
         btn.addEventListener('click', () => {
             html.classList.toggle('dark');
-            localStorage.setItem('openshelf-theme', html.classList.contains('dark') ? 'dark' : 'light');
+            localStorage.setItem('dotori-theme', html.classList.contains('dark') ? 'dark' : 'light');
             updateIcon();
         });
     })();
@@ -739,7 +746,7 @@
                     if (!data.ok) return;
                     dropdown.innerHTML = '';
                     if (data.files.length === 0) {
-                        const empty = window.OpenShelfI18n ? window.OpenShelfI18n.t('globalSearchNoResults') : '검색 결과가 없습니다.';
+                        const empty = window.DotoriI18n ? window.DotoriI18n.t('globalSearchNoResults') : '검색 결과가 없습니다.';
                         dropdown.innerHTML = `<div class="search-hint">${empty}</div>`;
                     } else {
                         data.files.forEach(f => {

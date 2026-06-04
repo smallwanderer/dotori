@@ -1,7 +1,7 @@
 {% extends "files/base.html" %}
 {% load static %}
 
-{% block title %}AI 검색 기록 | Openshelf{% endblock %}
+{% block title %}AI 검색 기록 | 도토리 문서{% endblock %}
 
 {% block extra_head %}
 {{ block.super }}
@@ -196,8 +196,8 @@
 
 {% block extra_scripts %}
 <script>
-  if (window.OpenShelfI18n) {
-    window.OpenShelfI18n.register({
+  if (window.DotoriI18n) {
+    window.DotoriI18n.register({
       ko: {
         aiSearchHistoryFull: 'AI 검색 전체 기록',
         answerFailed: '답변 생성에 실패했거나 내용이 없습니다.',

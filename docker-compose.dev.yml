@@ -1,4 +1,4 @@
-name: openshelf-dev
+name: dotori-dev
 
 services:
   db:

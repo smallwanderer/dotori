@@ -1,7 +1,7 @@
 {% extends "files/base.html" %}
 {% load static %}
 
-{% block title %}RAG 질문 | Openshelf{% endblock %}
+{% block title %}RAG 질문 | 도토리 문서{% endblock %}
 
 {% block extra_head %}
 {{ block.super }}
@@ -662,8 +662,8 @@
       retry: 'Retry',
     },
   };
-  if (window.OpenShelfI18n) {
-    window.OpenShelfI18n.register(RAG_TEXT);
+  if (window.DotoriI18n) {
+    window.DotoriI18n.register(RAG_TEXT);
   }
 
   const selectedNodesRaw = document.getElementById('selectedNodesData').textContent.trim();
@@ -693,16 +693,16 @@
   let lastRequest = null;
 
   function t(key, ...args) {
-    if (window.OpenShelfI18n) {
-      return window.OpenShelfI18n.t(key, ...args);
+    if (window.DotoriI18n) {
+      return window.DotoriI18n.t(key, ...args);
     }
     const value = RAG_TEXT.ko[key];
     return typeof value === 'function' ? value(...args) : value;
   }
 
   function syncRagLanguageFromGlobal() {
-    if (!window.OpenShelfI18n) return;
-    languageSelect.value = window.OpenShelfI18n.getLanguage() === 'en' ? 'en' : 'ko';
+    if (!window.DotoriI18n) return;
+    languageSelect.value = window.DotoriI18n.getLanguage() === 'en' ? 'en' : 'ko';
   }
 
   function getCookie(name) {
@@ -924,7 +924,7 @@
     if (!question) return;
     startRagRequest(question);
   });
-  document.addEventListener('openshelf:languagechange', () => {
+  document.addEventListener('dotori:languagechange', () => {
     syncRagLanguageFromGlobal();
     updateScopeSummary();
     setScopePickerCollapsed(scopePicker.classList.contains('collapsed'));

@@ -1,6 +1,6 @@
 {% extends "files/base.html" %}
 
-{% block title %}Trash | Openshelf{% endblock %}
+{% block title %}Trash | 도토리 문서{% endblock %}
 
 {% block files_body %}
 <div class="section-header">
@@ -50,8 +50,8 @@
 
 {% block extra_scripts %}
 <script>
-  if (window.OpenShelfI18n) {
-    window.OpenShelfI18n.register({
+  if (window.DotoriI18n) {
+    window.DotoriI18n.register({
       ko: {
         trashTitle: '휴지통',
         emptyTrash: '휴지통 비우기',
@@ -99,7 +99,7 @@
     });
   }
   function t(key, ...args) {
-    return window.OpenShelfI18n ? window.OpenShelfI18n.t(key, ...args) : key;
+    return window.DotoriI18n ? window.DotoriI18n.t(key, ...args) : key;
   }
   function getCookie(name) {
     let cookieValue = null;
@@ -126,7 +126,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", fetchTrash);
-  document.addEventListener('openshelf:languagechange', () => renderTable(trashFiles));
+  document.addEventListener('dotori:languagechange', () => renderTable(trashFiles));
   let trashFiles = [];
   let selectedTrashUids = new Set();
 

@@ -32,7 +32,7 @@ handler500 = "accounts.views.server_error"
 
 schema_view = get_schema_view(
     openapi.Info(
-        title="Openshelf API",
+        title="Dotori for Document API",
         default_version='v1',
         description="API documentation for RAG Search and File Management",
     ),

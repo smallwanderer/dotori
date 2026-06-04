@@ -1,6 +1,6 @@
 {% extends "files/base.html" %}
 
-{% block title %}즐겨찾기 | Openshelf{% endblock %}
+{% block title %}즐겨찾기 | 도토리 문서{% endblock %}
 
 {% block files_body %}
 
@@ -35,8 +35,8 @@
 
 {% block extra_scripts %}
 <script>
-  if (window.OpenShelfI18n) {
-    window.OpenShelfI18n.register({
+  if (window.DotoriI18n) {
+    window.DotoriI18n.register({
       ko: {
         starredTitle: '즐겨찾기',
         name: '이름',
@@ -70,7 +70,7 @@
     });
   }
   function t(key, ...args) {
-    return window.OpenShelfI18n ? window.OpenShelfI18n.t(key, ...args) : key;
+    return window.DotoriI18n ? window.DotoriI18n.t(key, ...args) : key;
   }
   function getCookie(name) {
       let cookieValue = null;
@@ -88,7 +88,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", fetchStarred);
-  document.addEventListener('openshelf:languagechange', fetchStarred);
+  document.addEventListener('dotori:languagechange', fetchStarred);
 
   function fetchStarred() {
     fetch('/files/api/v1/starred/')

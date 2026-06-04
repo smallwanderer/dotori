@@ -25,7 +25,7 @@ class LegalAgreementTests(TestCase):
             )
 
             self.assertEqual(response.status_code, 200)
-            self.assertContains(response, "Openshelf")
+            self.assertContains(response, "도토리 문서")
 
 
 @override_settings(DEBUG=False, ALLOWED_HOSTS=["testserver"])

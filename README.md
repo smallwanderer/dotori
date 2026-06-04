@@ -1,6 +1,6 @@
-# OpenShelf
+# Dotori for Document
 
-**OpenShelf is a lightweight full-stack document retriever and RAG system for personal and small-team use.**
+**Dotori for Document is a lightweight full-stack document retriever and RAG system for personal and small-team use.**
 
 It combines file storage, document parsing, hybrid vector retrieval, and retrieval-augmented generation in a Docker Compose stack that can run on a server or a Windows machine with Docker Desktop.
 
@@ -8,7 +8,7 @@ Korean documentation is available in [README.ko.md](README.ko.md). A step-by-ste
 
 ## What It Does
 
-OpenShelf helps you keep documents in a private web workspace and ask questions over them.
+Dotori for Document helps you keep documents in a private web workspace and ask questions over them.
 
 - Upload and manage files and folders through a Django web UI.
 - Parse documents asynchronously with Celery workers.
@@ -82,8 +82,8 @@ For Windows, Docker Desktop with WSL2 backend is recommended.
 ## Quick Start
 
 ```bash
-git clone https://github.com/smallwanderer/local-openshelf.git
-cd local-openshelf
+git clone https://github.com/smallwanderer/dotori.git
+cd dotori
 cp .env.example .env
 docker compose up -d --build
 docker compose exec app python manage.py createsuperuser
