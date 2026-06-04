@@ -3,14 +3,13 @@
 {% block title %}Email Verification Required | 도토리 문서{% endblock %}
 
 {% block auth_header %}
-<h1>Email verification is required</h1>
-<p>Please verify your email address before continuing to browse or upload files.</p>
+<h1 data-i18n="verificationRequiredTitle">이메일 인증이 필요합니다</h1>
+<p data-i18n="verificationRequiredSubtitle">파일을 탐색하거나 업로드하기 전에 이메일 주소를 인증하세요.</p>
 {% endblock %}
 
 {% block auth_body %}
 <p style="font-size: 14px; color: var(--muted); line-height: 1.7; text-align: center; margin-bottom: 20px;">
-    We sent a verification link to the email address used during signup.<br>
-    If you did not receive it, you can request another verification email below.
+    <span data-i18n="verificationRequiredBody">가입에 사용한 이메일 주소로 인증 링크를 보냈습니다. 받지 못했다면 아래에서 인증 이메일을 다시 요청할 수 있습니다.</span>
 </p>
 
 <a
@@ -18,10 +17,10 @@
     class="btn btn-primary auth-submit"
     style="display: flex; justify-content: center;"
 >
-    Resend verification email
+    <span data-i18n="resendVerification">인증 이메일 재전송</span>
 </a>
 {% endblock %}
 
 {% block auth_footer %}
-<a href="{% url 'accounts:login' %}">Back to sign in</a>
+<a href="{% url 'accounts:login' %}" data-i18n="backToSignIn">로그인으로 돌아가기</a>
 {% endblock %}

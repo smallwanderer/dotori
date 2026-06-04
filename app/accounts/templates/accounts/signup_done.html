@@ -3,21 +3,21 @@
 {% block title %}Verification Email Sent | 도토리 문서{% endblock %}
 
 {% block auth_header %}
-<h3>Check your inbox</h3>
-<p>We sent a verification email to the address you entered.</p>
-<p>Open the link in that email to activate your account.</p>
+<h3 data-i18n="signupDoneTitle">받은 편지함을 확인하세요</h3>
+<p data-i18n="signupDoneSubtitle">입력한 주소로 인증 이메일을 보냈습니다.</p>
+<p data-i18n="signupDoneInstruction">이메일의 링크를 열어 계정을 활성화하세요.</p>
 {% endblock %}
 
 {% block auth_body %}
-<p>Did not receive the email?</p>
+<p data-i18n="signupDoneMissing">이메일을 받지 못했나요?</p>
 <a href="{% url 'accounts:resend_verification' %}" class="btn btn-primary auth-submit"
     style="display: flex; justify-content: center;">
-    Resend verification email
+    <span data-i18n="resendVerification">인증 이메일 재전송</span>
 </a>
 {% endblock %}
 
 {% block auth_footer %}
 <p>
-    <a href="{% url 'accounts:login' %}">Back to sign in</a>
+    <a href="{% url 'accounts:login' %}" data-i18n="backToSignIn">로그인으로 돌아가기</a>
 </p>
 {% endblock %}

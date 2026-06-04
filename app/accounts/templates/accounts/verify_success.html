@@ -3,17 +3,17 @@
 {% block title %}Verification Complete | 도토리 문서{% endblock %}
 
 {% block auth_header %}
-<h1>Email verified</h1>
-<p>Your account has been activated. You can sign in now.</p>
+<h1 data-i18n="verificationSuccessTitle">이메일 인증 완료</h1>
+<p data-i18n="verificationSuccessSubtitle">계정이 활성화되었습니다. 이제 로그인할 수 있습니다.</p>
 {% endblock %}
 
 {% block auth_body %}
 <a href="{% url 'accounts:login' %}" class="button button-primary auth-submit"
     style="display: flex; justify-content: center;">
-    Sign in
+    <span data-i18n="signInSubmit">로그인</span>
 </a>
 {% endblock %}
 
 {% block auth_footer %}
-<a href="{% url 'accounts:signup' %}">Create another account</a>
+<a href="{% url 'accounts:signup' %}" data-i18n="verificationCreateAnother">다른 계정 만들기</a>
 {% endblock %}

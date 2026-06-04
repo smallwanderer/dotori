@@ -1,0 +1,19 @@
+# Initializing Let's Encrypt https for dotori server
+* If there is existing certificate, it will remove it!!!
+
+1. Check your server's domain & port status.
+
+2. makesure .env file is created and filled with proper values. 
+- NGINX_SERVER_NAME: example.com
+- LETSENCRYPT_DOMAIN: example.com
+- LETSENCRYPT_EMAIL: your_email.com
+
+3. Initialize scripts are located in scripts/ folder. Run the following commands:
+- chmod +x scripts/init_production_env.sh
+- ./scripts/init_production_env.sh
+
+# Optional but recommended
+4. Let's encrypt certificates are managed by certbot container. It expires every 90 days.
+    You can renew it by running the following commands:
+    - chmod +x scripts/renew_certificates.sh
+    - ./scripts/renew_certificates.sh

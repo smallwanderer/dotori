@@ -21,6 +21,7 @@ class UserRegistrationForm(forms.ModelForm):
             attrs={
                 "class": "auth-input",
                 "placeholder": "Enter a password",
+                "data-i18n-placeholder": "signupPasswordPlaceholder",
             }
         )
     )
@@ -29,6 +30,7 @@ class UserRegistrationForm(forms.ModelForm):
             attrs={
                 "class": "auth-input",
                 "placeholder": "Confirm your password",
+                "data-i18n-placeholder": "signupPasswordConfirmPlaceholder",
             }
         )
     )
@@ -36,6 +38,15 @@ class UserRegistrationForm(forms.ModelForm):
     class Meta:
         model = User
         fields = ["email"]
+        widgets = {
+            "email": forms.EmailInput(
+                attrs={
+                    "class": "auth-input",
+                    "placeholder": "Enter your email address",
+                    "data-i18n-placeholder": "signupEmailPlaceholder",
+                }
+            )
+        }
 
     def clean_email(self):
         email = self.cleaned_data.get("email")
@@ -59,6 +70,7 @@ class ResendVerificationEmailForm(forms.Form):
             attrs={
                 "class": "auth-input",
                 "placeholder": "Enter your email address",
+                "data-i18n-placeholder": "accountEmailPlaceholder",
             }
         ),
     )
@@ -78,6 +90,7 @@ class EmailAuthenticationForm(AuthenticationForm):
             attrs={
                 "class": "auth-input",
                 "placeholder": "Enter your email address",
+                "data-i18n-placeholder": "accountEmailPlaceholder",
             }
         ),
     )
@@ -86,6 +99,7 @@ class EmailAuthenticationForm(AuthenticationForm):
             attrs={
                 "class": "auth-input",
                 "placeholder": "Enter your password",
+                "data-i18n-placeholder": "accountPasswordPlaceholder",
             }
         )
     )

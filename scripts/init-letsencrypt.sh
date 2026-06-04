@@ -33,8 +33,16 @@ CERT_DIR="data/certbot/conf/live/$DOMAIN"
 ARCHIVE_DIR="data/certbot/conf/archive/$DOMAIN"
 RENEWAL_CONF="data/certbot/conf/renewal/$DOMAIN.conf"
 WEBROOT_DIR="data/certbot/www"
+CHALLENGE_PROBE_NAME="certbot-readiness-check"
+CHALLENGE_PROBE_FILE="$WEBROOT_DIR/.well-known/acme-challenge/$CHALLENGE_PROBE_NAME"
+CHALLENGE_PROBE_CONTENT="certbot-ready"
 DUMMY_CERT_CREATED=0
 mkdir -p "$WEBROOT_DIR/.well-known/acme-challenge"
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "curl is required to verify the nginx ACME challenge endpoint."
+  exit 1
+fi
 
 create_dummy_cert() {
   echo "Creating a temporary self-signed certificate for nginx startup."
@@ -46,9 +54,33 @@ create_dummy_cert() {
 }
 
 restore_dummy_cert_on_failure() {
+  rm -f "$CHALLENGE_PROBE_FILE"
+
   if [[ "$DUMMY_CERT_CREATED" == "1" && ! -f "$CERT_DIR/fullchain.pem" ]]; then
     create_dummy_cert
   fi
+}
+
+wait_for_challenge_endpoint() {
+  printf '%s' "$CHALLENGE_PROBE_CONTENT" > "$CHALLENGE_PROBE_FILE"
+
+  echo "Waiting for nginx to serve the ACME challenge endpoint."
+  for _ in {1..30}; do
+    if [[ "$(curl --silent --show-error --fail --max-time 2 \
+      --header "Host: $DOMAIN" \
+      "http://127.0.0.1/.well-known/acme-challenge/$CHALLENGE_PROBE_NAME" 2>/dev/null || true)" == "$CHALLENGE_PROBE_CONTENT" ]]; then
+      rm -f "$CHALLENGE_PROBE_FILE"
+      echo "The ACME challenge endpoint is ready."
+      sleep 5
+      return
+    fi
+
+    sleep 2
+  done
+
+  echo "Nginx did not serve the ACME challenge endpoint within 60 seconds."
+  echo "Check nginx logs with: docker compose logs nginx"
+  exit 1
 }
 
 trap restore_dummy_cert_on_failure EXIT
@@ -61,7 +93,8 @@ elif [[ ! -f "$CERT_DIR/fullchain.pem" || ! -f "$CERT_DIR/privkey.pem" ]]; then
   DUMMY_CERT_CREATED=1
 fi
 
-docker compose up -d --force-recreate nginx
+docker compose up -d nginx
+wait_for_challenge_endpoint
 
 if [[ "$DUMMY_CERT_CREATED" == "1" ]]; then
   rm -rf "$CERT_DIR" "$ARCHIVE_DIR" "$RENEWAL_CONF"

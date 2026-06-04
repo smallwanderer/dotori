@@ -161,6 +161,37 @@
 </style>
 {% endblock %}
 
+{% block extra_scripts %}
+<script>
+(function() {
+    const accountErrorText = {
+        ko: {
+            'This field is required.': '필수 입력 항목입니다.',
+            'Enter a valid email address.': '올바른 이메일 주소를 입력하세요.',
+            'No account exists for this email address.': '해당 이메일 주소로 가입된 계정이 없습니다.',
+            'Please enter a correct Email and password. Note that both fields may be case-sensitive.': '이메일과 비밀번호를 확인하세요.',
+        },
+        en: {},
+    };
+
+    function translateAccountErrors() {
+        if (!window.DotoriI18n) return;
+        const language = window.DotoriI18n.getLanguage();
+        document.querySelectorAll('.account-error').forEach((element) => {
+            if (!element.dataset.originalText) {
+                element.dataset.originalText = element.textContent.trim();
+            }
+            element.textContent = (accountErrorText[language] && accountErrorText[language][element.dataset.originalText])
+                || element.dataset.originalText;
+        });
+    }
+
+    translateAccountErrors();
+    document.addEventListener('dotori:languagechange', translateAccountErrors);
+})();
+</script>
+{% endblock %}
+
 {% block body %}
 <div class="auth-card {% block auth_card_class %}{% endblock %}">
     <div class="auth-header">

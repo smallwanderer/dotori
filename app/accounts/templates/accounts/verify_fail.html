@@ -3,8 +3,8 @@
 {% block title %}Verification Failed | 도토리 문서{% endblock %}
 
 {% block auth_header %}
-<h1>Verification failed</h1>
-<p>The verification link is invalid or has expired.</p>
+<h1 data-i18n="verificationFailTitle">인증 실패</h1>
+<p data-i18n="verificationFailSubtitle">인증 링크가 올바르지 않거나 만료되었습니다.</p>
 {% endblock %}
 
 {% block auth_body %}
@@ -13,17 +13,17 @@
 </div>
 
 <p style="font-size: 14px; color: var(--muted); text-align: center; line-height: 1.7; margin-bottom: 20px;">
-    Request a new verification email and try again.
+    <span data-i18n="verificationFailBody">새 인증 이메일을 요청한 뒤 다시 시도하세요.</span>
 </p>
 
 <a href="{% url 'accounts:resend_verification' %}" class="btn btn-primary auth-submit"
     style="display: flex; justify-content: center;">
-    Resend verification email
+    <span data-i18n="resendVerification">인증 이메일 재전송</span>
 </a>
 {% endblock %}
 
 {% block auth_footer %}
-<a href="{% url 'accounts:signup' %}">Create account</a>
+<a href="{% url 'accounts:signup' %}" data-i18n="signupSubmit">계정 만들기</a>
 &nbsp;|&nbsp;
-<a href="{% url 'accounts:login' %}">Sign in</a>
+<a href="{% url 'accounts:login' %}" data-i18n="signInSubmit">로그인</a>
 {% endblock %}

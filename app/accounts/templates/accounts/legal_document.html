@@ -5,7 +5,7 @@
 
 {% block auth_header %}
 <h1>{{ title }}</h1>
-<p>회원가입 전에 내용을 확인해 주세요. Version {{ version }}</p>
+<p><span data-i18n="legalIntro">회원가입 전에 내용을 확인해 주세요.</span> <span data-i18n="legalVersion">버전</span> {{ version }}</p>
 {% endblock %}
 
 {% block auth_body %}
@@ -13,5 +13,5 @@
 {% endblock %}
 
 {% block auth_footer %}
-<a href="{% url 'accounts:signup' %}">Back to signup</a>
+<a href="{% url 'accounts:signup' %}" data-i18n="backToSignup">회원가입으로 돌아가기</a>
 {% endblock %}

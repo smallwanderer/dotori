@@ -3,8 +3,8 @@
 {% block title %}Sign In | Dotori for Document{% endblock %}
 
 {% block auth_header %}
-<h1>Welcome back</h1>
-<p>Sign in to continue using Dotori for Document.</p>
+<h1 data-i18n="signInTitle">다시 오신 것을 환영합니다</h1>
+<p data-i18n="signInSubtitle">도토리 문서를 계속 사용하려면 로그인하세요.</p>
 {% endblock %}
 
 {% block auth_body %}
@@ -12,35 +12,36 @@
     {% csrf_token %}
 
     <div class="form-group">
-        <label for="{{ form.username.id_for_label }}">Email</label>
+        <label for="{{ form.username.id_for_label }}" data-i18n="accountEmail">이메일</label>
         {{ form.username }}
         {% if form.username.errors %}
-        <p class="field-error">{{ form.username.errors.0 }}</p>
+        <p class="field-error account-error">{{ form.username.errors.0 }}</p>
         {% endif %}
     </div>
 
     <div class="form-group">
-        <label for="{{ form.password.id_for_label }}">Password</label>
+        <label for="{{ form.password.id_for_label }}" data-i18n="accountPassword">비밀번호</label>
         {{ form.password }}
         {% if form.password.errors %}
-        <p class="field-error">{{ form.password.errors.0 }}</p>
+        <p class="field-error account-error">{{ form.password.errors.0 }}</p>
         {% endif %}
     </div>
 
     {% if form.non_field_errors %}
-    <p class="field-error">{{ form.non_field_errors.0 }}</p>
+    <p class="field-error account-error">{{ form.non_field_errors.0 }}</p>
     {% endif %}
 
-    <button type="submit" class="btn btn-primary auth-submit">Sign in</button>
+    <button type="submit" class="btn btn-primary auth-submit" data-i18n="signInSubmit">로그인</button>
 </form>
 
 <div style="margin-top: 12px; text-align: center;">
     <a href="{% url 'accounts:resend_verification' %}" style="font-size: 13px; color: var(--muted);">
-        Did not receive your verification email?
+        <span data-i18n="signInNoVerification">인증 이메일을 받지 못했나요?</span>
     </a>
 </div>
 {% endblock %}
 
 {% block auth_footer %}
-Need an account? <a href="{% url 'accounts:signup' %}">Create one</a>
+<span data-i18n="signInNeedAccount">계정이 필요한가요?</span>
+<a href="{% url 'accounts:signup' %}" data-i18n="signInCreateAccount">계정 만들기</a>
 {% endblock %}

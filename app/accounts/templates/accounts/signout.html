@@ -3,14 +3,14 @@
 {% block title %}Signed Out | 도토리 문서{% endblock %}
 
 {% block auth_header %}
-<h1>Signed out</h1>
-<p>You have been signed out successfully.</p>
+<h1 data-i18n="signOutTitle">로그아웃 완료</h1>
+<p data-i18n="signOutSubtitle">성공적으로 로그아웃되었습니다.</p>
 {% endblock %}
 
 {% block auth_body %}
-<a href="{% url 'accounts:login' %}" class="button button-primary auth-submit">Sign in again</a>
+<a href="{% url 'accounts:login' %}" class="btn btn-primary auth-submit" data-i18n="signOutAgain">다시 로그인</a>
 {% endblock %}
 
 {% block auth_footer %}
-<a href="{% url 'accounts:signup' %}">Create a new account</a>
+<a href="{% url 'accounts:signup' %}" data-i18n="signOutCreateAccount">새 계정 만들기</a>
 {% endblock %}

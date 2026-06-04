@@ -3,8 +3,8 @@
 {% block title %}Create Account | Dotori for Document{% endblock %}
 
 {% block auth_header %}
-<h1>Create your account</h1>
-<p>Start using Dotori for Document with your email address.</p>
+<h1 data-i18n="signupTitle">계정 만들기</h1>
+<p data-i18n="signupSubtitle">이메일 주소로 도토리 문서를 시작하세요.</p>
 {% endblock %}
 
 {% block auth_body %}
@@ -12,61 +12,97 @@
     {% csrf_token %}
 
     <div class="form-group">
-        <label for="{{ form.email.id_for_label }}">Email</label>
+        <label for="{{ form.email.id_for_label }}" data-i18n="signupEmail">이메일</label>
         {{ form.email }}
         {% if form.email.errors %}
-        <p class="field-error">{{ form.email.errors.0 }}</p>
+        <p class="field-error signup-error">{{ form.email.errors.0 }}</p>
         {% endif %}
     </div>
 
     <div class="form-group">
-        <label for="{{ form.password.id_for_label }}">Password</label>
+        <label for="{{ form.password.id_for_label }}" data-i18n="signupPassword">비밀번호</label>
         {{ form.password }}
         {% if form.password.errors %}
-        <p class="field-error">{{ form.password.errors.0 }}</p>
+        <p class="field-error signup-error">{{ form.password.errors.0 }}</p>
         {% endif %}
     </div>
 
     <div class="form-group">
-        <label for="{{ form.password2.id_for_label }}">Confirm password</label>
+        <label for="{{ form.password2.id_for_label }}" data-i18n="signupPasswordConfirm">비밀번호 확인</label>
         {{ form.password2 }}
         {% if form.password2.errors %}
-        <p class="field-error">{{ form.password2.errors.0 }}</p>
+        <p class="field-error signup-error">{{ form.password2.errors.0 }}</p>
         {% endif %}
     </div>
 
     {% if form.non_field_errors %}
-    <p class="field-error">{{ form.non_field_errors.0 }}</p>
+    <p class="field-error signup-error">{{ form.non_field_errors.0 }}</p>
     {% endif %}
 
     <div class="auth-checks">
         <label class="auth-check-row" for="{{ form.terms_agreed.id_for_label }}">
             {{ form.terms_agreed }}
             <span>
-                I agree to the
-                <a href="{% url 'accounts:legal_document' document='terms' %}" target="_blank" rel="noopener">Terms of Service</a>.
+                <span data-i18n="signupAgreePrefix">다음에 동의합니다:</span>
+                <a href="{% url 'accounts:legal_document' document='terms' %}" target="_blank" rel="noopener" data-i18n="signupTerms">이용약관</a>
             </span>
         </label>
         {% if form.terms_agreed.errors %}
-        <p class="field-error">{{ form.terms_agreed.errors.0 }}</p>
+        <p class="field-error signup-error">{{ form.terms_agreed.errors.0 }}</p>
         {% endif %}
 
         <label class="auth-check-row" for="{{ form.privacy_agreed.id_for_label }}">
             {{ form.privacy_agreed }}
             <span>
-                I agree to the
-                <a href="{% url 'accounts:legal_document' document='privacy' %}" target="_blank" rel="noopener">Privacy Policy</a>.
+                <span data-i18n="signupAgreePrefix">다음에 동의합니다:</span>
+                <a href="{% url 'accounts:legal_document' document='privacy' %}" target="_blank" rel="noopener" data-i18n="signupPrivacy">개인정보 처리방침</a>
             </span>
         </label>
         {% if form.privacy_agreed.errors %}
-        <p class="field-error">{{ form.privacy_agreed.errors.0 }}</p>
+        <p class="field-error signup-error">{{ form.privacy_agreed.errors.0 }}</p>
         {% endif %}
     </div>
 
-    <button type="submit" class="btn btn-primary auth-submit">Create account</button>
+    <button type="submit" class="btn btn-primary auth-submit" data-i18n="signupSubmit">계정 만들기</button>
 </form>
 {% endblock %}
 
 {% block auth_footer %}
-Already have an account? <a href="{% url 'accounts:login' %}">Sign in</a>
+<span data-i18n="signupHaveAccount">이미 계정이 있나요?</span>
+<a href="{% url 'accounts:login' %}" data-i18n="signupSignIn">로그인</a>
+{% endblock %}
+
+{% block extra_scripts %}
+{{ block.super }}
+<script>
+(function() {
+    const errorText = {
+        ko: {
+            'This field is required.': '필수 입력 항목입니다.',
+            'Enter a valid email address.': '올바른 이메일 주소를 입력하세요.',
+            'This email address is already in use.': '이미 사용 중인 이메일 주소입니다.',
+            'Passwords do not match.': '비밀번호가 일치하지 않습니다.',
+            'You must agree to the Terms of Use.': '이용약관에 동의해야 합니다.',
+            'You must agree to the Privacy Policy.': '개인정보 처리방침에 동의해야 합니다.',
+        },
+        en: {},
+    };
+
+    function translateErrors() {
+        if (!window.DotoriI18n) return;
+        const language = window.DotoriI18n.getLanguage();
+        document.title = window.DotoriI18n.t('signupDocumentTitle');
+        document.querySelectorAll('.signup-error').forEach((element) => {
+            if (!element.dataset.originalText) {
+                element.dataset.originalText = element.textContent.trim();
+            }
+            element.textContent = (errorText[language] && errorText[language][element.dataset.originalText])
+                || element.dataset.originalText;
+        });
+    }
+
+    translateErrors();
+    document.addEventListener('dotori:languagechange', translateErrors);
+})();
+</script>
 {% endblock %}
