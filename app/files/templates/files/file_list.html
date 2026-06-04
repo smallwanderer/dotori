@@ -1,7 +1,7 @@
 {% extends "files/base.html" %}
 {% load static %}
 
-{% block title %}파일 목록 | Openshelf{% endblock %}
+{% block title %}파일 목록 | 도토리 문서{% endblock %}
 
 {% block extra_head %}
 {{ block.super }}
@@ -231,7 +231,7 @@
 
   .search-input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    box-shadow: 0 0 0 3px rgba(168, 102, 56, 0.1);
   }
 
   .filter-select {
@@ -304,7 +304,7 @@
 
   .file-card.selected {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    box-shadow: 0 0 0 3px rgba(168, 102, 56, 0.12);
   }
 
   .card-select {
@@ -316,7 +316,7 @@
 
   .file-card:hover {
     border-color: var(--accent);
-    box-shadow: 0 4px 16px rgba(37, 99, 235, 0.1);
+    box-shadow: 0 4px 16px rgba(168, 102, 56, 0.1);
     transform: translateY(-2px);
   }
 
@@ -468,9 +468,9 @@
   }
 
   .status-badge.uploaded {
-    color: #2563EB;
-    background: #EFF6FF;
-    border-color: #BFDBFE;
+    color: #A86638;
+    background: #F5E5D3;
+    border-color: #E4C8AA;
   }
 
   .status-badge.parsed {
@@ -557,7 +557,7 @@
   }
 
   .file-table tbody tr.selected td {
-    background: rgba(37, 99, 235, 0.08);
+    background: rgba(168, 102, 56, 0.08);
   }
 
   .file-name-cell {
@@ -654,7 +654,7 @@
   }
 
   .icon-doc {
-    background: #EFF4FF;
+    background: #F5E5D3;
   }
 
   .icon-other {
@@ -817,7 +817,7 @@
   }
   .modal-input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    box-shadow: 0 0 0 3px rgba(168, 102, 56, 0.1);
   }
   .modal-footer {
     display: flex;
@@ -874,11 +874,11 @@
   }
   .drop-active {
     outline: 2px dashed var(--accent) !important;
-    background-color: rgba(37, 99, 235, 0.05) !important;
+    background-color: rgba(168, 102, 56, 0.05) !important;
     border-radius: var(--radius);
   }
   .file-card.drop-active {
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+    box-shadow: 0 0 0 3px rgba(168, 102, 56, 0.2);
     border-color: var(--accent);
   }
 
@@ -894,12 +894,12 @@
     border: 1px solid var(--accent);
     border-radius: var(--radius-lg);
     padding: 16px;
-    box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.1);
+    box-shadow: 0 4px 6px -1px rgba(168, 102, 56, 0.1);
     transition: transform 0.1s;
   }
   .ai-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.1);
+    box-shadow: 0 10px 15px -3px rgba(168, 102, 56, 0.1);
   }
   .ai-title {
     font-size: 15px;
@@ -1006,7 +1006,7 @@
 <!-- 브레드크럼 -->
 <div class="breadcrumb" id="breadcrumb" 
      ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'root')">
-  <a href="{% url 'files:index' %}">📁 내 파일</a>
+  <a href="{% url 'files:index' %}">📁 Home</a>
   {% if breadcrumbs %}
     {% for crumb in breadcrumbs %}
       <span class="sep">/</span>
@@ -1023,7 +1023,7 @@
 </div>
 
 <div class="section-header">
-  <h2>{% if current_folder_name %}{{ current_folder_name }}{% else %}모든 파일{% endif %}</h2>
+  <h2>{% if current_folder_name %}{{ current_folder_name }}{% else %}<span data-i18n="allFiles">모든 파일</span>{% endif %}</h2>
   <div class="section-actions" style="display: flex; align-items: center; gap: 12px;">
     <span class="meta-text" id="fileCount" style="margin-right: 4px;">0개 파일</span>
     <input type="file" id="inlineUploadInput" multiple style="display:none;">
@@ -1171,8 +1171,8 @@
 <div class="recent-history-section" id="recentHistorySection" style="display: none;">
   <div class="recent-history-header">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-    <h3 style="margin:0; font-size: 14px;">최근 AI 검색 기록</h3>
-    <a href="{% url 'files:page_ai_history' %}" style="margin-left:auto; font-size:12px; color:var(--accent); text-decoration:none; font-weight: 500;">전체 보기 &rarr;</a>
+    <h3 style="margin:0; font-size: 14px;" data-i18n="recentAiHistory">최근 AI 검색 기록</h3>
+    <a href="{% url 'files:page_ai_history' %}" style="margin-left:auto; font-size:12px; color:var(--accent); text-decoration:none; font-weight: 500;"><span data-i18n="viewAll">전체 보기</span> &rarr;</a>
   </div>
   <div class="recent-history-grid" id="recentHistoryGrid">
     <!-- JS 렌더링 -->
@@ -1270,7 +1270,7 @@
   }
 
   let allFiles = [];
-  const VIEW_STORAGE_KEY = 'openshelf:file-list:view';
+  const VIEW_STORAGE_KEY = 'dotori:file-list:view';
   let currentView = loadSavedViewMode();
   let searchMode = 'normal';
   let selectedUids = new Set();
@@ -1283,6 +1283,8 @@
       newFolder: '새 폴더',
       normalSearch: '일반 검색',
       aiSearch: 'AI 검색',
+      recentAiHistory: '최근 AI 검색 기록',
+      viewAll: '전체 보기',
       searchPlaceholder: '파일 검색...',
       aiPlaceholder: '문서 본문 AI 검색...',
       move: '이동',
@@ -1319,6 +1321,8 @@
       newFolder: 'New folder',
       normalSearch: 'Search',
       aiSearch: 'AI search',
+      recentAiHistory: 'Recent AI search history',
+      viewAll: 'View all',
       searchPlaceholder: 'Search files...',
       aiPlaceholder: 'Search document content with AI...',
       move: 'Move',
@@ -1351,8 +1355,8 @@
       embeddingStats: (completed, processing, failed) => `Embedding ${completed} done · ${processing} running · ${failed} failed`,
     },
   };
-  if (window.OpenShelfI18n) {
-    window.OpenShelfI18n.register(UI_TEXT);
+  if (window.DotoriI18n) {
+    window.DotoriI18n.register(UI_TEXT);
   }
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -1410,7 +1414,7 @@
     });
   });
 
-  document.addEventListener('openshelf:languagechange', () => {
+  document.addEventListener('dotori:languagechange', () => {
     applyLanguage();
     renderFiles();
   });
@@ -1425,8 +1429,8 @@
   }
 
   function t(key, ...args) {
-    if (window.OpenShelfI18n) {
-      return window.OpenShelfI18n.t(key, ...args);
+    if (window.DotoriI18n) {
+      return window.DotoriI18n.t(key, ...args);
     }
     const value = UI_TEXT.ko[key];
     return typeof value === 'function' ? value(...args) : value;

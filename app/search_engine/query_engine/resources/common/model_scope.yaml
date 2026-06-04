@@ -1,4 +1,4 @@
-# Based on Openshelf Models
+# Based on Dotori for Document models
 
 node:
   model: files.Node

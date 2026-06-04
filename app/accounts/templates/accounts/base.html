@@ -12,7 +12,7 @@
     }
 
     .auth-card {
-        background: var(--surface);
+        background: linear-gradient(155deg, var(--surface), var(--surface-warm));
         border: 1px solid var(--border);
         border-radius: var(--radius-lg);
         box-shadow: var(--shadow);
@@ -66,10 +66,10 @@
 
     .form-group input:focus {
         border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+        box-shadow: 0 0 0 3px rgba(168, 102, 56, 0.14);
     }
 
-    .form-group .field-error {
+    .field-error {
         font-size: 12px;
         color: var(--danger);
         margin-top: 4px;
@@ -90,7 +90,7 @@
 
     .auth-input:focus {
         border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        box-shadow: 0 0 0 3px rgba(168, 102, 56, 0.12);
     }
 
     .auth-submit {
@@ -118,11 +118,51 @@
     .auth-footer a:hover {
         text-decoration: underline;
     }
+
+    .auth-checks {
+        display: grid;
+        gap: 8px;
+        margin: 18px 0 4px;
+    }
+
+    .auth-check-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.45;
+    }
+
+    .auth-check-row input {
+        margin-top: 2px;
+    }
+
+    .auth-check-row a {
+        color: var(--accent);
+        font-weight: 500;
+        text-decoration: none;
+    }
+
+    .auth-check-row a:hover {
+        text-decoration: underline;
+    }
+
+    .legal-card {
+        max-width: 760px;
+    }
+
+    .legal-content {
+        white-space: pre-wrap;
+        font-size: 14px;
+        line-height: 1.75;
+        color: var(--text);
+    }
 </style>
 {% endblock %}
 
 {% block body %}
-<div class="auth-card">
+<div class="auth-card {% block auth_card_class %}{% endblock %}">
     <div class="auth-header">
         {% block auth_header %}{% endblock %}
     </div>

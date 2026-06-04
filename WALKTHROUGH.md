@@ -1,10 +1,10 @@
-# OpenShelf Walkthrough
+# 도토리 문서 Walkthrough
 
-이 문서는 OpenShelf를 서버 또는 Windows 환경에서 실행하는 절차를 설명합니다.
+이 문서는 도토리 문서를 서버 또는 Windows 환경에서 실행하는 절차를 설명합니다.
 
 ## 1. 실행 방식 선택
 
-OpenShelf에는 두 가지 Compose 실행 방식이 있습니다.
+도토리 문서에는 두 가지 Compose 실행 방식이 있습니다.
 
 | 목적 | Compose 파일 | 접속 주소 |
 | --- | --- | --- |
@@ -25,8 +25,8 @@ OpenShelf에는 두 가지 Compose 실행 방식이 있습니다.
 프로젝트를 받습니다.
 
 ```bash
-git clone https://github.com/smallwanderer/local-openshelf.git
-cd local-openshelf
+git clone https://github.com/smallwanderer/dotori.git
+cd dotori
 ```
 
 릴리즈 tag로 실행하려면 다음처럼 checkout합니다.
@@ -146,8 +146,8 @@ WSL 내부 예시:
 
 ```bash
 cd ~
-git clone https://github.com/smallwanderer/local-openshelf.git
-cd local-openshelf
+git clone https://github.com/smallwanderer/dotori.git
+cd dotori
 ```
 
 Windows 파일 시스템 경로(`/mnt/c/...`)에서도 실행할 수 있지만, 대량 파일과 Docker volume 성능을 고려하면 WSL 내부 홈 디렉터리를 권장합니다.

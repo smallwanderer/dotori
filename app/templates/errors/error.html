@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}{{ status_code }} {{ error_title }} | 도토리 문서{% endblock %}
+
+{% block extra_head %}
+<style>
+    .main-content {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: calc(100vh - 112px);
+        padding: 48px 24px;
+    }
+
+    .error-view {
+        width: 100%;
+        max-width: 620px;
+        text-align: center;
+    }
+
+    .error-code {
+        color: var(--accent);
+        font-size: 72px;
+        font-weight: 600;
+        line-height: 1;
+        margin-bottom: 18px;
+    }
+
+    .error-view h1 {
+        font-size: 24px;
+        font-weight: 600;
+        margin-bottom: 10px;
+    }
+
+    .error-message {
+        color: var(--muted);
+        font-size: 15px;
+        margin: 0 auto 28px;
+        max-width: 500px;
+    }
+
+    .error-actions {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+</style>
+{% endblock %}
+
+{% block body %}
+<section class="error-view" aria-labelledby="error-title">
+    <div class="error-code">{{ status_code }}</div>
+    <h1 id="error-title">{{ error_title }}</h1>
+    <p class="error-message">{{ error_message }}</p>
+    <div class="error-actions">
+        <a href="/" class="btn btn-primary">홈으로 이동</a>
+        <button type="button" class="btn btn-ghost" onclick="history.back()">이전 페이지</button>
+    </div>
+</section>
+{% endblock %}

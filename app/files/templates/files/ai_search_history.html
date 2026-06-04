@@ -1,7 +1,7 @@
 {% extends "files/base.html" %}
 {% load static %}
 
-{% block title %}AI 검색 기록 | Openshelf{% endblock %}
+{% block title %}AI 검색 기록 | 도토리 문서{% endblock %}
 
 {% block extra_head %}
 {{ block.super }}
@@ -133,19 +133,21 @@
 {% block files_body %}
 <div class="history-page-header">
   <svg viewBox="0 0 24 24" style="width:24px; height:24px; stroke:var(--accent); fill:none; stroke-width:2;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-  <h2>AI 검색 전체 기록</h2>
+  <h2 data-i18n="aiSearchHistoryFull">AI 검색 전체 기록</h2>
 </div>
 
 <div class="history-list">
   {% for job in page_obj %}
   <div class="history-item">
     <div class="history-q">Q. {{ job.question }}</div>
-    <div class="history-a">{{ job.answer|default:"답변 생성에 실패했거나 내용이 없습니다." }}</div>
+    <div class="history-a">
+      {% if job.answer %}{{ job.answer }}{% else %}<span data-i18n="answerFailed">답변 생성에 실패했거나 내용이 없습니다.</span>{% endif %}
+    </div>
     
     <div class="history-meta">
-      <span>{{ job.completed_at|date:"Y년 m월 d일 H:i" }}</span>
+      <span>{{ job.completed_at|date:"Y-m-d H:i" }}</span>
       <button class="cit-toggle-btn" onclick="toggleCitations('cit_{{ job.id }}')">
-        참고 문서 ({{ job.citations|length }}건) 보기
+        <span data-i18n="viewCitationsPrefix">참고 문서 (</span>{{ job.citations|length }}<span data-i18n="viewCitationsSuffix">건) 보기</span>
       </button>
     </div>
     
@@ -154,22 +156,22 @@
         {% for cit in job.citations %}
         <div class="cit-card">
           <div class="cit-card-header">
-            [{{ forloop.counter }}] {{ cit.title|default:"출처 문서" }}
+            [{{ forloop.counter }}] {% if cit.title %}{{ cit.title }}{% else %}<span data-i18n="sourceDoc">출처 문서</span>{% endif %}
             {% if cit.page %}<span style="color:var(--muted); font-weight:normal; margin-left:6px;">Page {{ cit.page }}</span>{% endif %}
           </div>
           <div class="cit-card-text">{{ cit.text }}</div>
         </div>
         {% endfor %}
       {% else %}
-        <div class="cit-card"><div class="cit-card-text" style="color:var(--muted);">등록된 참고 문서가 없습니다.</div></div>
+        <div class="cit-card"><div class="cit-card-text" style="color:var(--muted);" data-i18n="noCitations">등록된 참고 문서가 없습니다.</div></div>
       {% endif %}
     </div>
   </div>
   {% empty %}
   <div class="empty-state" style="padding: 40px; text-align: center;">
     <div style="font-size:40px; margin-bottom:16px;">🔍</div>
-    <h3 style="margin-bottom:8px;">검색 기록이 없습니다</h3>
-    <p style="color:var(--muted);">AI를 사용해 문서를 검색하면 이곳에 기록이 저장됩니다.</p>
+    <h3 style="margin-bottom:8px;" data-i18n="noSearchHistory">검색 기록이 없습니다</h3>
+    <p style="color:var(--muted);" data-i18n="noSearchHistoryDesc">AI를 사용해 문서를 검색하면 이곳에 기록이 저장됩니다.</p>
   </div>
   {% endfor %}
 </div>
@@ -177,15 +179,15 @@
 {% if page_obj.has_other_pages %}
 <div class="pagination">
   {% if page_obj.has_previous %}
-    <a href="?page=1" class="page-btn">&laquo; 처음</a>
-    <a href="?page={{ page_obj.previous_page_number }}" class="page-btn">이전</a>
+    <a href="?page=1" class="page-btn" data-i18n-html="firstPage">&laquo; 처음</a>
+    <a href="?page={{ page_obj.previous_page_number }}" class="page-btn" data-i18n="prevPage">이전</a>
   {% endif %}
 
   <span class="page-btn active">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
 
   {% if page_obj.has_next %}
-    <a href="?page={{ page_obj.next_page_number }}" class="page-btn">다음</a>
-    <a href="?page={{ page_obj.paginator.num_pages }}" class="page-btn">마지막 &raquo;</a>
+    <a href="?page={{ page_obj.next_page_number }}" class="page-btn" data-i18n="nextPage">다음</a>
+    <a href="?page={{ page_obj.paginator.num_pages }}" class="page-btn" data-i18n-html="lastPage">마지막 &raquo;</a>
   {% endif %}
 </div>
 {% endif %}
@@ -194,6 +196,39 @@
 
 {% block extra_scripts %}
 <script>
+  if (window.DotoriI18n) {
+    window.DotoriI18n.register({
+      ko: {
+        aiSearchHistoryFull: 'AI 검색 전체 기록',
+        answerFailed: '답변 생성에 실패했거나 내용이 없습니다.',
+        viewCitationsPrefix: '참고 문서 (',
+        viewCitationsSuffix: '건) 보기',
+        sourceDoc: '출처 문서',
+        noCitations: '등록된 참고 문서가 없습니다.',
+        noSearchHistory: '검색 기록이 없습니다',
+        noSearchHistoryDesc: 'AI를 사용해 문서를 검색하면 이곳에 기록이 저장됩니다.',
+        firstPage: '&laquo; 처음',
+        prevPage: '이전',
+        nextPage: '다음',
+        lastPage: '마지막 &raquo;'
+      },
+      en: {
+        aiSearchHistoryFull: 'All AI Search History',
+        answerFailed: 'Failed to generate an answer or the content is empty.',
+        viewCitationsPrefix: 'View references (',
+        viewCitationsSuffix: ')',
+        sourceDoc: 'Source Document',
+        noCitations: 'No references available.',
+        noSearchHistory: 'No search history',
+        noSearchHistoryDesc: 'Your AI search history will appear here.',
+        firstPage: '&laquo; First',
+        prevPage: 'Prev',
+        nextPage: 'Next',
+        lastPage: 'Last &raquo;'
+      }
+    });
+  }
+
   function toggleCitations(id) {
     const el = document.getElementById(id);
     if (el.classList.contains('show')) {

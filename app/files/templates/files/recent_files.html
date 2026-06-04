@@ -1,6 +1,6 @@
 {% extends "files/base.html" %}
 
-{% block title %}최근 파일 | Openshelf{% endblock %}
+{% block title %}최근 파일 | 도토리 문서{% endblock %}
 
 {% block files_body %}
 
@@ -35,8 +35,8 @@
 
 {% block extra_scripts %}
 <script>
-  if (window.OpenShelfI18n) {
-    window.OpenShelfI18n.register({
+  if (window.DotoriI18n) {
+    window.DotoriI18n.register({
       ko: {
         recentTitle: '최근 파일',
         name: '이름',
@@ -68,11 +68,11 @@
     });
   }
   function t(key, ...args) {
-    return window.OpenShelfI18n ? window.OpenShelfI18n.t(key, ...args) : key;
+    return window.DotoriI18n ? window.DotoriI18n.t(key, ...args) : key;
   }
 
   document.addEventListener("DOMContentLoaded", fetchRecent);
-  document.addEventListener('openshelf:languagechange', fetchRecent);
+  document.addEventListener('dotori:languagechange', fetchRecent);
 
   function fetchRecent() {
     fetch('/files/api/v1/recent/')

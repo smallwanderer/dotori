@@ -1,6 +1,6 @@
 {% extends "files/base.html" %}
 
-{% block title %}파일 업로드 | Openshelf{% endblock %}
+{% block title %}파일 업로드 | 도토리 문서{% endblock %}
 
 {% block extra_head %}
 {{ block.super }}
@@ -197,8 +197,8 @@
 
 {% block extra_scripts %}
 <script>
-  if (window.OpenShelfI18n) {
-    window.OpenShelfI18n.register({
+  if (window.DotoriI18n) {
+    window.DotoriI18n.register({
       ko: {
         uploadTitle: '파일 업로드',
         uploadDropTitle: '파일을 여기에 끌어다 놓으세요',
@@ -240,7 +240,7 @@
     });
   }
   function t(key, ...args) {
-    return window.OpenShelfI18n ? window.OpenShelfI18n.t(key, ...args) : key;
+    return window.DotoriI18n ? window.DotoriI18n.t(key, ...args) : key;
   }
   const zone    = document.getElementById('uploadZone');
   const input   = document.getElementById('fileInput');
@@ -251,7 +251,7 @@
   const aiProcessingEnabled = document.getElementById('aiProcessingEnabled');
 
   let files = [];
-  document.addEventListener('openshelf:languagechange', renderQueue);
+  document.addEventListener('dotori:languagechange', renderQueue);
 
   function getIcon(name) {
     const ext = name.split('.').pop().toLowerCase();

@@ -1,10 +1,10 @@
 {% extends "accounts/base.html" %}
 
-{% block title %}Create Account | Openshelf{% endblock %}
+{% block title %}Create Account | Dotori for Document{% endblock %}
 
 {% block auth_header %}
 <h1>Create your account</h1>
-<p>Start using Openshelf with your email address.</p>
+<p>Start using Dotori for Document with your email address.</p>
 {% endblock %}
 
 {% block auth_body %}
@@ -38,6 +38,30 @@
     {% if form.non_field_errors %}
     <p class="field-error">{{ form.non_field_errors.0 }}</p>
     {% endif %}
+
+    <div class="auth-checks">
+        <label class="auth-check-row" for="{{ form.terms_agreed.id_for_label }}">
+            {{ form.terms_agreed }}
+            <span>
+                I agree to the
+                <a href="{% url 'accounts:legal_document' document='terms' %}" target="_blank" rel="noopener">Terms of Service</a>.
+            </span>
+        </label>
+        {% if form.terms_agreed.errors %}
+        <p class="field-error">{{ form.terms_agreed.errors.0 }}</p>
+        {% endif %}
+
+        <label class="auth-check-row" for="{{ form.privacy_agreed.id_for_label }}">
+            {{ form.privacy_agreed }}
+            <span>
+                I agree to the
+                <a href="{% url 'accounts:legal_document' document='privacy' %}" target="_blank" rel="noopener">Privacy Policy</a>.
+            </span>
+        </label>
+        {% if form.privacy_agreed.errors %}
+        <p class="field-error">{{ form.privacy_agreed.errors.0 }}</p>
+        {% endif %}
+    </div>
 
     <button type="submit" class="btn btn-primary auth-submit">Create account</button>
 </form>

@@ -1,6 +1,6 @@
-# OpenShelf
+# 도토리 문서
 
-**OpenShelf는 개인 또는 소규모 팀이 직접 운영할 수 있는 가벼운 문서 검색 및 RAG 시스템입니다.**
+**도토리 문서는 개인 또는 소규모 팀이 직접 운영할 수 있는 가벼운 문서 검색 및 RAG 시스템입니다.**
 
 <p align="center">
  <img src = "https://github.com/user-attachments/assets/263cba6d-04f6-49ba-9ccb-85481157539a", width="80%">
@@ -16,7 +16,7 @@
 
 ## 무엇을 하는 시스템인가요?
 
-OpenShelf는 개인 문서나 팀 문서를 웹 화면에서 관리하고, 업로드된 문서에 대해 검색과 질문 답변을 수행하는 시스템입니다.
+도토리 문서는 개인 문서나 팀 문서를 웹 화면에서 관리하고, 업로드된 문서에 대해 검색과 질문 답변을 수행하는 시스템입니다.
 
 - 파일과 폴더를 웹 UI에서 관리합니다.
 - 문서를 비동기 worker가 파싱하고 임베딩합니다.
@@ -90,8 +90,8 @@ Windows에서는 Docker Desktop의 WSL2 backend 사용을 권장합니다.
 ## 빠른 시작
 
 ```bash
-git clone https://github.com/smallwanderer/local-openshelf.git
-cd local-openshelf
+git clone https://github.com/smallwanderer/dotori.git
+cd dotori
 cp .env.example .env
 docker compose up -d --build
 docker compose exec app python manage.py createsuperuser
@@ -133,6 +133,13 @@ http://localhost:8888/
 | `DJANGO_SECRET_KEY` | Django secret key. 실제 운영에서는 반드시 변경해야 합니다. |
 | `DJANGO_ALLOWED_HOSTS` | 접속을 허용할 도메인 또는 IP |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | 브라우저 요청을 신뢰할 origin |
+| `NGINX_SERVER_NAME` | Nginx가 요청을 받을 서버 이름. 개발 환경 기본값은 `_` |
+| `LETSENCRYPT_DOMAIN` | Let’s Encrypt 인증서를 발급받고 Nginx 인증서 경로에서 사용할 도메인 |
+| `LETSENCRYPT_EMAIL` | Let’s Encrypt 인증서 발급/만료 알림 이메일 |
+| `DJANGO_SECURE_PROXY_SSL_HEADER` | Nginx HTTPS 프록시 헤더를 Django가 신뢰할지 여부 |
+| `DJANGO_SECURE_SSL_REDIRECT` | Django 레벨 HTTPS 리다이렉트 여부 |
+| `DJANGO_SESSION_COOKIE_SECURE` | 세션 쿠키를 HTTPS 전용으로 설정 |
+| `DJANGO_CSRF_COOKIE_SECURE` | CSRF 쿠키를 HTTPS 전용으로 설정 |
 | `POSTGRES_*` | PostgreSQL 접속 정보 |
 | `HF_TOKEN` | 모델 다운로드에 필요한 Hugging Face token |
 | `EMBEDDING_MODEL` | 임베딩 모델. 기본값은 BGE-M3 |
@@ -144,6 +151,8 @@ http://localhost:8888/
 | `RAG_RETRIEVAL_THRESHOLD` | RAG dense similarity threshold |
 | `RAG_EVIDENCE_LIMIT` | RAG prompt에 넣을 최대 근거 수 |
 | `QUERY_FRONTEND_MODE` | Query parser 사용 방식. 기본은 passthrough |
+
+운영 HTTPS 인증서는 별도 [docker-compose.certbot.yml](docker-compose.certbot.yml)로 발급/갱신합니다. Nginx는 `./data/certbot/www`와 `./data/certbot/conf`만 공유해서 challenge 파일과 인증서를 읽습니다. 일반적인 단일 도메인 배포에서는 `NGINX_SERVER_NAME`과 `LETSENCRYPT_DOMAIN`을 같은 값으로 설정합니다.
 
 ## 테스트
 

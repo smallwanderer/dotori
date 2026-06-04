@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}설정 - Openshelf{% endblock %}
+{% block title %}설정 - 도토리 문서{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -30,10 +30,10 @@
 /* Create form */
 .create-form{display:flex;gap:10px;padding:0 24px 20px;flex-wrap:wrap}
 .create-form input[type=text]{flex:1;min-width:200px;padding:9px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:14px;font-family:var(--font);outline:none;transition:border-color .15s,box-shadow .15s}
-.create-form input[type=text]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.create-form input[type=text]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(168,102,56,.1)}
 
 /* New token banner */
-.new-token-banner{margin:0 24px 16px;padding:14px 16px;background:linear-gradient(135deg,rgba(34,197,94,.08),rgba(37,99,235,.08));border:1px solid rgba(34,197,94,.25);border-radius:var(--radius);animation:bannerIn .4s ease}
+.new-token-banner{margin:0 24px 16px;padding:14px 16px;background:linear-gradient(135deg,rgba(34,197,94,.08),rgba(168,102,56,.08));border:1px solid rgba(34,197,94,.25);border-radius:var(--radius);animation:bannerIn .4s ease}
 @keyframes bannerIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
 .new-token-banner .banner-title{font-size:13px;font-weight:600;color:var(--success);margin-bottom:8px;display:flex;align-items:center;gap:6px}
 .new-token-banner .banner-title svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2.5}
@@ -86,7 +86,7 @@
 .form-field{display:flex;flex-direction:column;gap:5px}
 .form-field label{font-size:13px;font-weight:500;color:var(--text)}
 .form-input{padding:9px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:14px;font-family:var(--font);outline:none;transition:border-color .15s,box-shadow .15s}
-.form-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.form-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(168,102,56,.1)}
 .form-hint{font-size:11px;color:var(--muted);margin-top:2px}
 .form-actions{padding-top:4px}
 
