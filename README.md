@@ -2,6 +2,7 @@
 
 **Dotori for Document is a Self-hosted full-stack document retriever and RAG system for personal and small-team use.**
 
+<p align="center">
  <img src = "https://github.com/user-attachments/assets/d2d3c462-569b-4d84-b55f-b7adbbc831b9", width="80%">
 </p>
 
