@@ -1,16 +1,14 @@
 # Dotori for Document
 
-**Dotori for Document is a lightweight full-stack document retriever and RAG system for personal and small-team use.**
+**Dotori for Document is a Self-hosted full-stack document retriever and RAG system for personal and small-team use.**
 
-<p align="center">
- <img src = "https://github.com/user-attachments/assets/263cba6d-04f6-49ba-9ccb-85481157539a", width="80%">
+ <img src = "https://github.com/user-attachments/assets/d2d3c462-569b-4d84-b55f-b7adbbc831b9", width="80%">
 </p>
 
-<p align="center">
- <img src = "https://github.com/user-attachments/assets/d240cf34-1dfb-462e-8366-3f0d3e4a435f", width="80%">
-</p>
+Dotori is built for english and korean user both.
+Storage is splitted in accounts, allows teams to use it.
 
-It combines file storage, document parsing, hybrid vector retrieval, and retrieval-augmented generation in a Docker Compose stack that can run on a server or a Windows machine with Docker Desktop.
+Dotori combines file storage, IR System and retrieval-augmented generation in a Docker Compose stack that can run on a server or a Windows machine with Docker Desktop.
 
 Korean documentation is available in [README.ko.md](README.ko.md). A step-by-step setup guide is available in [WALKTHROUGH.md](WALKTHROUGH.md).
 
@@ -18,12 +16,10 @@ Korean documentation is available in [README.ko.md](README.ko.md). A step-by-ste
 
 Dotori for Document helps you keep documents in a private web workspace and ask questions over them.
 
-- Upload and manage files and folders through a Django web UI.
-- Parse documents asynchronously with Celery workers.
-- Store document embeddings in PostgreSQL with pgvector.
-- Search documents with dense/sparse hybrid retrieval.
-- Ask RAG questions and receive answers with citations.
-- Run the full system locally or on a small server using Docker Compose.
+- Upload and manage files and folders through a web UI.
+- Search documents with natural language query.
+- Ask RAG questions and receive answers just for your knowledge.
+- Run the full system in your hardware, no data will be sent! Full Privacy 
 
 ## Current Release
 
@@ -31,45 +27,11 @@ Dotori for Document helps you keep documents in a private web workspace and ask 
 
 This release is source-based. Docker images are not published yet. Deploy by checking out the release tag and building with Docker Compose.
 
-## Architecture
-
-```text
-nginx
-  -> app
-      Django web UI, file APIs, task enqueueing
-
-redis
-  -> Celery broker
-
-db
-  PostgreSQL + pgvector
-
-celery-core-worker
-  document parsing, chunking, embedding
-
-celery-search-worker
-  query embedding, hybrid retrieval, search jobs
-
-celery-llm-rag-worker
-  RAG answer generation
-
-celery-query-worker
-  experimental query parsing
-
-celery-text2sql-worker
-  experimental Text2SQL tasks
-
-llm-parser
-  llama.cpp-compatible local LLM endpoint
-```
-
-The web container stays lightweight. Heavy parsing, embedding, retrieval, and LLM work runs in worker containers.
-
 ## Main Features
 
-- File and folder management with authenticated access.
-- Asynchronous document AI pipeline.
-- BGE-M3 based dense/sparse hybrid retrieval.
+- File and folder management with authenticated access, sperated to one onther.
+- Asynchronous document AI pipeline. 
+- Vector based dense/sparse hybrid retrieval.
 - RAG question workspace with citation display.
 - Embedding-based contextual compression for search and RAG evidence.
 - Local desktop sync API groundwork for Shelf-Sync.
@@ -123,6 +85,7 @@ http://localhost:8888/
 ```
 
 See [WALKTHROUGH.md](WALKTHROUGH.md) for server and Windows-specific setup steps.
+
 
 ## Important Configuration
 
