@@ -1,0 +1,19 @@
+{
+  "uploadTitle": "Upload files",
+  "uploadDropTitle": "Drop files here",
+  "uploadDropBody": "Or click the button to choose files",
+  "selectFiles": "Choose files",
+  "maxFileSize": "Maximum file size: 100MB",
+  "supportedTypes": "Supported types: PDF, images, documents, other",
+  "multiUpload": "Multiple files can be uploaded at once",
+  "clearAll": "Clear all",
+  "startUpload": "Start upload",
+  "waiting": "Waiting",
+  "remove": "Remove",
+  "aiProcessingOption": "Analyze with AI after upload",
+  "aiProcessingOptionHelp": "Turn this off to exclude files from parsing, embedding, and RAG search.",
+  "uploading": "Uploading",
+  "uploadingProgress": "Uploading...",
+  "uploadDone": "Done",
+  "uploadFailed": "Failed"
+}

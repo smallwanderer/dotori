@@ -1,0 +1,14 @@
+{
+  "recentTitle": "최근 파일",
+  "name": "이름",
+  "type": "형식",
+  "size": "크기",
+  "uploadedDate": "업로드 날짜",
+  "noRecentTitle": "최근 파일이 없습니다",
+  "noRecentBody": "최근 7일 내에 업로드된 파일이 없습니다",
+  "upload": "파일 업로드",
+  "recentCount": "최근 7일 · {0}개",
+  "file": "파일",
+  "folder": "폴더",
+  "download": "다운로드"
+}

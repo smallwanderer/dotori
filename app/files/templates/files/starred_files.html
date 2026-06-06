@@ -36,38 +36,7 @@
 {% block extra_scripts %}
 <script>
   if (window.DotoriI18n) {
-    window.DotoriI18n.register({
-      ko: {
-        starredTitle: '즐겨찾기',
-        name: '이름',
-        type: '형식',
-        size: '크기',
-        uploadedDate: '업로드 날짜',
-        noStarredTitle: '즐겨찾기한 파일이 없습니다',
-        noStarredBody: '파일 목록에서 ⭐ 버튼을 눌러 즐겨찾기에 추가하세요',
-        backToFileList: '파일 목록으로',
-        fileCount: count => `${count}개 파일`,
-        file: '파일',
-        folder: '폴더',
-        unstar: '즐겨찾기 해제',
-        download: '다운로드',
-      },
-      en: {
-        starredTitle: 'Starred',
-        name: 'Name',
-        type: 'Type',
-        size: 'Size',
-        uploadedDate: 'Uploaded date',
-        noStarredTitle: 'No starred files',
-        noStarredBody: 'Use the star button in the file list to add favorites.',
-        backToFileList: 'Back to files',
-        fileCount: count => `${count} files`,
-        file: 'File',
-        folder: 'Folder',
-        unstar: 'Unstar',
-        download: 'Download',
-      },
-    });
+    window.DotoriI18n.loadNamespace('starred_files');
   }
   function t(key, ...args) {
     return window.DotoriI18n ? window.DotoriI18n.t(key, ...args) : key;

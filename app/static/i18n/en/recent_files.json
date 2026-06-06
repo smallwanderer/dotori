@@ -1,0 +1,14 @@
+{
+  "recentTitle": "Recent files",
+  "name": "Name",
+  "type": "Type",
+  "size": "Size",
+  "uploadedDate": "Uploaded date",
+  "noRecentTitle": "No recent files",
+  "noRecentBody": "No files were uploaded in the last 7 days.",
+  "upload": "Upload files",
+  "recentCount": "Last 7 days · {0}",
+  "file": "File",
+  "folder": "Folder",
+  "download": "Download"
+}

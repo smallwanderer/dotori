@@ -8,7 +8,7 @@ from django.conf import settings
 from django.test import TestCase, override_settings
 
 from config.enums import AIStatus
-from document_ai.models import RAGJob, SearchJob
+from document_ai.models import LLMProvider, RAGJob, SearchJob, UserLLMPreference
 from document_ai.search.views import EMPTY_SCOPE_SENTINEL, _expand_scope_node_ids
 from document_ai.search.query_frontend import prepare_retrieval_query
 from document_ai.tasks import generate_rag_response
@@ -83,6 +83,65 @@ class RAGFlowTests(TestCase):
         self.assertEqual(rag_job.search_job, search_job)
         self.assertEqual(rag_job.status, AIStatus.PENDING)
         apply_async.assert_called_once_with(args=[search_job.id], queue="search")
+
+    def test_rag_request_snapshots_selected_user_llm_provider(self):
+        provider = LLMProvider.objects.create(
+            owner=self.user,
+            name="Local Ollama",
+            provider_type=LLMProvider.PROVIDER_OLLAMA,
+            base_url="http://host.docker.internal:11434/v1",
+            default_model="llama3.1:8b",
+        )
+        UserLLMPreference.objects.create(
+            user=self.user,
+            rag_provider=provider,
+            rag_model="qwen2.5:7b",
+        )
+
+        with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
+            apply_async.return_value = SimpleNamespace(id="search-task-id")
+            response = self.client.post(
+                "/api/document-ai/v1/rag/",
+                data={
+                    "question": "선택 모델로 답변해줘",
+                    "top_k": 3,
+                    "language": "ko",
+                },
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 202)
+        rag_job = RAGJob.objects.get(pk=response.json()["job_id"])
+        self.assertEqual(rag_job.llm_provider, provider)
+        self.assertEqual(rag_job.llm_provider_name, "Local Ollama")
+        self.assertEqual(rag_job.llm_base_url, "http://host.docker.internal:11434")
+        self.assertEqual(rag_job.llm_model, "qwen2.5:7b")
+
+    @patch.dict("os.environ", {"RAG_LLM_URL": "http://server-rag:8080/v1"})
+    def test_rag_request_snapshots_selected_server_model_without_external_provider(self):
+        UserLLMPreference.objects.create(
+            user=self.user,
+            rag_model="server-qwen",
+        )
+
+        with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
+            apply_async.return_value = SimpleNamespace(id="search-task-id")
+            response = self.client.post(
+                "/api/document-ai/v1/rag/",
+                data={
+                    "question": "서버 모델로 답변해줘",
+                    "top_k": 3,
+                    "language": "ko",
+                },
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 202)
+        rag_job = RAGJob.objects.get(pk=response.json()["job_id"])
+        self.assertIsNone(rag_job.llm_provider)
+        self.assertEqual(rag_job.llm_provider_name, "Server default")
+        self.assertEqual(rag_job.llm_base_url, "http://server-rag:8080")
+        self.assertEqual(rag_job.llm_model, "server-qwen")
 
     def test_rag_request_accepts_explicit_retrieval_threshold(self):
         with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
@@ -233,6 +292,56 @@ class RAGFlowTests(TestCase):
         final_user_prompt = request_payload["messages"][-1]["content"]
         self.assertIn("압축 근거", final_user_prompt)
         self.assertNotIn("넓은 문맥입니다", final_user_prompt)
+
+    def test_generate_rag_response_uses_snapshotted_llm_endpoint_and_model(self):
+        provider = LLMProvider.objects.create(
+            owner=self.user,
+            name="Local llama.cpp",
+            provider_type=LLMProvider.PROVIDER_LLAMA_CPP,
+            base_url="http://llm-runtime:8080",
+            default_model="gemma-local",
+            api_key="local-secret",
+        )
+        search_job = SearchJob.objects.create(
+            owner=self.user,
+            query="대책 요약",
+            top_k=3,
+            status=AIStatus.COMPLETED,
+            results=_search_results(),
+        )
+        rag_job = RAGJob.objects.create(
+            owner=self.user,
+            search_job=search_job,
+            question="대책 요약",
+            top_k=3,
+            language="ko",
+            llm_provider=provider,
+            llm_provider_name=provider.name,
+            llm_base_url=provider.normalized_base_url,
+            llm_model="gemma-selected",
+        )
+
+        class FakeResponse:
+            status_code = 200
+            text = ""
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"choices": [{"message": {"content": "공급 확대와 할인 지원입니다 [1]."}}]}
+
+        fake_semaphore = SimpleNamespace(acquire=lambda timeout=None: None, release=lambda: None)
+
+        with patch("requests.post", return_value=FakeResponse()) as post, patch(
+            "redis.Redis.from_url", return_value=object()
+        ), patch("redis_semaphore.Semaphore", return_value=fake_semaphore):
+            result = generate_rag_response(rag_job.id)
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(post.call_args.args[0], "http://llm-runtime:8080/v1/chat/completions")
+        self.assertEqual(post.call_args.kwargs["json"]["model"], "gemma-selected")
+        self.assertEqual(post.call_args.kwargs["headers"]["Authorization"], "Bearer local-secret")
 
     def test_query_frontend_keeps_querydsl_experimental_and_passthrough(self):
         plan = prepare_retrieval_query("지난주 pdf 계약 문서", mode="rag")

@@ -1277,86 +1277,9 @@
   const currentFolderUid = '{{ current_folder_uid|default:"" }}';
   const STATUS_ICON_BASE = '{% static "assets/status" %}';
 
-  const UI_TEXT = {
-    ko: {
-      upload: '파일 업로드',
-      newFolder: '새 폴더',
-      normalSearch: '일반 검색',
-      aiSearch: 'AI 검색',
-      recentAiHistory: '최근 AI 검색 기록',
-      viewAll: '전체 보기',
-      searchPlaceholder: '파일 검색...',
-      aiPlaceholder: '문서 본문 AI 검색...',
-      move: '이동',
-      restore: '복원',
-      delete: '삭제',
-      clearSelection: '선택 해제',
-      askRag: '질문하기',
-      selected: count => `${count}개 선택됨`,
-      fileCount: count => `${count}개 파일`,
-      folder: '폴더',
-      download: '다운로드',
-      retry: '재시도',
-      disableAi: 'AI 제외',
-      enableAi: 'AI 허용',
-      aiDisabled: 'AI 분석 제외됨',
-      uploading: '업로드 중',
-      uploadDone: '완료',
-      uploadFailed: '실패',
-      emptyTitle: '업로드된 파일이 없습니다',
-      emptyBody: '파일을 업로드하면 여기에 표시됩니다',
-      aiReadyTitle: 'AI 분석 준비 상태',
-      aiReadyLoading: '상태를 불러오는 중입니다.',
-      aiReadyNoFiles: '업로드된 파일이 없습니다.',
-      aiReadyAll: '모든 파일이 AI 검색/RAG 준비 완료 상태입니다.',
-      aiReadyNone: '아직 AI 검색/RAG에 사용할 수 있는 문서가 없습니다.',
-      aiReadyPartial: (ready) => `${ready}개 문서가 AI 검색/RAG에 준비되었습니다.`,
-      searchableInitial: '검색 가능 0/0',
-      searchable: (ready, total) => `검색 가능 ${ready}/${total}`,
-      parseStats: (completed, processing, failed) => `파싱 ${completed} 완료 · ${processing} 진행 · ${failed} 실패`,
-      embeddingStats: (completed, processing, failed) => `임베딩 ${completed} 완료 · ${processing} 진행 · ${failed} 실패`,
-    },
-    en: {
-      upload: 'Upload',
-      newFolder: 'New folder',
-      normalSearch: 'Search',
-      aiSearch: 'AI search',
-      recentAiHistory: 'Recent AI search history',
-      viewAll: 'View all',
-      searchPlaceholder: 'Search files...',
-      aiPlaceholder: 'Search document content with AI...',
-      move: 'Move',
-      restore: 'Restore',
-      delete: 'Delete',
-      clearSelection: 'Clear',
-      askRag: 'Ask',
-      selected: count => `${count} selected`,
-      fileCount: count => `${count} files`,
-      folder: 'Folder',
-      download: 'Download',
-      retry: 'Retry',
-      disableAi: 'Disable AI',
-      enableAi: 'Enable AI',
-      aiDisabled: 'AI analysis disabled',
-      uploading: 'Uploading',
-      uploadDone: 'Done',
-      uploadFailed: 'Failed',
-      emptyTitle: 'No files uploaded',
-      emptyBody: 'Uploaded files will appear here',
-      aiReadyTitle: 'AI analysis readiness',
-      aiReadyLoading: 'Loading status.',
-      aiReadyNoFiles: 'No files uploaded.',
-      aiReadyAll: 'All files are ready for AI search/RAG.',
-      aiReadyNone: 'No documents are available for AI search/RAG yet.',
-      aiReadyPartial: (ready) => `${ready} documents are ready for AI search/RAG.`,
-      searchableInitial: 'Searchable 0/0',
-      searchable: (ready, total) => `Searchable ${ready}/${total}`,
-      parseStats: (completed, processing, failed) => `Parse ${completed} done · ${processing} running · ${failed} failed`,
-      embeddingStats: (completed, processing, failed) => `Embedding ${completed} done · ${processing} running · ${failed} failed`,
-    },
-  };
+  // Load file_list i18n namespace from external JSON
   if (window.DotoriI18n) {
-    window.DotoriI18n.register(UI_TEXT);
+    window.DotoriI18n.loadNamespace('file_list');
   }
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -1432,8 +1355,7 @@
     if (window.DotoriI18n) {
       return window.DotoriI18n.t(key, ...args);
     }
-    const value = UI_TEXT.ko[key];
-    return typeof value === 'function' ? value(...args) : value;
+    return key;
   }
 
   function applyLanguage() {

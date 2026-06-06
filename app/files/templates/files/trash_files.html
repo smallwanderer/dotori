@@ -51,52 +51,7 @@
 {% block extra_scripts %}
 <script>
   if (window.DotoriI18n) {
-    window.DotoriI18n.register({
-      ko: {
-        trashTitle: '휴지통',
-        emptyTrash: '휴지통 비우기',
-        restoreSelected: '선택 항목 복원',
-        clearSelection: '선택 해제',
-        trashRetentionNotice: '휴지통 파일은 자동 삭제 전 7일 동안 보관됩니다.',
-        name: '이름',
-        size: '크기',
-        deletedOn: '삭제 날짜',
-        autoDeleteIn: '자동 삭제까지',
-        trashIconText: '휴지통',
-        trashEmptyTitle: '휴지통이 비어 있습니다',
-        trashEmptyBody: '삭제한 파일은 7일 동안 여기에 표시됩니다.',
-        selected: count => `${count}개 선택됨`,
-        daysLeft: count => `${count}일`,
-        restore: '복원',
-        deletePermanently: '영구 삭제',
-        restoreSelectedFailed: '선택 항목을 복원할 수 없습니다.',
-        restoreFailed: '이 항목을 복원할 수 없습니다.',
-        confirmPermanentDelete: '이 항목을 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다.',
-        confirmEmptyTrash: '휴지통을 비울까요? 이후에는 복원할 수 없습니다.',
-      },
-      en: {
-        trashTitle: 'Trash',
-        emptyTrash: 'Empty trash',
-        restoreSelected: 'Restore selected',
-        clearSelection: 'Clear',
-        trashRetentionNotice: 'Trashed files are kept for 7 days before automatic removal.',
-        name: 'Name',
-        size: 'Size',
-        deletedOn: 'Deleted on',
-        autoDeleteIn: 'Auto delete in',
-        trashIconText: 'Trash',
-        trashEmptyTitle: 'Your trash is empty',
-        trashEmptyBody: 'Deleted files will appear here for 7 days.',
-        selected: count => `${count} selected`,
-        daysLeft: count => `${count} day${count === 1 ? '' : 's'}`,
-        restore: 'Restore',
-        deletePermanently: 'Delete permanently',
-        restoreSelectedFailed: 'Unable to restore selected items.',
-        restoreFailed: 'Unable to restore this item.',
-        confirmPermanentDelete: 'Permanently delete this item? This cannot be undone.',
-        confirmEmptyTrash: 'Empty the trash? Restoring these items will no longer be possible.',
-      },
-    });
+    window.DotoriI18n.loadNamespace('trash_files');
   }
   function t(key, ...args) {
     return window.DotoriI18n ? window.DotoriI18n.t(key, ...args) : key;

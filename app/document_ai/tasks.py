@@ -1421,9 +1421,10 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
     from redis_semaphore import NotAvailable, Semaphore
 
     from document_ai.models import RAGJob
+    from document_ai.services.llm_provider_service import resolve_rag_llm_request_config
 
     try:
-        rag_job = RAGJob.objects.select_related("search_job").get(pk=rag_job_id)
+        rag_job = RAGJob.objects.select_related("search_job", "llm_provider").get(pk=rag_job_id)
     except RAGJob.DoesNotExist:
         logger.error("RAG job %s not found", rag_job_id)
         return {"status": "failed", "job_id": rag_job_id, "error": f"RAG job {rag_job_id} not found"}
@@ -1440,7 +1441,7 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
     rag_job.error_message = ""
     rag_job.save(update_fields=["status", "started_at", "error_message"])
 
-    llm_base_url = os.getenv("RAG_LLM_URL", os.getenv("TEXT2SQL_LLM_URL", "http://llm-parser:8080")).rstrip("/")
+    llm_config = resolve_rag_llm_request_config(rag_job)
     redis_url = os.getenv("RAG_REDIS_URL", os.getenv("TEXT2SQL_REDIS_URL", os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")))
     semaphore_count = _get_positive_int_env("RAG_SEMAPHORE_COUNT", _get_positive_int_env("TEXT2SQL_SEMAPHORE_COUNT", 1))
     semaphore_timeout = _get_positive_int_env("RAG_SEMAPHORE_TIMEOUT", _get_positive_int_env("TEXT2SQL_SEMAPHORE_TIMEOUT", 5))
@@ -1526,7 +1527,7 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
 
     try:
         payload = {
-            "model": os.getenv("RAG_LLM_MODEL", "google/gemma-4-E4B-it"),
+            "model": llm_config.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": fewshot_user},
@@ -1540,8 +1541,9 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
             "reasoning_format": "none",
         }
         response = requests.post(
-            f"{llm_base_url}/v1/chat/completions",
+            llm_config.chat_completions_url,
             json=payload,
+            headers=llm_config.headers,
             timeout=(5, request_timeout),
         )
         try:

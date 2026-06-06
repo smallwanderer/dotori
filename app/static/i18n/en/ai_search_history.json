@@ -1,0 +1,14 @@
+{
+  "aiSearchHistoryFull": "All AI Search History",
+  "answerFailed": "Failed to generate an answer or the content is empty.",
+  "viewCitationsPrefix": "View references (",
+  "viewCitationsSuffix": ")",
+  "sourceDoc": "Source Document",
+  "noCitations": "No references available.",
+  "noSearchHistory": "No search history",
+  "noSearchHistoryDesc": "Your AI search history will appear here.",
+  "firstPage": "&laquo; First",
+  "prevPage": "Prev",
+  "nextPage": "Next",
+  "lastPage": "Last &raquo;"
+}

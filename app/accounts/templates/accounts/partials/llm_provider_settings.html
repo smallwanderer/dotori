@@ -1,0 +1,110 @@
+<div class="card settings-section">
+  <div class="section-title-row">
+    <h2>
+      <svg viewBox="0 0 24 24"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>RAG 모델</span>
+    </h2>
+    <span class="token-count-badge">{{ effective_rag_target.source }}</span>
+  </div>
+  <p class="section-desc">
+    기본적으로 현재 서버가 제공하는 모델을 사용합니다. 별도 Ollama, llama.cpp, vLLM, 외부 API endpoint가 있으면 아래에서 추가해 RAG 답변 대상으로 선택할 수 있습니다.
+  </p>
+
+  <div class="token-list" style="border-top:none;">
+    <div class="token-item">
+      <div class="token-info">
+        <div class="token-name-row">
+          <span class="token-name">현재 사용 대상</span>
+          <span class="token-status active">{{ effective_rag_target.provider_type }}</span>
+        </div>
+        <div class="token-key-row">
+          <span class="token-key-masked">{{ effective_rag_target.base_url }} · {{ effective_rag_target.model }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <form method="post" class="create-form" style="margin-top:16px;">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="set_rag_model">
+    <input type="hidden" name="rag_provider_id" value="">
+    <select name="rag_model">
+      {% for model in server_rag_model_choices %}
+      <option value="{{ model }}" {% if effective_rag_target.source == "server" and effective_rag_target.model == model %}selected{% endif %}>{{ model }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-primary">서버 모델 사용</button>
+  </form>
+  <p class="section-desc" style="padding-top:0;">
+    서버 endpoint: <code>{{ server_rag_base_url }}</code>
+  </p>
+
+  <div class="section-title-row" style="padding-top:8px;">
+    <h2>
+      <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93"/><path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.12a5 5 0 0 0 7.07 7.07L13 19.07"/></svg>
+      <span>외부 endpoint</span>
+    </h2>
+    <span class="token-count-badge">{{ llm_providers|length }}</span>
+  </div>
+  <p class="section-desc">
+    이미 실행 중인 OpenAI-compatible endpoint를 추가합니다. 이 설정은 컨테이너나 모델을 실행하지 않고, RAG worker가 해당 URL로 요청을 보내도록 합니다.
+  </p>
+
+  <form method="post" class="create-form">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="create_llm_provider">
+    <input type="text" name="provider_name" placeholder="이름 (예: Local Ollama)" required>
+    <select name="provider_type">
+      {% for value,label in llm_provider_types %}
+      <option value="{{ value }}">{{ label }}</option>
+      {% endfor %}
+    </select>
+    <input type="url" name="base_url" placeholder="http://host.docker.internal:11434" required>
+    <input type="text" name="default_model" placeholder="모델명 (예: llama3.1:8b)" required>
+    <button type="submit" class="btn btn-primary">추가</button>
+    <input type="password" name="api_key" class="secret-input" placeholder="API key (선택)" autocomplete="off">
+  </form>
+
+  {% if llm_providers %}
+  <div class="token-list" style="margin-top:16px;">
+    {% for provider in llm_providers %}
+    <div class="token-item">
+      <div class="token-info">
+        <div class="token-name-row">
+          <span class="token-name">{{ provider.name }}</span>
+          <span class="token-status {% if provider.is_active %}active{% else %}inactive{% endif %}">{{ provider.get_provider_type_display }}</span>
+        </div>
+        <div class="token-key-row">
+          <span class="token-key-masked">{{ provider.base_url }} · {{ provider.default_model }}</span>
+        </div>
+      </div>
+      <div class="token-actions">
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="set_rag_model">
+          <input type="hidden" name="rag_provider_id" value="{{ provider.id }}">
+          <input type="hidden" name="rag_model" value="{{ provider.default_model }}">
+          <button type="submit" class="icon-btn-sm" title="RAG에 사용">
+            <svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+          </button>
+        </form>
+        <form method="post" onsubmit="return confirm('이 endpoint를 삭제하시겠습니까?')">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="delete_llm_provider">
+          <input type="hidden" name="provider_id" value="{{ provider.id }}">
+          <button type="submit" class="icon-btn-sm danger" title="삭제">
+            <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="token-empty">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+    <p>등록된 외부 endpoint가 없습니다.</p>
+    <p class="sub">서버 기본 모델만 사용하려면 추가 설정이 필요하지 않습니다.</p>
+  </div>
+  {% endif %}
+</div>

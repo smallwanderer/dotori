@@ -22,6 +22,7 @@ from document_ai.search.serializers import (
     VectorTuningRequestSerializer,
 )
 from document_ai.search.query_frontend import prepare_retrieval_query
+from document_ai.services.llm_provider_service import build_rag_llm_snapshot
 from document_ai.tasks import generate_rag_response, perform_vector_search
 from files.models import Node, NodeType
 
@@ -223,6 +224,7 @@ class RAGView(APIView):
             top_k=top_k,
             language=serializer.validated_data.get("language", "ko"),
             node_ids=[str(node_id) for node_id in node_ids],
+            **build_rag_llm_snapshot(request.user),
         )
 
         return Response(

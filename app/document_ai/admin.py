@@ -11,8 +11,10 @@ from document_ai.models import (
     ChunkEmbedding,
     DocumentChunk,
     DocumentParseResult,
+    LLMProvider,
     RAGJob,
     SearchJob,
+    UserLLMPreference,
 )
 from document_ai.tasks import enqueue_embedding_tasks, generate_rag_response, perform_vector_search
 
@@ -365,6 +367,7 @@ class RAGJobAdmin(admin.ModelAdmin):
         "question_preview",
         "status",
         "search_status",
+        "llm_model",
         "citation_count",
         "task_id",
         "created_at",
@@ -373,6 +376,7 @@ class RAGJobAdmin(admin.ModelAdmin):
     list_filter = (
         "status",
         "language",
+        "llm_provider_name",
         "created_at",
         "started_at",
         "completed_at",
@@ -383,6 +387,8 @@ class RAGJobAdmin(admin.ModelAdmin):
         "owner__email",
         "task_id",
         "error_message",
+        "llm_provider_name",
+        "llm_model",
     )
     readonly_fields = (
         "owner",
@@ -391,6 +397,9 @@ class RAGJobAdmin(admin.ModelAdmin):
         "answer",
         "citations_pretty",
         "error_message",
+        "llm_provider_name",
+        "llm_base_url",
+        "llm_model",
         "task_id",
         "started_at",
         "completed_at",
@@ -398,11 +407,11 @@ class RAGJobAdmin(admin.ModelAdmin):
         "updated_at",
         "citation_count",
     )
-    raw_id_fields = ("owner", "search_job")
+    raw_id_fields = ("owner", "search_job", "llm_provider")
     actions = ("requeue_selected_rag_jobs",)
     date_hierarchy = "created_at"
     ordering = ("-created_at",)
-    list_select_related = ("owner", "search_job")
+    list_select_related = ("owner", "search_job", "llm_provider")
 
     @admin.display(description="Owner")
     def owner_email(self, obj):
@@ -451,6 +460,33 @@ class RAGJobAdmin(admin.ModelAdmin):
             )
             queued += 1
         self.message_user(request, f"Requeued {queued} RAG jobs.", messages.SUCCESS)
+
+
+@admin.register(LLMProvider)
+class LLMProviderAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "name",
+        "owner",
+        "provider_type",
+        "base_url",
+        "default_model",
+        "is_active",
+        "updated_at",
+    )
+    list_filter = ("provider_type", "is_active", "created_at", "updated_at")
+    search_fields = ("name", "base_url", "default_model", "owner__email")
+    raw_id_fields = ("owner",)
+    readonly_fields = ("created_at", "updated_at", "last_checked_at", "last_check_status", "last_check_message")
+    ordering = ("owner__email", "name")
+
+
+@admin.register(UserLLMPreference)
+class UserLLMPreferenceAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "rag_provider", "rag_model", "updated_at")
+    search_fields = ("user__email", "rag_model", "rag_provider__name")
+    raw_id_fields = ("user", "rag_provider")
+    readonly_fields = ("created_at", "updated_at")
 
 
 try:

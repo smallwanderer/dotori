@@ -14,6 +14,13 @@ from .forms import EmailAuthenticationForm, ResendVerificationEmailForm, UserReg
 from .models import User, APIToken, SyncQuota
 from .services import send_account_activation_email
 from .tokens import account_activation_token
+from document_ai.models import LLMProvider
+from document_ai.services.llm_provider_service import (
+    delete_llm_provider,
+    get_user_llm_settings_context,
+    set_user_rag_model,
+    upsert_llm_provider,
+)
 
 
 TERMS_VERSION = "2026-06-03"
@@ -256,6 +263,34 @@ def settings_view(request):
                 update_session_auth_hash(request, request.user)
                 messages.success(request, "비밀번호가 변경되었습니다.")
             return redirect("accounts:settings")
+        elif action == "create_llm_provider":
+            provider, created = upsert_llm_provider(
+                owner=request.user,
+                name=request.POST.get("provider_name", ""),
+                provider_type=request.POST.get("provider_type", LLMProvider.PROVIDER_OPENAI_COMPATIBLE),
+                base_url=request.POST.get("base_url", ""),
+                default_model=request.POST.get("default_model", ""),
+                api_key=request.POST.get("api_key", ""),
+            )
+            if provider is None:
+                messages.error(request, "Provider 이름, URL, 기본 모델을 입력해주세요.")
+            elif created:
+                messages.success(request, "AI provider가 등록되었습니다.")
+            else:
+                messages.success(request, "AI provider가 갱신되었습니다.")
+            return redirect("accounts:settings")
+        elif action == "delete_llm_provider":
+            if delete_llm_provider(owner=request.user, provider_id=request.POST.get("provider_id")):
+                messages.success(request, "AI provider가 삭제되었습니다.")
+            return redirect("accounts:settings")
+        elif action == "set_rag_model":
+            set_user_rag_model(
+                user=request.user,
+                provider_id=request.POST.get("rag_provider_id"),
+                rag_model=request.POST.get("rag_model", ""),
+            )
+            messages.success(request, "RAG 답변 모델 설정이 저장되었습니다.")
+            return redirect("accounts:settings")
         elif action == "delete_account":
             confirm_pw = request.POST.get("confirm_password", "")
             if not request.user.check_password(confirm_pw):
@@ -286,5 +321,6 @@ def settings_view(request):
         "quota_total_gb": total_gb,
         "quota_pct": quota_pct,
         "file_count": file_count,
+        **get_user_llm_settings_context(request.user),
     }
     return render(request, "accounts/settings.html", ctx)
