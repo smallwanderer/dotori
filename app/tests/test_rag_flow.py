@@ -289,10 +289,14 @@ class RAGFlowTests(TestCase):
 
             def iter_lines(self, decode_unicode=False):
                 chunks = [
-                    'data: {"choices":[{"delta":{"content":"<|channel>final\\n핵심 답변\\n"}}]}',
-                    'data: {"choices":[{"delta":{"content":"- 공급 확대와 할인 지원을 병행합니다 [1].\\n\\n"}}]}',
-                    'data: {"choices":[{"delta":{"content":"주요 근거\\n- policy.pdf / section 정책 / page 1 [1]"}}]}',
-                    "data: [DONE]",
+                    'event: response.output_text.delta',
+                    'data: {"type":"response.output_text.delta","delta":"<|channel>final\\n핵심 답변\\n"}',
+                    'event: response.output_text.delta',
+                    'data: {"type":"response.output_text.delta","delta":"- 공급 확대와 할인 지원을 병행합니다 [1].\\n\\n"}',
+                    'event: response.output_text.delta',
+                    'data: {"type":"response.output_text.delta","delta":"주요 근거\\n- policy.pdf / section 정책 / page 1 [1]"}',
+                    'event: response.completed',
+                    'data: {"type":"response.completed","response":{"output":[]}}',
                 ]
                 return chunks
 
@@ -312,7 +316,8 @@ class RAGFlowTests(TestCase):
         self.assertEqual(rag_job.citations[0]["text"], "압축 근거: 공급 확대와 할인 지원을 병행한다.")
         post.assert_called_once()
         request_payload = post.call_args.kwargs["json"]
-        final_user_prompt = request_payload["messages"][-1]["content"]
+        final_user_prompt = request_payload["input"][-1]["content"]
+        self.assertIn("Use the following pieces", request_payload["instructions"])
         self.assertTrue(request_payload["stream"])
         self.assertTrue(post.call_args.kwargs["stream"])
         self.assertIn("압축 근거", final_user_prompt)
@@ -355,9 +360,9 @@ class RAGFlowTests(TestCase):
 
             def iter_lines(self, decode_unicode=False):
                 return [
-                    'data: {"choices":[{"delta":{"content":"공급 확대와 "}}]}',
-                    'data: {"choices":[{"delta":{"content":"할인 지원입니다 [1]."}}]}',
-                    "data: [DONE]",
+                    'data: {"type":"response.output_text.delta","delta":"공급 확대와 "}',
+                    'data: {"type":"response.output_text.delta","delta":"할인 지원입니다 [1]."}',
+                    'data: {"type":"response.completed","response":{"output":[]}}',
                 ]
 
         fake_semaphore = SimpleNamespace(acquire=lambda timeout=None: None, release=lambda: None)
@@ -368,7 +373,7 @@ class RAGFlowTests(TestCase):
             result = generate_rag_response(rag_job.id)
 
         self.assertEqual(result["status"], "success")
-        self.assertEqual(post.call_args.args[0], "http://llm-runtime:8080/v1/chat/completions")
+        self.assertEqual(post.call_args.args[0], "http://llm-runtime:8080/v1/responses")
         self.assertEqual(post.call_args.kwargs["json"]["model"], "gemma-selected")
         self.assertTrue(post.call_args.kwargs["json"]["stream"])
         self.assertTrue(post.call_args.kwargs["stream"])

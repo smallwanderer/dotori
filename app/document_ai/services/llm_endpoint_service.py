@@ -215,8 +215,8 @@ class RAGLLMRequestConfig:
     headers: dict[str, str]
 
     @property
-    def chat_completions_url(self) -> str:
-        return f"{self.base_url}/v1/chat/completions"
+    def responses_url(self) -> str:
+        return f"{self.base_url}/v1/responses"
 
 
 def resolve_rag_llm_request_config(rag_job) -> RAGLLMRequestConfig:

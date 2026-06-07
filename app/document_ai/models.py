@@ -445,6 +445,10 @@ class LLMEndpoint(models.Model):
     def chat_completions_url(self) -> str:
         return f"{self.normalized_base_url}/v1/chat/completions"
 
+    @property
+    def responses_url(self) -> str:
+        return f"{self.normalized_base_url}/v1/responses"
+
 
 class UserLLMPreference(models.Model):
     """Per-user defaults for LLM-backed document AI tasks."""

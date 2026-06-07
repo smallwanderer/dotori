@@ -90,7 +90,36 @@ def _get_llm_message_content(payload: dict) -> str:
     return str(message_content or choice.get("text", "") or "").strip()
 
 
-def _get_llm_stream_delta_content(payload: dict) -> str:
+def _get_responses_stream_delta_content(payload: dict) -> str:
+    event_type = payload.get("type")
+    if event_type in {"response.output_text.delta", "response.refusal.delta"}:
+        return str(payload.get("delta") or "")
+
+    if event_type == "response.output_item.done":
+        item = payload.get("item") or {}
+        content_parts = item.get("content") or []
+        return "".join(
+            str(part.get("text", ""))
+            for part in content_parts
+            if isinstance(part, dict) and part.get("type") in {"output_text", "text"}
+        )
+
+    response = payload.get("response") or {}
+    output_parts = response.get("output") or payload.get("output") or []
+    text_parts = []
+    for item in output_parts:
+        if not isinstance(item, dict):
+            continue
+        for part in item.get("content") or []:
+            if isinstance(part, dict) and part.get("type") in {"output_text", "text"}:
+                text_parts.append(str(part.get("text", "")))
+    if text_parts:
+        return "".join(text_parts)
+
+    return ""
+
+
+def _get_chat_completions_stream_delta_content(payload: dict) -> str:
     choice = (payload.get("choices") or [{}])[0]
     delta = choice.get("delta") or {}
     content = delta.get("content")
@@ -106,7 +135,7 @@ def _get_llm_stream_delta_content(payload: dict) -> str:
     return str(content or "")
 
 
-def _iter_openai_compatible_stream_content(response):
+def _iter_openai_responses_stream_content(response):
     for raw_line in response.iter_lines(decode_unicode=True):
         if not raw_line:
             continue
@@ -125,7 +154,9 @@ def _iter_openai_compatible_stream_content(response):
         except json.JSONDecodeError:
             logger.debug("Skipping non-JSON LLM stream line: %r", line[:200])
             continue
-        content = _get_llm_stream_delta_content(payload)
+        content = _get_responses_stream_delta_content(payload)
+        if not content:
+            content = _get_chat_completions_stream_delta_content(payload)
         if content:
             yield content
 
@@ -1619,8 +1650,8 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
     try:
         payload = {
             "model": llm_config.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
+            "instructions": system_prompt,
+            "input": [
                 {"role": "user", "content": fewshot_user},
                 {"role": "assistant", "content": fewshot_assistant},
                 {"role": "user", "content": user_prompt},
@@ -1629,10 +1660,9 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
             "top_p": float(os.getenv("RAG_TOP_P", "0.9")),
             "max_tokens": max_tokens,
             "stream": True,
-            "reasoning_format": "none",
         }
         response = requests.post(
-            llm_config.chat_completions_url,
+            llm_config.responses_url,
             json=payload,
             headers=llm_config.headers,
             timeout=(5, request_timeout),
@@ -1645,7 +1675,7 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
             raise RuntimeError(
                 f"RAG LLM HTTP {response.status_code}: {response_text}"
             ) from exc
-        raw_answer = "".join(_iter_openai_compatible_stream_content(response)).strip()
+        raw_answer = "".join(_iter_openai_responses_stream_content(response)).strip()
         answer = _normalize_rag_answer(raw_answer)
         if not answer:
             logger.warning(
