@@ -15,7 +15,7 @@
       <div class="token-info">
         <div class="token-name-row">
           <span class="token-name">현재 사용 대상</span>
-          <span class="token-status active">{{ effective_rag_target.provider_type }}</span>
+          <span class="token-status active">{{ effective_rag_target.endpoint_type }}</span>
         </div>
         <div class="token-key-row">
           <span class="token-key-masked">{{ effective_rag_target.base_url }} · {{ effective_rag_target.model }}</span>
@@ -27,7 +27,7 @@
   <form method="post" class="create-form" style="margin-top:16px;">
     {% csrf_token %}
     <input type="hidden" name="action" value="set_rag_model">
-    <input type="hidden" name="rag_provider_id" value="">
+    <input type="hidden" name="rag_endpoint_id" value="">
     <select name="rag_model">
       {% for model in server_rag_model_choices %}
       <option value="{{ model }}" {% if effective_rag_target.source == "server" and effective_rag_target.model == model %}selected{% endif %}>{{ model }}</option>
@@ -44,7 +44,7 @@
       <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93"/><path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.12a5 5 0 0 0 7.07 7.07L13 19.07"/></svg>
       <span>외부 endpoint</span>
     </h2>
-    <span class="token-count-badge">{{ llm_providers|length }}</span>
+    <span class="token-count-badge">{{ llm_endpoints|length }}</span>
   </div>
   <p class="section-desc">
     이미 실행 중인 OpenAI-compatible endpoint를 추가합니다. 이 설정은 컨테이너나 모델을 실행하지 않고, RAG worker가 해당 URL로 요청을 보내도록 합니다.
@@ -52,10 +52,10 @@
 
   <form method="post" class="create-form">
     {% csrf_token %}
-    <input type="hidden" name="action" value="create_llm_provider">
-    <input type="text" name="provider_name" placeholder="이름 (예: Local Ollama)" required>
-    <select name="provider_type">
-      {% for value,label in llm_provider_types %}
+    <input type="hidden" name="action" value="create_llm_endpoint">
+    <input type="text" name="endpoint_name" placeholder="이름 (예: Local Ollama)" required>
+    <select name="endpoint_type">
+      {% for value,label in llm_endpoint_types %}
       <option value="{{ value }}">{{ label }}</option>
       {% endfor %}
     </select>
@@ -65,33 +65,52 @@
     <input type="password" name="api_key" class="secret-input" placeholder="API key (선택)" autocomplete="off">
   </form>
 
-  {% if llm_providers %}
+  {% if llm_endpoints %}
   <div class="token-list" style="margin-top:16px;">
-    {% for provider in llm_providers %}
+    {% for endpoint in llm_endpoints %}
     <div class="token-item">
       <div class="token-info">
         <div class="token-name-row">
-          <span class="token-name">{{ provider.name }}</span>
-          <span class="token-status {% if provider.is_active %}active{% else %}inactive{% endif %}">{{ provider.get_provider_type_display }}</span>
+          <span class="token-name">{{ endpoint.name }}</span>
+          <span class="token-status {% if endpoint.is_active %}active{% else %}inactive{% endif %}">{{ endpoint.get_endpoint_type_display }}</span>
+          {% if endpoint.last_check_status %}
+          <span class="token-status {% if endpoint.last_check_status == 'ok' %}active{% else %}check-failed{% endif %}">
+            {% if endpoint.last_check_status == 'ok' %}사용 가능{% else %}확인 실패{% endif %}
+          </span>
+          {% endif %}
         </div>
         <div class="token-key-row">
-          <span class="token-key-masked">{{ provider.base_url }} · {{ provider.default_model }}</span>
+          <span class="token-key-masked">{{ endpoint.base_url }} · {{ endpoint.default_model }}</span>
         </div>
+        {% if endpoint.last_checked_at %}
+        <div class="endpoint-check-row">
+          <strong>{{ endpoint.last_checked_at|date:"Y-m-d H:i" }}</strong>
+          · {{ endpoint.last_check_message }}
+        </div>
+        {% endif %}
       </div>
       <div class="token-actions">
         <form method="post">
           {% csrf_token %}
+          <input type="hidden" name="action" value="check_llm_endpoint">
+          <input type="hidden" name="endpoint_id" value="{{ endpoint.id }}">
+          <button type="submit" class="icon-btn-sm" title="연결 확인">
+            <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M16 3h5v5"/></svg>
+          </button>
+        </form>
+        <form method="post">
+          {% csrf_token %}
           <input type="hidden" name="action" value="set_rag_model">
-          <input type="hidden" name="rag_provider_id" value="{{ provider.id }}">
-          <input type="hidden" name="rag_model" value="{{ provider.default_model }}">
+          <input type="hidden" name="rag_endpoint_id" value="{{ endpoint.id }}">
+          <input type="hidden" name="rag_model" value="{{ endpoint.default_model }}">
           <button type="submit" class="icon-btn-sm" title="RAG에 사용">
             <svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
           </button>
         </form>
         <form method="post" onsubmit="return confirm('이 endpoint를 삭제하시겠습니까?')">
           {% csrf_token %}
-          <input type="hidden" name="action" value="delete_llm_provider">
-          <input type="hidden" name="provider_id" value="{{ provider.id }}">
+          <input type="hidden" name="action" value="delete_llm_endpoint">
+          <input type="hidden" name="endpoint_id" value="{{ endpoint.id }}">
           <button type="submit" class="icon-btn-sm danger" title="삭제">
             <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
           </button>

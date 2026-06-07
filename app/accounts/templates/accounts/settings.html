@@ -59,9 +59,12 @@
 .token-status{font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;text-transform:uppercase;letter-spacing:.3px;flex-shrink:0}
 .token-status.active{background:rgba(34,197,94,.12);color:var(--success)}
 .token-status.inactive{background:rgba(220,38,38,.1);color:var(--danger)}
+.token-status.check-failed{background:rgba(220,38,38,.1);color:var(--danger)}
 .token-meta{font-size:12px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
 .token-key-row{display:flex;align-items:center;gap:6px;margin-top:4px}
 .token-key-masked{font-family:'SF Mono',Consolas,monospace;font-size:12px;color:var(--muted);letter-spacing:.5px}
+.endpoint-check-row{font-size:12px;color:var(--muted);line-height:1.5;margin-top:2px}
+.endpoint-check-row strong{font-weight:600;color:var(--text)}
 .token-actions{display:flex;gap:4px;align-items:center;flex-shrink:0}
 .token-actions form{display:inline}
 .icon-btn-sm{width:32px;height:32px;border:1px solid var(--border);background:var(--surface);border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:all .15s;font-family:var(--font)}
@@ -156,7 +159,7 @@
     </div>
   </div>
 
-  {% include "accounts/partials/llm_provider_settings.html" %}
+  {% include "accounts/partials/llm_endpoint_settings.html" %}
 
   <!-- API Token Management -->
   <div class="card settings-section">

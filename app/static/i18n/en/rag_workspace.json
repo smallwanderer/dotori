@@ -1,4 +1,8 @@
 {
+  "ragModel": "Model",
+  "showEvidence": "Show evidence",
+  "hideEvidence": "Hide evidence",
+  "toggleEvidence": "Hide evidence",
   "ragPageTitle": "RAG question",
   "allDocuments": "All documents",
   "selectedDocuments": "Selected documents/folders",

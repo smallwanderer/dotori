@@ -14,12 +14,13 @@ from .forms import EmailAuthenticationForm, ResendVerificationEmailForm, UserReg
 from .models import User, APIToken, SyncQuota
 from .services import send_account_activation_email
 from .tokens import account_activation_token
-from document_ai.models import LLMProvider
-from document_ai.services.llm_provider_service import (
-    delete_llm_provider,
+from document_ai.models import LLMEndpoint
+from document_ai.services.llm_endpoint_service import (
+    check_llm_endpoint,
+    delete_llm_endpoint,
     get_user_llm_settings_context,
     set_user_rag_model,
-    upsert_llm_provider,
+    upsert_llm_endpoint,
 )
 
 
@@ -263,30 +264,44 @@ def settings_view(request):
                 update_session_auth_hash(request, request.user)
                 messages.success(request, "비밀번호가 변경되었습니다.")
             return redirect("accounts:settings")
-        elif action == "create_llm_provider":
-            provider, created = upsert_llm_provider(
+        elif action == "create_llm_endpoint":
+            endpoint, created = upsert_llm_endpoint(
                 owner=request.user,
-                name=request.POST.get("provider_name", ""),
-                provider_type=request.POST.get("provider_type", LLMProvider.PROVIDER_OPENAI_COMPATIBLE),
+                name=request.POST.get("endpoint_name", ""),
+                endpoint_type=request.POST.get("endpoint_type", LLMEndpoint.ENDPOINT_OPENAI_COMPATIBLE),
                 base_url=request.POST.get("base_url", ""),
                 default_model=request.POST.get("default_model", ""),
                 api_key=request.POST.get("api_key", ""),
             )
-            if provider is None:
-                messages.error(request, "Provider 이름, URL, 기본 모델을 입력해주세요.")
-            elif created:
-                messages.success(request, "AI provider가 등록되었습니다.")
+            if endpoint is None:
+                messages.error(request, "Endpoint 이름, URL, 기본 모델을 입력해주세요.")
             else:
-                messages.success(request, "AI provider가 갱신되었습니다.")
+                checked = check_llm_endpoint(owner=request.user, endpoint_id=str(endpoint.id))
+                action_label = "등록" if created else "갱신"
+                if checked and checked.last_check_status == "ok":
+                    messages.success(request, f"AI endpoint가 {action_label}되었습니다. {checked.last_check_message}")
+                elif checked:
+                    messages.warning(request, f"AI endpoint가 {action_label}되었지만 연결 확인에 실패했습니다. {checked.last_check_message}")
+                else:
+                    messages.success(request, f"AI endpoint가 {action_label}되었습니다.")
             return redirect("accounts:settings")
-        elif action == "delete_llm_provider":
-            if delete_llm_provider(owner=request.user, provider_id=request.POST.get("provider_id")):
-                messages.success(request, "AI provider가 삭제되었습니다.")
+        elif action == "delete_llm_endpoint":
+            if delete_llm_endpoint(owner=request.user, endpoint_id=request.POST.get("endpoint_id")):
+                messages.success(request, "AI endpoint가 삭제되었습니다.")
+            return redirect("accounts:settings")
+        elif action == "check_llm_endpoint":
+            endpoint = check_llm_endpoint(owner=request.user, endpoint_id=request.POST.get("endpoint_id"))
+            if endpoint is None:
+                messages.error(request, "확인할 AI endpoint를 찾을 수 없습니다.")
+            elif endpoint.last_check_status == "ok":
+                messages.success(request, f"{endpoint.name}: {endpoint.last_check_message}")
+            else:
+                messages.error(request, f"{endpoint.name}: {endpoint.last_check_message}")
             return redirect("accounts:settings")
         elif action == "set_rag_model":
             set_user_rag_model(
                 user=request.user,
-                provider_id=request.POST.get("rag_provider_id"),
+                endpoint_id=request.POST.get("rag_endpoint_id"),
                 rag_model=request.POST.get("rag_model", ""),
             )
             messages.success(request, "RAG 답변 모델 설정이 저장되었습니다.")

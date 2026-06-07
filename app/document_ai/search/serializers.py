@@ -135,12 +135,18 @@ class RAGJobCreateResponseSerializer(serializers.Serializer):
     job_id = serializers.IntegerField()
     search_job_id = serializers.IntegerField()
     status = serializers.CharField()
+    stage = serializers.CharField()
+    stage_message = serializers.CharField()
     poll_url = serializers.CharField()
 
 
 class RAGJobSerializer(serializers.ModelSerializer):
     search_status = serializers.SerializerMethodField()
     search_results = serializers.SerializerMethodField()
+    stage_label = serializers.SerializerMethodField()
+    progress = serializers.SerializerMethodField()
+    effective_endpoint = serializers.SerializerMethodField()
+    effective_model = serializers.SerializerMethodField()
 
     class Meta:
         model = RAGJob
@@ -150,10 +156,16 @@ class RAGJobSerializer(serializers.ModelSerializer):
             "top_k",
             "language",
             "node_ids",
-            "llm_provider_name",
+            "llm_endpoint_name",
             "llm_base_url",
             "llm_model",
             "status",
+            "stage",
+            "stage_message",
+            "stage_label",
+            "progress",
+            "effective_endpoint",
+            "effective_model",
             "task_id",
             "answer",
             "citations",
@@ -174,3 +186,29 @@ class RAGJobSerializer(serializers.ModelSerializer):
         if obj.search_job_id and obj.search_job.status == "completed":
             return obj.search_job.results
         return []
+
+    def get_stage_label(self, obj):
+        labels = {
+            "queued": "작업 대기 중",
+            "searching": "문서에서 관련 근거 검색 중",
+            "generating": "선택한 모델로 답변 생성 중",
+            "completed": "답변 완료",
+            "failed": "실패",
+        }
+        return labels.get(obj.stage, obj.stage)
+
+    def get_progress(self, obj):
+        progress = {
+            "queued": 10,
+            "searching": 35,
+            "generating": 70,
+            "completed": 100,
+            "failed": 100,
+        }
+        return progress.get(obj.stage, 0)
+
+    def get_effective_endpoint(self, obj):
+        return obj.llm_endpoint_name or "Server default"
+
+    def get_effective_model(self, obj):
+        return obj.llm_model

@@ -2,16 +2,18 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import requests
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.conf import settings
 from django.test import TestCase, override_settings
 
-from config.enums import AIStatus
-from document_ai.models import LLMProvider, RAGJob, SearchJob, UserLLMPreference
+from config.enums import AIStatus, RAGStage
+from document_ai.models import LLMEndpoint, RAGJob, SearchJob, UserLLMPreference
+from document_ai.services.llm_endpoint_service import check_llm_endpoint
 from document_ai.search.views import EMPTY_SCOPE_SENTINEL, _expand_scope_node_ids
 from document_ai.search.query_frontend import prepare_retrieval_query
-from document_ai.tasks import generate_rag_response
+from document_ai.tasks import generate_rag_response, perform_vector_search
 from files.models import FileBlob, Node, NodeType
 
 pytestmark = pytest.mark.unit
@@ -82,19 +84,20 @@ class RAGFlowTests(TestCase):
         self.assertEqual(search_job.task_id, "search-task-id")
         self.assertEqual(rag_job.search_job, search_job)
         self.assertEqual(rag_job.status, AIStatus.PENDING)
+        self.assertEqual(rag_job.stage, RAGStage.SEARCHING)
         apply_async.assert_called_once_with(args=[search_job.id], queue="search")
 
-    def test_rag_request_snapshots_selected_user_llm_provider(self):
-        provider = LLMProvider.objects.create(
+    def test_rag_request_snapshots_selected_user_llm_endpoint(self):
+        endpoint = LLMEndpoint.objects.create(
             owner=self.user,
             name="Local Ollama",
-            provider_type=LLMProvider.PROVIDER_OLLAMA,
+            endpoint_type=LLMEndpoint.ENDPOINT_OLLAMA,
             base_url="http://host.docker.internal:11434/v1",
             default_model="llama3.1:8b",
         )
         UserLLMPreference.objects.create(
             user=self.user,
-            rag_provider=provider,
+            rag_endpoint=endpoint,
             rag_model="qwen2.5:7b",
         )
 
@@ -112,13 +115,13 @@ class RAGFlowTests(TestCase):
 
         self.assertEqual(response.status_code, 202)
         rag_job = RAGJob.objects.get(pk=response.json()["job_id"])
-        self.assertEqual(rag_job.llm_provider, provider)
-        self.assertEqual(rag_job.llm_provider_name, "Local Ollama")
+        self.assertEqual(rag_job.llm_endpoint, endpoint)
+        self.assertEqual(rag_job.llm_endpoint_name, "Local Ollama")
         self.assertEqual(rag_job.llm_base_url, "http://host.docker.internal:11434")
         self.assertEqual(rag_job.llm_model, "qwen2.5:7b")
 
     @patch.dict("os.environ", {"RAG_LLM_URL": "http://server-rag:8080/v1"})
-    def test_rag_request_snapshots_selected_server_model_without_external_provider(self):
+    def test_rag_request_snapshots_selected_server_model_without_external_endpoint(self):
         UserLLMPreference.objects.create(
             user=self.user,
             rag_model="server-qwen",
@@ -138,8 +141,8 @@ class RAGFlowTests(TestCase):
 
         self.assertEqual(response.status_code, 202)
         rag_job = RAGJob.objects.get(pk=response.json()["job_id"])
-        self.assertIsNone(rag_job.llm_provider)
-        self.assertEqual(rag_job.llm_provider_name, "Server default")
+        self.assertIsNone(rag_job.llm_endpoint)
+        self.assertEqual(rag_job.llm_endpoint_name, "Server default")
         self.assertEqual(rag_job.llm_base_url, "http://server-rag:8080")
         self.assertEqual(rag_job.llm_model, "server-qwen")
 
@@ -204,7 +207,7 @@ class RAGFlowTests(TestCase):
         search_job = SearchJob.objects.get(pk=response.json()["search_job_id"])
         self.assertEqual(search_job.node_ids, [str(file_node.uid)])
 
-    def test_rag_poll_queues_answer_generation_after_search_completes(self):
+    def test_rag_poll_only_returns_status_after_search_completes(self):
         search_job = SearchJob.objects.create(
             owner=self.user,
             query="대책 요약",
@@ -219,16 +222,46 @@ class RAGFlowTests(TestCase):
             top_k=3,
         )
 
-        with patch("document_ai.search.views.generate_rag_response.apply_async") as apply_async:
-            apply_async.return_value = SimpleNamespace(id="rag-task-id")
-            response = self.client.get(f"/api/document-ai/v1/rag/jobs/{rag_job.id}/")
+        response = self.client.get(f"/api/document-ai/v1/rag/jobs/{rag_job.id}/")
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         rag_job.refresh_from_db()
-        self.assertEqual(rag_job.task_id, "rag-task-id")
+        self.assertEqual(rag_job.task_id, "")
         self.assertEqual(payload["search_status"], AIStatus.COMPLETED)
         self.assertEqual(payload["search_results"][0]["node_name"], "policy.pdf")
+        self.assertIn("stage", payload)
+        self.assertIn("stage_message", payload)
+
+    def test_search_completion_queues_linked_rag_generation(self):
+        search_job = SearchJob.objects.create(
+            owner=self.user,
+            query="대책 요약",
+            top_k=3,
+        )
+        rag_job = RAGJob.objects.create(
+            owner=self.user,
+            search_job=search_job,
+            question="대책 요약",
+            top_k=3,
+            stage=RAGStage.SEARCHING,
+        )
+
+        fake_retriever = SimpleNamespace(retrieve=lambda **kwargs: _search_results())
+        with patch("document_ai.search.retriever.VectorRetriever", return_value=fake_retriever), patch(
+            "document_ai.tasks.generate_rag_response.apply_async"
+        ) as apply_async:
+            apply_async.return_value = SimpleNamespace(id="rag-task-id")
+            result = perform_vector_search(search_job.id)
+
+        search_job.refresh_from_db()
+        rag_job.refresh_from_db()
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["queued_rag_jobs"], 1)
+        self.assertEqual(search_job.status, AIStatus.COMPLETED)
+        self.assertEqual(rag_job.task_id, "rag-task-id")
+        self.assertEqual(rag_job.stage, RAGStage.GENERATING)
+        self.assertIn("답변", rag_job.stage_message)
         apply_async.assert_called_once_with(args=[rag_job.id], queue="rag")
 
     def test_generate_rag_response_uses_search_evidence_and_stores_citations(self):
@@ -254,24 +287,14 @@ class RAGFlowTests(TestCase):
             def raise_for_status(self):
                 return None
 
-            def json(self):
-                return {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": (
-                                    "<|channel>final\n"
-                                    "핵심 답변\n"
-                                    "- 공급 확대와 할인 지원을 병행합니다 [1].\n\n"
-                                    "주요 근거\n"
-                                    "- policy.pdf / section 정책 / page 1 [1]\n\n"
-                                    "근거 부족\n"
-                                    "- 위 근거 밖의 세부 사항은 확인하지 않았습니다."
-                                )
-                            }
-                        }
-                    ]
-                }
+            def iter_lines(self, decode_unicode=False):
+                chunks = [
+                    'data: {"choices":[{"delta":{"content":"<|channel>final\\n핵심 답변\\n"}}]}',
+                    'data: {"choices":[{"delta":{"content":"- 공급 확대와 할인 지원을 병행합니다 [1].\\n\\n"}}]}',
+                    'data: {"choices":[{"delta":{"content":"주요 근거\\n- policy.pdf / section 정책 / page 1 [1]"}}]}',
+                    "data: [DONE]",
+                ]
+                return chunks
 
         fake_semaphore = SimpleNamespace(acquire=lambda timeout=None: None, release=lambda: None)
 
@@ -290,14 +313,16 @@ class RAGFlowTests(TestCase):
         post.assert_called_once()
         request_payload = post.call_args.kwargs["json"]
         final_user_prompt = request_payload["messages"][-1]["content"]
+        self.assertTrue(request_payload["stream"])
+        self.assertTrue(post.call_args.kwargs["stream"])
         self.assertIn("압축 근거", final_user_prompt)
         self.assertNotIn("넓은 문맥입니다", final_user_prompt)
 
     def test_generate_rag_response_uses_snapshotted_llm_endpoint_and_model(self):
-        provider = LLMProvider.objects.create(
+        endpoint = LLMEndpoint.objects.create(
             owner=self.user,
             name="Local llama.cpp",
-            provider_type=LLMProvider.PROVIDER_LLAMA_CPP,
+            endpoint_type=LLMEndpoint.ENDPOINT_LLAMA_CPP,
             base_url="http://llm-runtime:8080",
             default_model="gemma-local",
             api_key="local-secret",
@@ -315,9 +340,9 @@ class RAGFlowTests(TestCase):
             question="대책 요약",
             top_k=3,
             language="ko",
-            llm_provider=provider,
-            llm_provider_name=provider.name,
-            llm_base_url=provider.normalized_base_url,
+            llm_endpoint=endpoint,
+            llm_endpoint_name=endpoint.name,
+            llm_base_url=endpoint.normalized_base_url,
             llm_model="gemma-selected",
         )
 
@@ -328,8 +353,12 @@ class RAGFlowTests(TestCase):
             def raise_for_status(self):
                 return None
 
-            def json(self):
-                return {"choices": [{"message": {"content": "공급 확대와 할인 지원입니다 [1]."}}]}
+            def iter_lines(self, decode_unicode=False):
+                return [
+                    'data: {"choices":[{"delta":{"content":"공급 확대와 "}}]}',
+                    'data: {"choices":[{"delta":{"content":"할인 지원입니다 [1]."}}]}',
+                    "data: [DONE]",
+                ]
 
         fake_semaphore = SimpleNamespace(acquire=lambda timeout=None: None, release=lambda: None)
 
@@ -341,7 +370,77 @@ class RAGFlowTests(TestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(post.call_args.args[0], "http://llm-runtime:8080/v1/chat/completions")
         self.assertEqual(post.call_args.kwargs["json"]["model"], "gemma-selected")
+        self.assertTrue(post.call_args.kwargs["json"]["stream"])
+        self.assertTrue(post.call_args.kwargs["stream"])
         self.assertEqual(post.call_args.kwargs["headers"]["Authorization"], "Bearer local-secret")
+
+    def test_llm_endpoint_healthcheck_marks_endpoint_available(self):
+        endpoint = LLMEndpoint.objects.create(
+            owner=self.user,
+            name="OpenAI compatible",
+            endpoint_type=LLMEndpoint.ENDPOINT_OPENAI_COMPATIBLE,
+            base_url="https://api.example.test/v1",
+            default_model="qwen-test",
+            api_key="secret-key",
+        )
+
+        class FakeResponse:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"data": [{"id": "qwen-test"}]}
+
+        with patch("requests.get", return_value=FakeResponse()) as get:
+            checked = check_llm_endpoint(owner=self.user, endpoint_id=str(endpoint.id))
+
+        checked.refresh_from_db()
+        self.assertEqual(checked.last_check_status, "ok")
+        self.assertIn("기본 모델", checked.last_check_message)
+        self.assertEqual(get.call_args.args[0], "https://api.example.test/v1/models")
+        self.assertEqual(get.call_args.kwargs["headers"]["Authorization"], "Bearer secret-key")
+
+    def test_settings_create_llm_endpoint_runs_healthcheck(self):
+        class FakeResponse:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"data": [{"id": "qwen-test"}]}
+
+        with patch("requests.get", return_value=FakeResponse()) as get:
+            response = self.client.post(
+                "/accounts/settings/",
+                data={
+                    "action": "create_llm_endpoint",
+                    "endpoint_name": "External API",
+                    "endpoint_type": LLMEndpoint.ENDPOINT_OPENAI_COMPATIBLE,
+                    "base_url": "https://api.example.test/v1",
+                    "default_model": "qwen-test",
+                    "api_key": "secret-key",
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        endpoint = LLMEndpoint.objects.get(owner=self.user, name="External API")
+        self.assertEqual(endpoint.last_check_status, "ok")
+        self.assertEqual(get.call_args.args[0], "https://api.example.test/v1/models")
+
+    def test_llm_endpoint_healthcheck_marks_endpoint_failed(self):
+        endpoint = LLMEndpoint.objects.create(
+            owner=self.user,
+            name="Broken endpoint",
+            endpoint_type=LLMEndpoint.ENDPOINT_OPENAI_COMPATIBLE,
+            base_url="https://broken.example.test",
+            default_model="qwen-test",
+        )
+
+        with patch("requests.get", side_effect=requests.RequestException("connection failed")):
+            checked = check_llm_endpoint(owner=self.user, endpoint_id=str(endpoint.id))
+
+        checked.refresh_from_db()
+        self.assertEqual(checked.last_check_status, "failed")
+        self.assertIn("connection failed", checked.last_check_message)
 
     def test_query_frontend_keeps_querydsl_experimental_and_passthrough(self):
         plan = prepare_retrieval_query("지난주 pdf 계약 문서", mode="rag")

@@ -23,12 +23,46 @@ from document_ai.parsers.config import (
 )
 from document_ai.parsers.text_utils import normalize_extracted_text, serialize_meta
 
-from config.enums import AIStatus
+from config.enums import AIStatus, RAGStage
 
 if TYPE_CHECKING:
     from document_ai.parsers.docling_parser import ParseResult
 
 logger = logging.getLogger(__name__)
+
+
+def _queue_rag_generation_for_search_job(search_job) -> int:
+    from document_ai.models import RAGJob
+
+    queued = 0
+    rag_jobs = RAGJob.objects.filter(
+        search_job=search_job,
+        status=AIStatus.PENDING,
+        task_id="",
+    )
+    for rag_job in rag_jobs:
+        async_result = generate_rag_response.apply_async(args=[rag_job.id], queue="rag")
+        rag_job.task_id = async_result.id
+        rag_job.stage = RAGStage.GENERATING
+        rag_job.stage_message = "검색된 근거를 바탕으로 답변을 생성하고 있습니다."
+        rag_job.save(update_fields=["task_id", "stage", "stage_message", "updated_at"])
+        queued += 1
+    return queued
+
+
+def _fail_rag_jobs_for_search_job(search_job, message: str) -> int:
+    from document_ai.models import RAGJob
+
+    return RAGJob.objects.filter(
+        search_job=search_job,
+        status=AIStatus.PENDING,
+    ).update(
+        status=AIStatus.FAILED,
+        stage=RAGStage.FAILED,
+        stage_message="근거 검색에 실패했습니다.",
+        completed_at=search_job.completed_at or timezone.now(),
+        error_message=message,
+    )
 
 
 def _json_safe(value):
@@ -54,6 +88,46 @@ def _get_llm_message_content(payload: dict) -> str:
             for item in message_content
         ).strip()
     return str(message_content or choice.get("text", "") or "").strip()
+
+
+def _get_llm_stream_delta_content(payload: dict) -> str:
+    choice = (payload.get("choices") or [{}])[0]
+    delta = choice.get("delta") or {}
+    content = delta.get("content")
+    if content is None:
+        content = choice.get("message", {}).get("content")
+    if content is None:
+        content = choice.get("text")
+    if isinstance(content, list):
+        return "".join(
+            str(item.get("text", "")) if isinstance(item, dict) else str(item)
+            for item in content
+        )
+    return str(content or "")
+
+
+def _iter_openai_compatible_stream_content(response):
+    for raw_line in response.iter_lines(decode_unicode=True):
+        if not raw_line:
+            continue
+        line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else str(raw_line)
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        if not line or line == "[DONE]":
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            logger.debug("Skipping non-JSON LLM stream line: %r", line[:200])
+            continue
+        content = _get_llm_stream_delta_content(payload)
+        if content:
+            yield content
 
 
 def _strip_llm_control_tokens(text: str) -> str:
@@ -883,11 +957,19 @@ def perform_vector_search(self, job_id: int) -> dict:
             job.id,
             len(normalized_results),
         )
+        queued_rag_jobs = _queue_rag_generation_for_search_job(job)
+        if queued_rag_jobs:
+            logger.info(
+                "Queued RAG generation after search completion: search_job_id=%s rag_jobs=%s",
+                job.id,
+                queued_rag_jobs,
+            )
 
         return {
             "status": "success",
             "job_id": job_id,
             "result_count": len(normalized_results),
+            "queued_rag_jobs": queued_rag_jobs,
         }
 
     except Exception as exc:
@@ -898,6 +980,7 @@ def perform_vector_search(self, job_id: int) -> dict:
         job.completed_at = timezone.now()
         job.error_message = str(exc)
         job.save(update_fields=["status", "completed_at", "error_message"])
+        _fail_rag_jobs_for_search_job(job, job.error_message or "Search failed.")
 
         logger.exception("Vector search failed: job_id=%s", job_id)
         return {
@@ -936,7 +1019,7 @@ def generate_text2sql_response(self, prompt: str) -> dict:
 
     try:
         semaphore.acquire(timeout=semaphore_timeout)
-    except NotAvailable:
+    except NotAvailable as exc:
         logger.warning(
             "Text2SQL semaphore timeout after %ss (count=%s)",
             semaphore_timeout,
@@ -1421,25 +1504,29 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
     from redis_semaphore import NotAvailable, Semaphore
 
     from document_ai.models import RAGJob
-    from document_ai.services.llm_provider_service import resolve_rag_llm_request_config
+    from document_ai.services.llm_endpoint_service import resolve_rag_llm_request_config
 
     try:
-        rag_job = RAGJob.objects.select_related("search_job", "llm_provider").get(pk=rag_job_id)
+        rag_job = RAGJob.objects.select_related("search_job", "llm_endpoint").get(pk=rag_job_id)
     except RAGJob.DoesNotExist:
         logger.error("RAG job %s not found", rag_job_id)
         return {"status": "failed", "job_id": rag_job_id, "error": f"RAG job {rag_job_id} not found"}
 
     if not rag_job.search_job or rag_job.search_job.status != AIStatus.COMPLETED:
         rag_job.status = AIStatus.FAILED
+        rag_job.stage = RAGStage.FAILED
+        rag_job.stage_message = "검색 결과가 완료되지 않아 답변을 생성할 수 없습니다."
         rag_job.completed_at = timezone.now()
         rag_job.error_message = "Search job is not completed."
-        rag_job.save(update_fields=["status", "completed_at", "error_message"])
+        rag_job.save(update_fields=["status", "stage", "stage_message", "completed_at", "error_message"])
         return {"status": "failed", "job_id": rag_job_id, "error": rag_job.error_message}
 
     rag_job.status = AIStatus.PROCESSING
+    rag_job.stage = RAGStage.GENERATING
+    rag_job.stage_message = "검색된 근거를 바탕으로 답변을 생성하고 있습니다."
     rag_job.started_at = timezone.now()
     rag_job.error_message = ""
-    rag_job.save(update_fields=["status", "started_at", "error_message"])
+    rag_job.save(update_fields=["status", "stage", "stage_message", "started_at", "error_message"])
 
     llm_config = resolve_rag_llm_request_config(rag_job)
     redis_url = os.getenv("RAG_REDIS_URL", os.getenv("TEXT2SQL_REDIS_URL", os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")))
@@ -1464,10 +1551,12 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
     )
     if not citations:
         rag_job.status = AIStatus.FAILED
+        rag_job.stage = RAGStage.FAILED
+        rag_job.stage_message = "선택한 범위에서 답변에 사용할 근거를 찾지 못했습니다."
         rag_job.completed_at = timezone.now()
         rag_job.error_message = "No evidence was found for the question."
         rag_job.citations = []
-        rag_job.save(update_fields=["status", "completed_at", "error_message", "citations"])
+        rag_job.save(update_fields=["status", "stage", "stage_message", "completed_at", "error_message", "citations"])
         return {"status": "failed", "job_id": rag_job_id, "error": rag_job.error_message}
 
     language_instruction = "Answer in Korean" if rag_job.language == "ko" else "Answer in English."
@@ -1520,10 +1609,12 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
         semaphore.acquire(timeout=semaphore_timeout)
     except NotAvailable:
         rag_job.status = AIStatus.PENDING
+        rag_job.stage = RAGStage.QUEUED
+        rag_job.stage_message = "RAG worker가 바빠서 잠시 후 다시 시도합니다."
         rag_job.task_id = ""
         rag_job.error_message = "RAG worker is busy. Please retry shortly."
-        rag_job.save(update_fields=["status", "task_id", "error_message"])
-        return {"status": "busy", "job_id": rag_job_id, "message": rag_job.error_message}
+        rag_job.save(update_fields=["status", "stage", "stage_message", "task_id", "error_message"])
+        raise self.retry(exc=exc, countdown=10, max_retries=6)
 
     try:
         payload = {
@@ -1537,7 +1628,7 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
             "temperature": float(os.getenv("RAG_TEMPERATURE", "0.2")),
             "top_p": float(os.getenv("RAG_TOP_P", "0.9")),
             "max_tokens": max_tokens,
-            "stream": False,
+            "stream": True,
             "reasoning_format": "none",
         }
         response = requests.post(
@@ -1545,6 +1636,7 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
             json=payload,
             headers=llm_config.headers,
             timeout=(5, request_timeout),
+            stream=True,
         )
         try:
             response.raise_for_status()
@@ -1553,13 +1645,7 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
             raise RuntimeError(
                 f"RAG LLM HTTP {response.status_code}: {response_text}"
             ) from exc
-        payload = response.json()
-        raw_answer = (
-            payload.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
+        raw_answer = "".join(_iter_openai_compatible_stream_content(response)).strip()
         answer = _normalize_rag_answer(raw_answer)
         if not answer:
             logger.warning(
@@ -1584,22 +1670,28 @@ def generate_rag_response(self, rag_job_id: int) -> dict:
         rag_job.answer = answer
         rag_job.citations = citations
         rag_job.status = AIStatus.COMPLETED
+        rag_job.stage = RAGStage.COMPLETED
+        rag_job.stage_message = "답변 생성이 완료되었습니다."
         rag_job.completed_at = timezone.now()
-        rag_job.save(update_fields=["answer", "citations", "status", "completed_at", "error_message"])
+        rag_job.save(update_fields=["answer", "citations", "status", "stage", "stage_message", "completed_at", "error_message"])
 
         return {"status": "success", "job_id": rag_job_id, "citation_count": len(citations)}
     except requests.Timeout as exc:
         rag_job.status = AIStatus.FAILED
+        rag_job.stage = RAGStage.FAILED
+        rag_job.stage_message = "모델 응답 시간이 초과되었습니다."
         rag_job.completed_at = timezone.now()
         rag_job.error_message = f"RAG request timed out after {request_timeout}s"
-        rag_job.save(update_fields=["status", "completed_at", "error_message"])
+        rag_job.save(update_fields=["status", "stage", "stage_message", "completed_at", "error_message"])
         logger.error("RAG LLM timeout after %ss: %s", request_timeout, exc)
         return {"status": "failed", "job_id": rag_job_id, "error": rag_job.error_message}
     except Exception as exc:
         rag_job.status = AIStatus.FAILED
+        rag_job.stage = RAGStage.FAILED
+        rag_job.stage_message = "답변 생성 중 오류가 발생했습니다."
         rag_job.completed_at = timezone.now()
         rag_job.error_message = str(exc)
-        rag_job.save(update_fields=["status", "completed_at", "error_message"])
+        rag_job.save(update_fields=["status", "stage", "stage_message", "completed_at", "error_message"])
         logger.exception("RAG LLM error: job_id=%s", rag_job_id)
         return {"status": "failed", "job_id": rag_job_id, "error": str(exc)}
     finally:

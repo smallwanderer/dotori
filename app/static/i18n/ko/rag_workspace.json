@@ -1,4 +1,8 @@
 {
+  "ragModel": "모델",
+  "showEvidence": "근거 보기",
+  "hideEvidence": "근거 숨기기",
+  "toggleEvidence": "근거 숨기기",
   "ragPageTitle": "RAG 질문",
   "allDocuments": "전체 문서",
   "selectedDocuments": "선택한 문서/폴더",

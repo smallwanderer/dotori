@@ -2,7 +2,7 @@ from django.db import models
 from django.conf import settings
 from pgvector.django import VectorField, HnswIndex
 
-from config.enums import AIStatus, FileLanguage
+from config.enums import AIStatus, FileLanguage, RAGStage
 
 class DocumentParseResult(models.Model):
     """
@@ -380,35 +380,35 @@ class SearchJob(models.Model):
         return f"SearchJob({self.id}) {self.status}: {self.query[:40]}"
 
 
-class LLMProvider(models.Model):
+class LLMEndpoint(models.Model):
     """OpenAI-compatible LLM endpoint registered by a user."""
 
-    PROVIDER_OPENAI_COMPATIBLE = "openai_compatible"
-    PROVIDER_OLLAMA = "ollama"
-    PROVIDER_LLAMA_CPP = "llama_cpp"
-    PROVIDER_VLLM = "vllm"
+    ENDPOINT_OPENAI_COMPATIBLE = "openai_compatible"
+    ENDPOINT_OLLAMA = "ollama"
+    ENDPOINT_LLAMA_CPP = "llama_cpp"
+    ENDPOINT_VLLM = "vllm"
 
-    PROVIDER_TYPE_CHOICES = [
-        (PROVIDER_OPENAI_COMPATIBLE, "OpenAI compatible"),
-        (PROVIDER_OLLAMA, "Ollama"),
-        (PROVIDER_LLAMA_CPP, "llama.cpp"),
-        (PROVIDER_VLLM, "vLLM"),
+    ENDPOINT_TYPE_CHOICES = [
+        (ENDPOINT_OPENAI_COMPATIBLE, "OpenAI compatible"),
+        (ENDPOINT_OLLAMA, "Ollama"),
+        (ENDPOINT_LLAMA_CPP, "llama.cpp"),
+        (ENDPOINT_VLLM, "vLLM"),
     ]
 
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="llm_providers",
+        related_name="llm_endpoints",
     )
     name = models.CharField(max_length=128)
-    provider_type = models.CharField(
+    endpoint_type = models.CharField(
         max_length=32,
-        choices=PROVIDER_TYPE_CHOICES,
-        default=PROVIDER_OPENAI_COMPATIBLE,
+        choices=ENDPOINT_TYPE_CHOICES,
+        default=ENDPOINT_OPENAI_COMPATIBLE,
     )
     base_url = models.URLField(
         max_length=512,
-        help_text="Base URL without /v1 suffix when the provider already exposes OpenAI-compatible routes.",
+        help_text="Base URL without /v1 suffix when the endpoint already exposes OpenAI-compatible routes.",
     )
     default_model = models.CharField(max_length=256)
     api_key = models.CharField(max_length=512, blank=True)
@@ -424,7 +424,7 @@ class LLMProvider(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["owner", "name"],
-                name="uniq_llm_provider_name_per_owner",
+                name="uniq_llm_endpoint_name_per_owner",
             )
         ]
         indexes = [
@@ -454,8 +454,8 @@ class UserLLMPreference(models.Model):
         on_delete=models.CASCADE,
         related_name="llm_preference",
     )
-    rag_provider = models.ForeignKey(
-        "document_ai.LLMProvider",
+    rag_endpoint = models.ForeignKey(
+        "document_ai.LLMEndpoint",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -471,8 +471,8 @@ class UserLLMPreference(models.Model):
     def get_rag_model(self) -> str:
         if self.rag_model:
             return self.rag_model
-        if self.rag_provider_id and self.rag_provider:
-            return self.rag_provider.default_model
+        if self.rag_endpoint_id and self.rag_endpoint:
+            return self.rag_endpoint.default_model
         return ""
 
 
@@ -494,14 +494,14 @@ class RAGJob(models.Model):
     top_k = models.PositiveIntegerField(default=5)
     language = models.CharField(max_length=8, default="ko")
     node_ids = models.JSONField(default=list, blank=True)
-    llm_provider = models.ForeignKey(
-        "document_ai.LLMProvider",
+    llm_endpoint = models.ForeignKey(
+        "document_ai.LLMEndpoint",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="rag_jobs",
     )
-    llm_provider_name = models.CharField(max_length=128, blank=True)
+    llm_endpoint_name = models.CharField(max_length=128, blank=True)
     llm_base_url = models.URLField(max_length=512, blank=True)
     llm_model = models.CharField(max_length=256, blank=True)
 
@@ -511,6 +511,13 @@ class RAGJob(models.Model):
         default=AIStatus.PENDING,
         db_index=True,
     )
+    stage = models.CharField(
+        max_length=32,
+        choices=RAGStage.choices,
+        default=RAGStage.QUEUED,
+        db_index=True,
+    )
+    stage_message = models.CharField(max_length=255, blank=True)
     task_id = models.CharField(max_length=255, blank=True)
     answer = models.TextField(blank=True)
     citations = models.JSONField(default=list, blank=True)

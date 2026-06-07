@@ -25,3 +25,11 @@ class AIStatus(models.TextChoices):
     PROCESSING = "processing", "Processing"
     COMPLETED = "completed", "Completed"
     FAILED = "failed", "Failed"
+
+
+class RAGStage(models.TextChoices):
+    QUEUED = "queued", "Queued"
+    SEARCHING = "searching", "Searching"
+    GENERATING = "generating", "Generating"
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"

@@ -6,12 +6,12 @@ from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.text import Truncator
 
-from config.enums import AIStatus
+from config.enums import AIStatus, RAGStage
 from document_ai.models import (
     ChunkEmbedding,
     DocumentChunk,
     DocumentParseResult,
-    LLMProvider,
+    LLMEndpoint,
     RAGJob,
     SearchJob,
     UserLLMPreference,
@@ -366,6 +366,7 @@ class RAGJobAdmin(admin.ModelAdmin):
         "owner_email",
         "question_preview",
         "status",
+        "stage",
         "search_status",
         "llm_model",
         "citation_count",
@@ -375,8 +376,9 @@ class RAGJobAdmin(admin.ModelAdmin):
     )
     list_filter = (
         "status",
+        "stage",
         "language",
-        "llm_provider_name",
+        "llm_endpoint_name",
         "created_at",
         "started_at",
         "completed_at",
@@ -387,7 +389,8 @@ class RAGJobAdmin(admin.ModelAdmin):
         "owner__email",
         "task_id",
         "error_message",
-        "llm_provider_name",
+        "stage_message",
+        "llm_endpoint_name",
         "llm_model",
     )
     readonly_fields = (
@@ -397,7 +400,9 @@ class RAGJobAdmin(admin.ModelAdmin):
         "answer",
         "citations_pretty",
         "error_message",
-        "llm_provider_name",
+        "stage",
+        "stage_message",
+        "llm_endpoint_name",
         "llm_base_url",
         "llm_model",
         "task_id",
@@ -407,11 +412,11 @@ class RAGJobAdmin(admin.ModelAdmin):
         "updated_at",
         "citation_count",
     )
-    raw_id_fields = ("owner", "search_job", "llm_provider")
+    raw_id_fields = ("owner", "search_job", "llm_endpoint")
     actions = ("requeue_selected_rag_jobs",)
     date_hierarchy = "created_at"
     ordering = ("-created_at",)
-    list_select_related = ("owner", "search_job", "llm_provider")
+    list_select_related = ("owner", "search_job", "llm_endpoint")
 
     @admin.display(description="Owner")
     def owner_email(self, obj):
@@ -442,6 +447,8 @@ class RAGJobAdmin(admin.ModelAdmin):
             async_result = generate_rag_response.apply_async(args=[job.id], queue="rag")
             job.task_id = async_result.id
             job.status = AIStatus.PENDING
+            job.stage = RAGStage.GENERATING
+            job.stage_message = "검색된 근거를 바탕으로 답변을 생성하고 있습니다."
             job.error_message = ""
             job.answer = ""
             job.citations = []
@@ -451,6 +458,8 @@ class RAGJobAdmin(admin.ModelAdmin):
                 update_fields=[
                     "task_id",
                     "status",
+                    "stage",
+                    "stage_message",
                     "error_message",
                     "answer",
                     "citations",
@@ -462,19 +471,19 @@ class RAGJobAdmin(admin.ModelAdmin):
         self.message_user(request, f"Requeued {queued} RAG jobs.", messages.SUCCESS)
 
 
-@admin.register(LLMProvider)
-class LLMProviderAdmin(admin.ModelAdmin):
+@admin.register(LLMEndpoint)
+class LLMEndpointAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "name",
         "owner",
-        "provider_type",
+        "endpoint_type",
         "base_url",
         "default_model",
         "is_active",
         "updated_at",
     )
-    list_filter = ("provider_type", "is_active", "created_at", "updated_at")
+    list_filter = ("endpoint_type", "is_active", "created_at", "updated_at")
     search_fields = ("name", "base_url", "default_model", "owner__email")
     raw_id_fields = ("owner",)
     readonly_fields = ("created_at", "updated_at", "last_checked_at", "last_check_status", "last_check_message")
@@ -483,9 +492,9 @@ class LLMProviderAdmin(admin.ModelAdmin):
 
 @admin.register(UserLLMPreference)
 class UserLLMPreferenceAdmin(admin.ModelAdmin):
-    list_display = ("id", "user", "rag_provider", "rag_model", "updated_at")
-    search_fields = ("user__email", "rag_model", "rag_provider__name")
-    raw_id_fields = ("user", "rag_provider")
+    list_display = ("id", "user", "rag_endpoint", "rag_model", "updated_at")
+    search_fields = ("user__email", "rag_model", "rag_endpoint__name")
+    raw_id_fields = ("user", "rag_endpoint")
     readonly_fields = ("created_at", "updated_at")
 
 

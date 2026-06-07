@@ -38,66 +38,79 @@
     font-size: 13px;
   }
   .rag-shell {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 330px;
-    gap: 16px;
-    align-items: stretch;
+    display: block;
+    max-width: 900px;
+    margin: 0 auto;
+    position: relative;
   }
-  .ai-readiness-panel {
-    display: grid;
-    grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.2fr);
-    gap: 14px;
+  /* ── compact AI readiness badge ── */
+  .ai-readiness-badge {
+    display: inline-flex;
     align-items: center;
-    margin-bottom: 16px;
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--surface);
-  }
-  .ai-readiness-title {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 0;
-  }
-  .ai-readiness-title strong {
-    font-size: 13px;
-  }
-  .ai-readiness-summary {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.45;
-  }
-  .ai-readiness-meter {
-    display: grid;
-    gap: 7px;
-  }
-  .ai-readiness-bar {
-    height: 8px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-  }
-  .ai-readiness-fill {
-    height: 100%;
-    width: 0%;
-    background: var(--accent);
-    transition: width 0.2s ease;
-  }
-  .ai-readiness-stats {
-    display: flex;
     gap: 8px;
-    flex-wrap: wrap;
-    color: var(--muted);
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
     font-size: 12px;
+    color: var(--muted);
+    cursor: default;
+    white-space: nowrap;
+    position: relative;
   }
+  .ai-readiness-badge .readiness-ring {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: conic-gradient(var(--accent) calc(var(--pct) * 1%), var(--border) 0);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .ai-readiness-badge .readiness-ring-inner {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--surface);
+  }
+  .ai-readiness-badge .readiness-pct {
+    font-weight: 700;
+    color: var(--text);
+  }
+  .ai-readiness-tooltip {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: 240px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+    font-size: 12px;
+    color: var(--text);
+    z-index: 20;
+    line-height: 1.5;
+  }
+  .ai-readiness-badge:hover .ai-readiness-tooltip {
+    display: block;
+  }
+  /* ── scope picker as overlay drawer ── */
   .scope-picker {
-    margin-bottom: 16px;
+    display: none;
+    position: fixed;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: calc(100% - 28px);
+    max-width: 872px;
+    z-index: 40;
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--surface);
     overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  }
+  .scope-picker.open {
+    display: block;
   }
   .scope-picker-header {
     display: flex;
@@ -116,9 +129,6 @@
     grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
     gap: 12px;
     padding: 12px 14px;
-  }
-  .scope-picker.collapsed .scope-picker-body {
-    display: none;
   }
   .scope-picker-toggle {
     min-width: 84px;
@@ -206,17 +216,11 @@
     cursor: pointer;
     font: inherit;
   }
-  .rag-chat,
-  .rag-sources {
-    min-height: 620px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--surface);
-    overflow: hidden;
-  }
   .rag-chat {
-    display: grid;
-    grid-template-rows: auto auto 1fr auto;
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 220px);
+    position: relative;
   }
   .rag-toolbar {
     display: flex;
@@ -274,8 +278,8 @@
     font-weight: 700;
   }
   .rag-messages {
-    padding: 18px;
-    overflow-y: auto;
+    flex: 1 0 auto;
+    padding: 18px 18px 40px 18px;
   }
   .rag-message {
     max-width: 82%;
@@ -320,46 +324,198 @@
     margin-top: 10px;
     flex-wrap: wrap;
   }
+  /* ── ChatGPT-style compose bar ── */
   .rag-compose {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 10px;
-    padding: 14px;
-    border-top: 1px solid var(--border);
+    position: sticky;
+    bottom: 24px;
+    left: 0;
+    width: 100%;
+    z-index: 10;
+    background: transparent;
+    padding-bottom: 24px; /* Space underneath */
+  }
+  .compose-pill {
+    display: flex;
+    align-items: flex-end;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 26px;
     background: var(--surface);
+    padding: 6px 6px 6px 6px;
+    box-shadow: 0 6px 32px rgba(0,0,0,0.12);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .compose-pill:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+  .compose-plus {
+    width: 36px; height: 36px;
+    border: none;
+    background: transparent;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 20px;
+    flex-shrink: 0;
+    transition: background 0.12s, color 0.12s;
+    position: relative;
+  }
+  .compose-plus:hover {
+    background: var(--border);
+    color: var(--text);
+  }
+  .compose-plus.active {
+    background: var(--accent-bg);
+    color: var(--accent);
   }
   .rag-textarea {
-    min-height: 48px;
+    flex: 1;
+    min-height: 36px;
     max-height: 120px;
-    padding: 12px;
-    resize: vertical;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    resize: none;
     font-size: 14px;
+    line-height: 1.5;
+    color: var(--text);
+    font-family: var(--font);
+    outline: none;
   }
+  .compose-send {
+    width: 36px; height: 36px;
+    border: none;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: filter 0.12s;
+  }
+  .compose-send:hover { filter: brightness(1.1); }
+  .compose-send:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .compose-send svg {
+    width: 18px; height: 18px;
+    fill: currentColor;
+  }
+  /* ── + popover menu ── */
+  .plus-menu {
+    display: none;
+    position: absolute;
+    bottom: 80px; /* Above the compose pill */
+    left: 14px;
+    min-width: 200px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    padding: 6px;
+    z-index: 30;
+  }
+  .plus-menu.open { display: block; }
+  .plus-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.1s;
+    font-family: var(--font);
+  }
+  .plus-menu-item:hover {
+    background: var(--bg);
+  }
+  .plus-menu-item.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .plus-menu-item.disabled:hover {
+    background: transparent;
+  }
+  .plus-menu-icon {
+    font-size: 16px;
+    width: 20px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .plus-menu-label { flex: 1; text-align: left; }
+  .plus-menu-hint {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  /* scope chip bar above compose */
+  .scope-chips-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 0 8px 8px 8px;
+  }
+  .scope-chips-bar:empty { display: none; }
   .rag-send {
     align-self: end;
     min-width: 76px;
   }
-  .rag-sources {
-    display: grid;
-    grid-template-rows: auto 1fr;
+  /* Evidence Modal */
+  .evidence-modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
   }
-  .sources-header {
-    padding: 13px 14px;
+  .evidence-modal.open {
+    display: flex;
+  }
+  .evidence-modal-content {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-width: 600px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 12px 48px rgba(0,0,0,0.2);
+  }
+  .evidence-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
     border-bottom: 1px solid var(--border);
-    background: var(--bg);
   }
-  .sources-header strong {
-    display: block;
-    font-size: 14px;
+  .evidence-modal-header strong {
+    font-size: 16px;
   }
-  .sources-header span {
-    display: block;
-    margin-top: 3px;
-    font-size: 12px;
+  .evidence-close {
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
     color: var(--muted);
   }
   .source-list {
-    padding: 12px;
+    padding: 20px;
     overflow-y: auto;
   }
   .source-item {
@@ -423,16 +579,29 @@
     color: var(--muted);
     font-size: 12px;
   }
+  /* model badge in toolbar */
+  .model-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg);
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .model-badge strong {
+    color: var(--text);
+    font-weight: 600;
+  }
   @media (max-width: 980px) {
-    .rag-shell {
-      grid-template-columns: 1fr;
-    }
-    .rag-chat,
-    .rag-sources {
-      min-height: auto;
-    }
-    .rag-sources {
-      max-height: 420px;
+    .rag-chat {
+      min-height: 400px;
     }
     .scope-picker-body {
       grid-template-columns: 1fr;
@@ -445,7 +614,7 @@
 <div class="rag-header">
   <h2 data-i18n="ragPageTitle">RAG 질문</h2>
   <div class="rag-controls">
-    <select class="rag-select" id="scopeSelect">
+    <select class="rag-select" id="scopeSelect" style="display:none;">
       <option value="all" data-i18n="allDocuments">전체 문서</option>
       <option value="selected" data-i18n="selectedDocuments">선택한 문서/폴더</option>
     </select>
@@ -454,64 +623,67 @@
       <option value="3" selected data-i18n="topK3">근거 3개</option>
       <option value="5" data-i18n="topK5">근거 5개</option>
     </select>
-    <select class="rag-select" id="languageSelect">
+    <select class="rag-select" id="languageSelect" style="display:none;">
       <option value="ko" selected>Kor</option>
       <option value="en">Eng</option>
     </select>
   </div>
 </div>
 
-<div class="scope-picker" id="scopePicker">
-  <div class="scope-picker-header">
-    <div>
-      <strong data-i18n="scopePickerTitle">검색 범위 선택</strong>
-      <span class="ai-readiness-summary" id="scopePickerSummary">전체 문서를 대상으로 질문합니다.</span>
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;">
-      <button type="button" class="btn btn-secondary" id="clearScopeBtn" style="padding:6px 10px;font-size:12px;" data-i18n="clearSelection">선택 해제</button>
-      <button type="button" class="btn btn-secondary scope-picker-toggle" id="scopePickerToggle" style="padding:6px 10px;font-size:12px;">펼치기</button>
-    </div>
-  </div>
-  <div class="scope-picker-body">
-    <div>
-      <input class="scope-search" type="search" id="scopeSearch" placeholder="문서 또는 폴더 검색" data-i18n-placeholder="scopeSearchPlaceholder">
-      <div class="scope-list" id="scopeNodeList" style="margin-top:8px;">
-        <div class="source-empty" data-i18n="loadingList">목록을 불러오는 중입니다.</div>
-      </div>
-    </div>
-    <div>
-      <div class="scope-selected-list" id="scopeSelectedList">
-        <div class="source-empty" data-i18n="emptyScopeUsesAll">선택한 문서나 폴더가 없으면 전체 문서를 검색합니다.</div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="ai-readiness-panel" id="aiReadinessPanel">
-  <div class="ai-readiness-title">
-    <strong data-i18n="aiReadyTitle">AI 분석 준비 상태</strong>
-    <span class="ai-readiness-summary" id="aiReadinessSummary" data-i18n="aiReadyLoading">상태를 불러오는 중입니다.</span>
-  </div>
-  <div class="ai-readiness-meter">
-    <div class="ai-readiness-bar" aria-hidden="true">
-      <div class="ai-readiness-fill" id="aiReadinessFill"></div>
-    </div>
-    <div class="ai-readiness-stats" id="aiReadinessStats">
-      <span data-i18n="searchableInitial">검색 가능 0/0</span>
-    </div>
+<div class="ai-readiness-badge" id="aiReadinessBadge">
+  <div class="readiness-ring" style="--pct:0"><div class="readiness-ring-inner"></div></div>
+  <span class="readiness-pct" id="aiReadinessPct">—</span>
+  <span data-i18n="aiReadyTitle">AI 분석 준비 상태</span>
+  <div class="ai-readiness-tooltip" id="aiReadinessTooltip">
+    <span id="aiReadinessSummary" data-i18n="aiReadyLoading">상태를 불러오는 중입니다.</span><br>
+    <span id="aiReadinessStats" data-i18n="searchableInitial">검색 가능 0/0</span>
   </div>
 </div>
 
 <div class="rag-shell">
   <section class="rag-chat" aria-label="RAG question workspace">
     <div class="rag-toolbar">
-      <span class="scope-pill" id="scopePill">전체 문서</span>
-      <span class="scope-summary" id="selectedSummary">선택 문서 없음</span>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span class="scope-pill" id="scopePill">전체 문서</span>
+        <span class="scope-summary" id="selectedSummary">선택 문서 없음</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="model-badge" title="{{ rag_provider_label }}: {{ rag_model_label }}">
+          🤖 <strong>{{ rag_model_label|default:"—" }}</strong>
+        </span>
+      </div>
     </div>
     <div class="rag-progress" id="ragProgress" aria-label="RAG progress">
       <div class="rag-step" data-step="search" data-i18n="searchEvidence">근거 검색</div>
       <div class="rag-step" data-step="answer" data-i18n="generateAnswer">답변 생성</div>
       <div class="rag-step" data-step="done" data-i18n="done">완료</div>
+    </div>
+
+    <!-- Scope picker drawer (inside chat) -->
+    <div class="scope-picker" id="scopePicker">
+      <div class="scope-picker-header">
+        <div>
+          <strong data-i18n="scopePickerTitle">검색 범위 선택</strong>
+          <span class="ai-readiness-summary" id="scopePickerSummary">전체 문서를 대상으로 질문합니다.</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button type="button" class="btn btn-secondary" id="clearScopeBtn" style="padding:6px 10px;font-size:12px;" data-i18n="clearSelection">선택 해제</button>
+          <button type="button" class="btn btn-secondary" id="closeScopeBtn" style="padding:6px 10px;font-size:12px;">✕</button>
+        </div>
+      </div>
+      <div class="scope-picker-body">
+        <div>
+          <input class="scope-search" type="search" id="scopeSearch" placeholder="문서 또는 폴더 검색" data-i18n-placeholder="scopeSearchPlaceholder">
+          <div class="scope-list" id="scopeNodeList" style="margin-top:8px;">
+            <div class="source-empty" data-i18n="loadingList">목록을 불러오는 중입니다.</div>
+          </div>
+        </div>
+        <div>
+          <div class="scope-selected-list" id="scopeSelectedList">
+            <div class="source-empty" data-i18n="emptyScopeUsesAll">선택한 문서나 폴더가 없으면 전체 문서를 검색합니다.</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="rag-messages" id="ragMessages">
@@ -521,20 +693,47 @@
     </div>
 
     <form class="rag-compose" id="ragForm">
-      <textarea class="rag-textarea" id="ragQuestion" placeholder="문서에 대해 질문하세요" data-i18n-placeholder="questionPlaceholder"></textarea>
-      <button type="submit" class="btn btn-primary rag-send" data-i18n="send">전송</button>
+      <div class="scope-chips-bar" id="scopeChipsBar"></div>
+      <div class="plus-menu" id="plusMenu">
+        <button type="button" class="plus-menu-item" id="plusMenuScope">
+          <span class="plus-menu-icon">📂</span>
+          <span class="plus-menu-label" data-i18n="scopePickerTitle">검색 범위 선택</span>
+        </button>
+        <button type="button" class="plus-menu-item disabled" disabled>
+          <span class="plus-menu-icon">📎</span>
+          <span class="plus-menu-label">파일 첨부</span>
+          <span class="plus-menu-hint">Coming soon</span>
+        </button>
+        <button type="button" class="plus-menu-item disabled" disabled>
+          <span class="plus-menu-icon">🌐</span>
+          <span class="plus-menu-label">URL 가져오기</span>
+          <span class="plus-menu-hint">Coming soon</span>
+        </button>
+      </div>
+      <div class="compose-pill">
+        <button type="button" class="compose-plus" id="composePlus" aria-label="Attach">
+          +
+        </button>
+        <textarea class="rag-textarea" id="ragQuestion" placeholder="문서에 대해 질문하세요" data-i18n-placeholder="questionPlaceholder" rows="1"></textarea>
+        <button type="submit" class="compose-send" id="composeSend">
+          <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        </button>
+      </div>
     </form>
   </section>
 
-  <aside class="rag-sources" aria-label="RAG sources">
-    <div class="sources-header">
-      <strong data-i18n="evidenceDocuments">근거 문서</strong>
-      <span>Score · Page · Section</span>
+  <!-- Evidence Modal -->
+  <div id="evidenceModal" class="evidence-modal">
+    <div class="evidence-modal-content">
+      <div class="evidence-modal-header">
+        <strong data-i18n="evidenceDocuments">근거 문서</strong>
+        <button type="button" class="evidence-close" id="closeEvidenceModal">✕</button>
+      </div>
+      <div class="source-list" id="sourceList">
+        <div class="source-empty" data-i18n="sourcesIntro">질문을 입력하면 검색된 근거가 여기에 표시됩니다.</div>
+      </div>
     </div>
-    <div class="source-list" id="sourceList">
-      <div class="source-empty" data-i18n="sourcesIntro">질문을 입력하면 검색된 근거가 여기에 표시됩니다.</div>
-    </div>
-  </aside>
+  </div>
 </div>
 
 <script id="selectedNodesData" type="text/plain">{{ selected_nodes|default:"" }}</script>
@@ -558,17 +757,22 @@
   const scopeSelectedList = document.getElementById('scopeSelectedList');
   const scopePicker = document.getElementById('scopePicker');
   const scopePickerSummary = document.getElementById('scopePickerSummary');
-  const scopePickerToggle = document.getElementById('scopePickerToggle');
+  const closeScopeBtn = document.getElementById('closeScopeBtn');
   const clearScopeBtn = document.getElementById('clearScopeBtn');
+  const composePlus = document.getElementById('composePlus');
+  const plusMenu = document.getElementById('plusMenu');
+  const plusMenuScope = document.getElementById('plusMenuScope');
   const ragForm = document.getElementById('ragForm');
   const ragQuestion = document.getElementById('ragQuestion');
+  const composeSend = document.getElementById('composeSend');
   const ragMessages = document.getElementById('ragMessages');
   const sourceList = document.getElementById('sourceList');
   const topKSelect = document.getElementById('topKSelect');
   const languageSelect = document.getElementById('languageSelect');
   const ragProgress = document.getElementById('ragProgress');
   const aiReadinessSummary = document.getElementById('aiReadinessSummary');
-  const aiReadinessFill = document.getElementById('aiReadinessFill');
+  const aiReadinessPct = document.getElementById('aiReadinessPct');
+  const aiReadinessBadge = document.getElementById('aiReadinessBadge');
   const aiReadinessStats = document.getElementById('aiReadinessStats');
   let activePollTimer = null;
   let lastRequest = null;
@@ -624,7 +828,19 @@
       .replace(/'/g, '&#39;');
   }
 
+  function normalizeProgressStage(stage) {
+    const map = {
+      queued: 'search',
+      searching: 'search',
+      generating: 'answer',
+      completed: 'done',
+      failed: 'failed',
+    };
+    return map[stage] || stage || 'idle';
+  }
+
   function setProgress(stage) {
+    stage = normalizeProgressStage(stage);
     const rank = { idle: 0, search: 1, answer: 2, done: 3, failed: -1 };
     ragProgress.querySelectorAll('.rag-step').forEach((step) => {
       const stepName = step.dataset.step;
@@ -683,11 +899,13 @@
   }
 
   function renderSelectedScope() {
+    const scopeChipsBar = document.getElementById('scopeChipsBar');
     if (!selectedNodeIds.size) {
       scopeSelectedList.innerHTML = `<div class="source-empty">${escapeHtml(t('emptyScopeUsesAll'))}</div>`;
+      if (scopeChipsBar) scopeChipsBar.innerHTML = '';
       return;
     }
-    scopeSelectedList.innerHTML = Array.from(selectedNodeIds).map((uid) => {
+    const html = Array.from(selectedNodeIds).map((uid) => {
       const node = scopeNodeMap.get(uid);
       const label = node ? `${nodeIcon(node)} · ${node.name}` : uid;
       return `
@@ -697,6 +915,8 @@
         </span>
       `;
     }).join('');
+    scopeSelectedList.innerHTML = html;
+    if (scopeChipsBar) scopeChipsBar.innerHTML = html;
   }
 
   function loadScopeNodes(query = '') {
@@ -718,8 +938,11 @@
   }
 
   function setScopePickerCollapsed(collapsed) {
-    scopePicker.classList.toggle('collapsed', collapsed);
-    scopePickerToggle.textContent = collapsed ? t('expand') : t('collapse');
+    if (collapsed) {
+      scopePicker.classList.remove('open');
+    } else {
+      scopePicker.classList.add('open');
+    }
   }
 
   function setMessageHtml(messageId, html) {
@@ -739,8 +962,10 @@
       })
       .then((data) => {
         if (!data.ok) throw new Error('readiness response not ok');
-        const readyPercent = Number(data.ready_percent || 0);
-        aiReadinessFill.style.width = `${Math.min(Math.max(readyPercent, 0), 100)}%`;
+        const readyPercent = Math.min(Math.max(Number(data.ready_percent || 0), 0), 100);
+        const ring = aiReadinessBadge.querySelector('.readiness-ring');
+        if (ring) ring.style.setProperty('--pct', readyPercent);
+        aiReadinessPct.textContent = `${Math.round(readyPercent)}%`;
         if (data.total_files === 0) {
           aiReadinessSummary.textContent = t('aiReadyNoFiles');
         } else if (data.searchable_files === data.total_files) {
@@ -751,22 +976,41 @@
           aiReadinessSummary.textContent = t('aiReadyPartial', data.searchable_files);
         }
         aiReadinessStats.innerHTML = `
-          <span>${t('searchable', data.searchable_files, data.total_files)}</span>
-          <span>${t('parseStats', data.parse.completed, data.parse.processing, data.parse.failed)}</span>
-          <span>${t('embeddingStats', data.embedding.completed, data.embedding.processing, data.embedding.failed)}</span>
+          ${t('searchable', data.searchable_files, data.total_files)}<br>
+          ${t('parseStats', data.parse.completed, data.parse.processing, data.parse.failed)}<br>
+          ${t('embeddingStats', data.embedding.completed, data.embedding.processing, data.embedding.failed)}
         `;
       })
       .catch(() => {
+        aiReadinessPct.textContent = '—';
         aiReadinessSummary.textContent = t('aiReadyLoadFailed');
-        aiReadinessFill.style.width = '0%';
-        aiReadinessStats.innerHTML = `<span>${escapeHtml(t('statusCheckFailed'))}</span>`;
+        aiReadinessStats.textContent = t('statusCheckFailed');
       });
   }
 
   scopeSelect.addEventListener('change', updateScopeSummary);
-  scopePickerToggle.addEventListener('click', () => {
-    setScopePickerCollapsed(!scopePicker.classList.contains('collapsed'));
+  
+  // Popover menu logic
+  composePlus.addEventListener('click', (e) => {
+    e.stopPropagation();
+    plusMenu.classList.toggle('open');
+    composePlus.classList.toggle('active', plusMenu.classList.contains('open'));
   });
+  document.addEventListener('click', (e) => {
+    if (!plusMenu.contains(e.target) && !composePlus.contains(e.target)) {
+      plusMenu.classList.remove('open');
+      composePlus.classList.remove('active');
+    }
+  });
+  plusMenuScope.addEventListener('click', () => {
+    setScopePickerCollapsed(false);
+    plusMenu.classList.remove('open');
+    composePlus.classList.remove('active');
+  });
+  closeScopeBtn.addEventListener('click', () => {
+    setScopePickerCollapsed(true);
+  });
+
   scopeSearch.addEventListener('input', () => {
     clearTimeout(scopeSearch._timer);
     scopeSearch._timer = setTimeout(() => loadScopeNodes(scopeSearch.value.trim()), 250);
@@ -798,20 +1042,68 @@
     scopeSelect.value = 'all';
     updateScopeSummary();
   });
+  
+  // Input logic
+  ragQuestion.addEventListener('input', () => {
+    ragQuestion.style.height = 'auto';
+    ragQuestion.style.height = `${ragQuestion.scrollHeight}px`;
+    composeSend.disabled = !ragQuestion.value.trim();
+  });
+  ragQuestion.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (ragQuestion.value.trim()) {
+        ragForm.dispatchEvent(new Event('submit'));
+      }
+    }
+  });
+
+  // Modal Logic
+  const evidenceModal = document.getElementById('evidenceModal');
+  const closeEvidenceModal = document.getElementById('closeEvidenceModal');
+  
+  closeEvidenceModal.addEventListener('click', () => {
+    evidenceModal.classList.remove('open');
+  });
+  evidenceModal.addEventListener('click', (e) => {
+    if (e.target === evidenceModal) {
+      evidenceModal.classList.remove('open');
+    }
+  });
+
   ragForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const question = ragQuestion.value.trim();
     if (!question) return;
     startRagRequest(question);
+    ragQuestion.style.height = 'auto'; // reset height
+    composeSend.disabled = true;
   });
   document.addEventListener('dotori:languagechange', () => {
     syncRagLanguageFromGlobal();
     updateScopeSummary();
-    setScopePickerCollapsed(scopePicker.classList.contains('collapsed'));
+    setScopePickerCollapsed(!scopePicker.classList.contains('open'));
     renderScopeNodes(Array.from(scopeNodeMap.values()));
     renderSelectedScope();
     loadAIReadiness();
   });
+  function appendEvidenceButton(messageId) {
+    const messageEl = document.getElementById(messageId);
+    if (!messageEl) return;
+    
+    // Check if it already has an evidence button to avoid duplicates
+    if (messageEl.querySelector('.view-evidence-btn')) return;
+
+    const btnHtml = `<div style="margin-top: 12px;">
+      <button type="button" class="btn btn-secondary view-evidence-btn" style="font-size: 12px; padding: 4px 10px;">
+        Evidence &gt;
+      </button>
+    </div>`;
+    
+    // Append the button to the message
+    const msgContent = messageEl.querySelector('.rag-message-content') || messageEl;
+    msgContent.insertAdjacentHTML('beforeend', btnHtml);
+  }
 
   async function startRagRequest(question, existingPayload = null) {
     ragMessages.insertAdjacentHTML('beforeend', `<div class="rag-message user">${escapeHtml(question)}</div>`);
@@ -819,7 +1111,6 @@
     ragMessages.insertAdjacentHTML('beforeend', `<div class="rag-message assistant" id="${pendingId}">${escapeHtml(t('searchStarted'))}</div>`);
     ragQuestion.value = '';
     ragMessages.scrollTop = ragMessages.scrollHeight;
-    sourceList.innerHTML = `<div class="source-empty">${escapeHtml(t('searchingDocuments'))}</div>`;
     setProgress('search');
 
     try {
@@ -836,6 +1127,10 @@
       });
       if (!response.ok) throw new Error(`RAG request failed: ${response.status}`);
       const data = await response.json();
+      if (data.stage_message) {
+        setMessageHtml(pendingId, escapeHtml(data.stage_message));
+      }
+      setProgress(data.stage || 'searching');
       pollRagJob(data.job_id, pendingId, 0);
     } catch (error) {
       setProgress('failed');
@@ -860,39 +1155,49 @@
         const messageEl = document.getElementById(messageId);
         if (!messageEl) return;
 
+        const currentStage = job.stage || (
+          job.status === 'completed' ? 'completed' :
+          job.status === 'failed' ? 'failed' :
+          job.search_status === 'completed' ? 'generating' :
+          'searching'
+        );
+        const currentMessage = job.stage_message || job.stage_label || '';
+
         if (job.status === 'completed') {
           messageEl.innerHTML = renderAnswer(job.answer);
           const finalSources = job.citations && job.citations.length
             ? job.citations
             : flattenSearchResults(job.search_results || []);
           renderSources(finalSources);
-          setProgress('done');
+          appendEvidenceButton(messageId);
+          setProgress(currentStage);
           ragMessages.scrollTop = ragMessages.scrollHeight;
           return;
         }
 
         if (job.status === 'failed') {
-          setProgress('failed');
-          messageEl.innerHTML = `${escapeHtml(job.error_message || t('answerFailed'))}${renderRetryAction()}`;
+          setProgress(currentStage);
+          messageEl.innerHTML = `${escapeHtml(currentMessage || job.error_message || t('answerFailed'))}${renderRetryAction()}`;
           const failedSources = job.citations && job.citations.length
             ? job.citations
             : flattenSearchResults(job.search_results || []);
           renderSources(failedSources);
+          if (failedSources.length > 0) appendEvidenceButton(messageId);
           return;
         }
 
-        if (job.search_status === 'completed') {
+        if (currentStage === 'generating' || job.search_status === 'completed') {
           const preliminarySources = flattenSearchResults(job.search_results || []);
-          setProgress('answer');
+          setProgress(currentStage);
           if (preliminarySources.length) {
             renderSources(preliminarySources, { preliminary: true });
-            messageEl.textContent = t('foundEvidence', preliminarySources.length);
+            messageEl.textContent = currentMessage || t('foundEvidence', preliminarySources.length);
           } else {
-            messageEl.textContent = t('noPreliminaryEvidence');
+            messageEl.textContent = currentMessage || t('noPreliminaryEvidence');
           }
         } else {
-          setProgress('search');
-          messageEl.textContent = t('searchingDocuments');
+          setProgress(currentStage);
+          messageEl.textContent = currentMessage || t('searchingDocuments');
         }
 
         if (attempt >= 120) {
@@ -976,7 +1281,12 @@
   ragMessages.addEventListener('click', (event) => {
     const citationButton = event.target.closest('.citation');
     if (citationButton) {
-      focusCitation(citationButton.dataset.citationId);
+      evidenceModal.classList.add('open');
+      setTimeout(() => focusCitation(citationButton.dataset.citationId), 100);
+      return;
+    }
+    if (event.target.closest('.view-evidence-btn')) {
+      evidenceModal.classList.add('open');
       return;
     }
     if (event.target.closest('.retry-rag-button') && lastRequest) {
@@ -986,7 +1296,7 @@
 
   syncRagLanguageFromGlobal();
   updateScopeSummary();
-  setScopePickerCollapsed(selectedNodeIds.size === 0);
+  setScopePickerCollapsed(true);
   loadScopeNodes();
   loadAIReadiness();
   setProgress('idle');

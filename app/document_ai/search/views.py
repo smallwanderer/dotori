@@ -9,7 +9,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from config.enums import AIStatus
+from config.enums import RAGStage
 from document_ai.models import RAGJob, SearchJob
 from document_ai.search.serializers import (
     RAGJobCreateResponseSerializer,
@@ -22,8 +22,8 @@ from document_ai.search.serializers import (
     VectorTuningRequestSerializer,
 )
 from document_ai.search.query_frontend import prepare_retrieval_query
-from document_ai.services.llm_provider_service import build_rag_llm_snapshot
-from document_ai.tasks import generate_rag_response, perform_vector_search
+from document_ai.services.llm_endpoint_service import build_rag_llm_snapshot
+from document_ai.tasks import perform_vector_search
 from files.models import Node, NodeType
 
 
@@ -182,10 +182,11 @@ class RAGView(APIView):
 
     @swagger_auto_schema(
         operation_summary="RAG answer",
-        operation_description="Queue a vector search job and a RAG answer job. Answer generation uses the rag LLM worker.",
+        operation_description="Queue a vector search job and create a RAG answer job. \n The RAG answer generation task is queued after the search job is completed, when the job status endpoint is polled.",
         request_body=RAGRequestSerializer,
         responses={202: RAGJobCreateResponseSerializer()},
     )
+    
     def post(self, request, *args, **kwargs):
         if not getattr(request.user, "email_verified", False):
             return Response(
@@ -204,6 +205,8 @@ class RAGView(APIView):
             "threshold",
             getattr(settings, "RAG_RETRIEVAL_THRESHOLD", None),
         )
+
+        # prepare_retrieval_query is currently under development. 
         query_plan = prepare_retrieval_query(question, mode="rag")
 
         search_job = SearchJob.objects.create(
@@ -213,10 +216,8 @@ class RAGView(APIView):
             threshold=threshold,
             node_ids=scoped_node_ids,
         )
-        async_result = perform_vector_search.apply_async(args=[search_job.id], queue="search")
-        search_job.task_id = async_result.id
-        search_job.save(update_fields=["task_id"])
 
+        # RAG Job Database Record
         rag_job = RAGJob.objects.create(
             owner=request.user,
             search_job=search_job,
@@ -224,14 +225,23 @@ class RAGView(APIView):
             top_k=top_k,
             language=serializer.validated_data.get("language", "ko"),
             node_ids=[str(node_id) for node_id in node_ids],
+            stage=RAGStage.SEARCHING,
+            stage_message="문서에서 관련 근거를 검색하고 있습니다.",
             **build_rag_llm_snapshot(request.user),
         )
+
+        # Vector Search Worker
+        async_result = perform_vector_search.apply_async(args=[search_job.id], queue="search")
+        search_job.task_id = async_result.id
+        search_job.save(update_fields=["task_id"])
 
         return Response(
             {
                 "job_id": rag_job.id,
                 "search_job_id": search_job.id,
                 "status": rag_job.status,
+                "stage": rag_job.stage,
+                "stage_message": rag_job.stage_message,
                 "poll_url": request.build_absolute_uri(f"/api/document-ai/v1/rag/jobs/{rag_job.id}/"),
             },
             status=status.HTTP_202_ACCEPTED,
@@ -244,7 +254,7 @@ class RAGJobView(APIView):
 
     @swagger_auto_schema(
         operation_summary="RAG job status",
-        operation_description="Return RAG job status and queue answer generation after search is completed.",
+        operation_description="Return RAG job status. Work is advanced by Celery workers, not by polling.",
         responses={200: RAGJobSerializer()},
     )
     def get(self, request, job_id: int, *args, **kwargs):
@@ -256,33 +266,6 @@ class RAGJobView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        self._maybe_queue_answer(rag_job)
-        rag_job.refresh_from_db()
         if rag_job.search_job_id:
             rag_job.search_job.refresh_from_db()
         return Response(RAGJobSerializer(rag_job).data, status=status.HTTP_200_OK)
-
-    def _maybe_queue_answer(self, rag_job: RAGJob):
-        if rag_job.status != AIStatus.PENDING or rag_job.task_id:
-            return
-
-        search_job = rag_job.search_job
-        if not search_job:
-            rag_job.status = AIStatus.FAILED
-            rag_job.error_message = "Search job is missing."
-            rag_job.save(update_fields=["status", "error_message"])
-            return
-
-        if search_job.status == AIStatus.FAILED:
-            rag_job.status = AIStatus.FAILED
-            rag_job.completed_at = search_job.completed_at
-            rag_job.error_message = search_job.error_message or "Search failed."
-            rag_job.save(update_fields=["status", "completed_at", "error_message"])
-            return
-
-        if search_job.status != AIStatus.COMPLETED:
-            return
-
-        async_result = generate_rag_response.apply_async(args=[rag_job.id], queue="rag")
-        rag_job.task_id = async_result.id
-        rag_job.save(update_fields=["task_id"])
