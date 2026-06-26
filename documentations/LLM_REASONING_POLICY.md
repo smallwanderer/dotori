@@ -5,7 +5,7 @@ thinking/thought 값을 요청하거나 저장하지 않는 이유와 현재 적
 
 ## 1. 배경
 
-RAG, Text2SQL, Query parser는 모두 `llm-parser`의 OpenAI 호환
+RAG는 `llama-rag`의 OpenAI 호환
 `/v1/chat/completions` 엔드포인트를 호출한다. 이때 일부 reasoning 모델은 최종 답변
 외에 내부 추론 채널을 함께 반환할 수 있다.
 
@@ -45,7 +45,7 @@ thinking/thought/reasoning trace는 위 산출물에 포함하지 않는다.
 
 ### 2.2 `reasoning_format=none`을 기본값으로 사용
 
-`llama.cpp`/`llm-parser` 요청에서 thinking 출력을 끌 수 있는 경우
+`llama.cpp`/`llama-rag` 요청에서 thinking 출력을 끌 수 있는 경우
 `reasoning_format`을 `none`으로 지정한다.
 
 현재 코드에서 명시적으로 적용되는 대표 경로:

@@ -244,20 +244,20 @@ docker compose -f docker-compose.dev.yml logs -f nginx
 확인할 컨테이너:
 
 ```bash
-docker compose ps llm-parser celery-llm-rag-worker celery-search-worker
-docker compose logs -f llm-parser
+docker compose ps llama-rag celery-llm-rag-worker celery-search-worker
+docker compose logs -f llama-rag
 docker compose logs -f celery-llm-rag-worker
 ```
 
 개발 환경:
 
 ```bash
-docker compose -f docker-compose.dev.yml ps llm-parser celery-llm-rag-worker celery-search-worker
-docker compose -f docker-compose.dev.yml logs -f llm-parser
+docker compose -f docker-compose.dev.yml ps llama-rag celery-llm-rag-worker celery-search-worker
+docker compose -f docker-compose.dev.yml logs -f llama-rag
 docker compose -f docker-compose.dev.yml logs -f celery-llm-rag-worker
 ```
 
-`HF_TOKEN`이 없거나 모델 다운로드가 실패하면 `llm-parser`가 정상 준비되지 않을 수 있습니다.
+`HF_TOKEN`이 없거나 모델 다운로드가 실패하면 `llama-rag`가 정상 준비되지 않을 수 있습니다.
 
 ### 5.3 문서를 업로드했는데 AI 검색이 안 됨
 

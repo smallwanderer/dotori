@@ -5,11 +5,8 @@ QUERY_DSL_SCHEMA = {
         "model": "files.Node",
         "prefix": "",
         "fields": {
-            "uid": {"type": "uuid", "operators": {"eq", "in"}},
             "name": {"type": "str", "operators": {"eq", "neq", "contains", "in"}},
             "ext": {"type": "str", "operators": {"eq", "neq", "in"}},
-            "node_type": {"type": "str", "operators": {"eq", "neq", "in"}, "choices": {"file", "directory"}},
-            "description": {"type": "str", "operators": {"contains"}},
             "path": {"type": "str", "operators": {"eq", "contains"}},
             "starred": {"type": "bool", "operators": {"eq", "neq"}},
             "created_at": {"type": "datetime", "operators": {"eq", "gte", "lte", "gt", "lt"}},
@@ -26,6 +23,9 @@ QUERY_DSL_SCHEMA = {
         },
         "sortable_fields": {"size"},
     },
+}
+
+QUERY_DSL_SCHEMA_NOTUSING_NOW = {
     "user": {
         "model": "accounts.User",
         "prefix": "owner__",
@@ -34,9 +34,6 @@ QUERY_DSL_SCHEMA = {
         },
         "sortable_fields": {"email"},
     },
-}
-
-QUERY_DSL_SCHEMA_NOTUSING_NOW = {
     "parse_result": {
         "model": "document_ai.DocumentParseResult",
         "prefix": "parse_result__",

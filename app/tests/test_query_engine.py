@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 pytestmark = pytest.mark.unit
 
+from config.enums import QueryAnswerMode, QueryIntent
 from search_engine.query_engine import QueryAnalyzer
 from search_engine.query_engine.contracts import DSLFilter, DSLSort, QueryDSL
 from search_engine.query_engine.query_pipeline import QueryPipeline
@@ -135,7 +136,12 @@ def test_llm_final_content_extractor_requires_final_after_thought():
 
 def test_query_pipeline_compiles_llm_dsl_to_orm_kwargs():
     payload = {
+        "intent": "document_question",
         "semantic_query": "계약 문서",
+        "retrieval_required": True,
+        "answer_mode": "rag",
+        "confidence": 0.92,
+        "reason": "문서 검색 요청입니다.",
         "filters": [
             {"scope": "node", "field": "ext", "operator": "eq", "value": "pdf"},
             {"scope": "node", "field": "created_at", "operator": "gte", "value": "2026-04-03T00:00:00+09:00"},
@@ -148,6 +154,11 @@ def test_query_pipeline_compiles_llm_dsl_to_orm_kwargs():
     result = QueryPipeline(max_validation_passes=2).run("지난주 pdf 계약 문서", "search", payload)
 
     assert result["status"] == "success"
+    assert result["intent"] == QueryIntent.DOCUMENT_QUESTION
+    assert result["answer_mode"] == QueryAnswerMode.RAG
+    assert result["retrieval_required"] is True
+    assert result["confidence"] == 0.92
+    assert result["classification"]["reason"] == "문서 검색 요청입니다."
     assert result["semantic_query"] == "계약 문서"
     assert result["orm"]["filter_kwargs"]["ext"] == "pdf"
     assert "created_at__gte" in result["orm"]["filter_kwargs"]
@@ -180,7 +191,7 @@ def test_query_pipeline_prunes_invalid_llm_filters_recursively():
     assert result["orm"]["filter_kwargs"] == {"ext": "pdf"}
     assert result["orm"]["order_by"] == []
     assert any(issue["code"] == "unknown_field" for issue in result["validation"]["issues"])
-    assert any(issue["code"] == "value_not_allowed" for issue in result["validation"]["issues"])
+    assert not any(issue["path"] == "filters[3].value" for issue in result["validation"]["issues"])
     assert any(item["pass"] == 2 and item["issues"] == [] for item in result["validation"]["passes"])
 
 
@@ -190,3 +201,27 @@ def test_query_pipeline_can_be_disabled():
     assert result["source"] == "query_pipeline_disabled"
     assert result["semantic_query"] == "pdf 계약 문서"
     assert result["orm"]["filter_kwargs"] == {}
+
+
+def test_query_pipeline_accepts_casual_chat_classification_without_semantic_query():
+    payload = {
+        "intent": "casual_chat",
+        "semantic_query": "",
+        "retrieval_required": False,
+        "answer_mode": "casual",
+        "confidence": 0.98,
+        "reason": "인사와 기능 질문입니다.",
+        "filters": [],
+        "sorts": [],
+        "target_scopes": [],
+    }
+
+    result = QueryPipeline(max_validation_passes=2).run("안녕 너 뭐 할 수 있어?", "rag", payload)
+
+    assert result["status"] == "success"
+    assert result["intent"] == QueryIntent.CASUAL_CHAT
+    assert result["answer_mode"] == QueryAnswerMode.CASUAL
+    assert result["retrieval_required"] is False
+    assert result["confidence"] == 0.98
+    assert result["semantic_query"] == ""
+    assert result["classification"]["reason"] == "인사와 기능 질문입니다."

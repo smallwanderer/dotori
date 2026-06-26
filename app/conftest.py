@@ -23,8 +23,29 @@ if not RUNNING_IN_DOCKER:
 collect_ignore_glob = [
     "tests/manual_*.py",
     "tests/verify_*.py",
+    "tests/docling_*.py",
 ]
 
+
+# Patch pgvector HnswIndex for SQLite compatibility in tests
+try:
+    import pgvector.django.indexes
+    from django.db.models import Index
+    
+    original_create_sql = pgvector.django.indexes.HnswIndex.create_sql
+    
+    def sqlite_create_sql(self, model, schema_editor, using=""):
+        if schema_editor.connection.vendor == "sqlite":
+            orig_opclasses = self.opclasses
+            self.opclasses = []
+            sql = Index.create_sql(self, model, schema_editor, using=using)
+            self.opclasses = orig_opclasses
+            return sql
+        return original_create_sql(self, model, schema_editor, using=using)
+        
+    pgvector.django.indexes.HnswIndex.create_sql = sqlite_create_sql
+except ImportError:
+    pass
 
 def pytest_configure(config):
     django.setup()

@@ -8,8 +8,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.conf import settings
 from django.test import TestCase, override_settings
 
-from config.enums import AIStatus, RAGStage
-from document_ai.models import LLMEndpoint, RAGJob, SearchJob, UserLLMPreference
+from config.enums import AIStatus, QueryAnswerMode, QueryIntent, RAGStage
+from document_ai.models import LLMEndpoint, QueryUnderstandingLog, RAGJob, SearchJob, UserLLMPreference
 from document_ai.services.llm_endpoint_service import check_llm_endpoint
 from document_ai.search.views import EMPTY_SCOPE_SENTINEL, _expand_scope_node_ids
 from document_ai.search.query_frontend import prepare_retrieval_query
@@ -19,6 +19,14 @@ from files.models import FileBlob, Node, NodeType
 pytestmark = pytest.mark.unit
 
 User = get_user_model()
+
+
+class FakeRedisNoCancel:
+    def exists(self, key):
+        return False
+
+    def delete(self, key):
+        return 0
 
 
 def _search_results():
@@ -57,6 +65,9 @@ class RAGFlowTests(TestCase):
             email_verified=True,
         )
         self.client.force_login(self.user)
+        self.query_frontend_env = patch.dict("os.environ", {"QUERY_FRONTEND_MODE": "passthrough"})
+        self.query_frontend_env.start()
+        self.addCleanup(self.query_frontend_env.stop)
 
     def test_rag_request_creates_search_and_rag_jobs_then_queues_search(self):
         with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
@@ -79,13 +90,48 @@ class RAGFlowTests(TestCase):
 
         self.assertEqual(search_job.owner, self.user)
         self.assertEqual(search_job.query, "농축산물 수급 안정 대책을 요약해줘")
+        self.assertIsNone(search_job.query_log)
         self.assertEqual(search_job.top_k, 5)
         self.assertEqual(search_job.threshold, settings.RAG_RETRIEVAL_THRESHOLD)
         self.assertEqual(search_job.task_id, "search-task-id")
         self.assertEqual(rag_job.search_job, search_job)
+        self.assertIsNone(rag_job.query_log)
+        self.assertEqual(rag_job.retrieval_query, "농축산물 수급 안정 대책을 요약해줘")
+        self.assertEqual(rag_job.query_intent, QueryIntent.DOCUMENT_QUESTION)
+        self.assertEqual(rag_job.answer_mode, QueryAnswerMode.RAG)
+        self.assertTrue(rag_job.retrieval_required)
         self.assertEqual(rag_job.status, AIStatus.PENDING)
         self.assertEqual(rag_job.stage, RAGStage.SEARCHING)
         apply_async.assert_called_once_with(args=[search_job.id], queue="search")
+
+    def test_rag_request_does_not_call_query_parser_even_when_frontend_mode_is_llm(self):
+        with patch.dict("os.environ", {"QUERY_FRONTEND_MODE": "llm"}), patch(
+            "document_ai.tasks.parse_user_query"
+        ) as parse_user_query, patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
+            apply_async.return_value = SimpleNamespace(id="search-task-id")
+            response = self.client.post(
+                "/api/document-ai/v1/rag/",
+                data={
+                    "question": "지난주 업로드한 pdf 계약서에서 해지 조항 알려줘",
+                    "top_k": 5,
+                    "language": "ko",
+                },
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        search_job = SearchJob.objects.get(pk=payload["search_job_id"])
+        rag_job = RAGJob.objects.get(pk=payload["job_id"])
+
+        parse_user_query.assert_not_called()
+        self.assertEqual(search_job.query, "지난주 업로드한 pdf 계약서에서 해지 조항 알려줘")
+        self.assertIsNone(search_job.query_log)
+        self.assertEqual(rag_job.retrieval_query, "지난주 업로드한 pdf 계약서에서 해지 조항 알려줘")
+        self.assertEqual(rag_job.query_intent, QueryIntent.DOCUMENT_QUESTION)
+        self.assertEqual(rag_job.answer_mode, QueryAnswerMode.RAG)
+        self.assertTrue(rag_job.retrieval_required)
+        self.assertEqual(rag_job.query_confidence, 0.0)
 
     def test_rag_request_snapshots_selected_user_llm_endpoint(self):
         endpoint = LLMEndpoint.objects.create(
@@ -303,7 +349,7 @@ class RAGFlowTests(TestCase):
         fake_semaphore = SimpleNamespace(acquire=lambda timeout=None: None, release=lambda: None)
 
         with patch("requests.post", return_value=FakeResponse()) as post, patch(
-            "redis.Redis.from_url", return_value=object()
+            "redis.Redis.from_url", return_value=FakeRedisNoCancel()
         ), patch("redis_semaphore.Semaphore", return_value=fake_semaphore):
             result = generate_rag_response(rag_job.id)
 
@@ -316,12 +362,74 @@ class RAGFlowTests(TestCase):
         self.assertEqual(rag_job.citations[0]["text"], "압축 근거: 공급 확대와 할인 지원을 병행한다.")
         post.assert_called_once()
         request_payload = post.call_args.kwargs["json"]
-        final_user_prompt = request_payload["input"][-1]["content"]
-        self.assertIn("Use the following pieces", request_payload["instructions"])
+        final_user_prompt = request_payload["messages"][-1]["content"]
+        system_prompt = request_payload["messages"][0]["content"]
+        self.assertIn("You are a helpful AI assistant", system_prompt)
         self.assertTrue(request_payload["stream"])
         self.assertTrue(post.call_args.kwargs["stream"])
         self.assertIn("압축 근거", final_user_prompt)
         self.assertNotIn("넓은 문맥입니다", final_user_prompt)
+
+    def test_generate_rag_response_completes_with_insufficient_evidence_when_search_has_no_citations(self):
+        search_job = SearchJob.objects.create(
+            owner=self.user,
+            query="대책 요약",
+            top_k=3,
+            threshold=0.25,
+            status=AIStatus.COMPLETED,
+            results=[],
+        )
+        rag_job = RAGJob.objects.create(
+            owner=self.user,
+            search_job=search_job,
+            question="대책 요약",
+            top_k=3,
+            language="ko",
+        )
+
+        with patch("requests.post") as post:
+            result = generate_rag_response(rag_job.id)
+
+        rag_job.refresh_from_db()
+        self.assertEqual(result["status"], "insufficient_evidence")
+        self.assertEqual(rag_job.status, AIStatus.COMPLETED)
+        self.assertEqual(rag_job.stage, RAGStage.COMPLETED)
+        self.assertIn("충분한 근거", rag_job.answer)
+        self.assertEqual(rag_job.citations, [])
+        self.assertEqual(rag_job.error_message, "")
+        post.assert_not_called()
+
+    def test_generate_rag_response_completes_with_insufficient_evidence_when_scores_are_below_threshold(self):
+        weak_results = _search_results()
+        weak_results[0]["doc_score"] = 0.1
+        weak_results[0]["evidences"][0]["hybrid_score"] = 0.12
+        weak_results[0]["evidences"][0]["dense_score"] = 0.11
+        weak_results[0]["evidences"][0]["sparse_score"] = 0.13
+        search_job = SearchJob.objects.create(
+            owner=self.user,
+            query="대책 요약",
+            top_k=3,
+            threshold=0.25,
+            status=AIStatus.COMPLETED,
+            results=weak_results,
+        )
+        rag_job = RAGJob.objects.create(
+            owner=self.user,
+            search_job=search_job,
+            question="대책 요약",
+            top_k=3,
+            language="ko",
+        )
+
+        with patch("requests.post") as post:
+            result = generate_rag_response(rag_job.id)
+
+        rag_job.refresh_from_db()
+        self.assertEqual(result["status"], "insufficient_evidence")
+        self.assertEqual(rag_job.status, AIStatus.COMPLETED)
+        self.assertIn("충분한 근거", rag_job.answer)
+        self.assertEqual(rag_job.citations, [])
+        post.assert_not_called()
 
     def test_generate_rag_response_uses_snapshotted_llm_endpoint_and_model(self):
         endpoint = LLMEndpoint.objects.create(
@@ -368,16 +476,221 @@ class RAGFlowTests(TestCase):
         fake_semaphore = SimpleNamespace(acquire=lambda timeout=None: None, release=lambda: None)
 
         with patch("requests.post", return_value=FakeResponse()) as post, patch(
-            "redis.Redis.from_url", return_value=object()
+            "redis.Redis.from_url", return_value=FakeRedisNoCancel()
         ), patch("redis_semaphore.Semaphore", return_value=fake_semaphore):
             result = generate_rag_response(rag_job.id)
 
         self.assertEqual(result["status"], "success")
-        self.assertEqual(post.call_args.args[0], "http://llm-runtime:8080/v1/responses")
+        self.assertEqual(post.call_args.args[0], "http://llm-runtime:8080/v1/chat/completions")
         self.assertEqual(post.call_args.kwargs["json"]["model"], "gemma-selected")
+        self.assertGreater(post.call_args.kwargs["json"]["max_tokens"], 0)
+        self.assertIn("messages", post.call_args.kwargs["json"])
+        self.assertNotIn("input", post.call_args.kwargs["json"])
+        self.assertNotIn("max_output_tokens", post.call_args.kwargs["json"])
         self.assertTrue(post.call_args.kwargs["json"]["stream"])
         self.assertTrue(post.call_args.kwargs["stream"])
         self.assertEqual(post.call_args.kwargs["headers"]["Authorization"], "Bearer local-secret")
+
+    def test_generate_rag_response_uses_openai_responses_token_limit_field(self):
+        endpoint = LLMEndpoint.objects.create(
+            owner=self.user,
+            name="OpenAI",
+            endpoint_type=LLMEndpoint.ENDPOINT_OPENAI_COMPATIBLE,
+            base_url="https://api.openai.com",
+            default_model="gpt-4.1-mini",
+            api_key="openai-secret",
+        )
+        search_job = SearchJob.objects.create(
+            owner=self.user,
+            query="대책 요약",
+            top_k=3,
+            status=AIStatus.COMPLETED,
+            results=_search_results(),
+        )
+        rag_job = RAGJob.objects.create(
+            owner=self.user,
+            search_job=search_job,
+            question="대책 요약",
+            top_k=3,
+            language="ko",
+            llm_endpoint=endpoint,
+            llm_endpoint_name=endpoint.name,
+            llm_base_url=endpoint.normalized_base_url,
+            llm_model="gpt-4.1-mini",
+        )
+
+        class FakeResponse:
+            status_code = 200
+            text = ""
+
+            def raise_for_status(self):
+                return None
+
+            def iter_lines(self, decode_unicode=False):
+                return [
+                    'data: {"type":"response.output_text.delta","delta":"공급 확대와 할인 지원입니다 [1]."}',
+                    'data: {"type":"response.completed","response":{"output":[]}}',
+                ]
+
+        fake_semaphore = SimpleNamespace(acquire=lambda timeout=None: None, release=lambda: None)
+
+        with patch("requests.post", return_value=FakeResponse()) as post, patch(
+            "redis.Redis.from_url", return_value=FakeRedisNoCancel()
+        ), patch("redis_semaphore.Semaphore", return_value=fake_semaphore):
+            result = generate_rag_response(rag_job.id)
+
+        self.assertEqual(result["status"], "success")
+        request_payload = post.call_args.kwargs["json"]
+        self.assertEqual(post.call_args.args[0], "https://api.openai.com/v1/responses")
+        self.assertGreater(request_payload["max_output_tokens"], 0)
+        self.assertNotIn("max_tokens", request_payload)
+        self.assertIn("input", request_payload)
+        self.assertNotIn("messages", request_payload)
+
+    def test_generate_rag_response_without_retrieval_stores_uncited_answer(self):
+        rag_job = RAGJob.objects.create(
+            owner=self.user,
+            question="안녕 너 뭐 할 수 있어?",
+            retrieval_required=False,
+            query_intent=QueryIntent.CASUAL_CHAT,
+            answer_mode=QueryAnswerMode.CASUAL,
+            top_k=3,
+            language="ko",
+        )
+
+        class FakeResponse:
+            status_code = 200
+            text = ""
+
+            def raise_for_status(self):
+                return None
+
+            def iter_lines(self, decode_unicode=False):
+                return [
+                    'data: {"type":"response.output_text.delta","delta":"안녕하세요. 문서 검색과 요약을 도와드릴 수 있습니다."}',
+                    'data: {"type":"response.completed","response":{"output":[]}}',
+                ]
+
+        fake_semaphore = SimpleNamespace(acquire=lambda timeout=None: None, release=lambda: None)
+
+        with patch("requests.post", return_value=FakeResponse()) as post, patch(
+            "redis.Redis.from_url", return_value=FakeRedisNoCancel()
+        ), patch("redis_semaphore.Semaphore", return_value=fake_semaphore):
+            result = generate_rag_response(rag_job.id)
+
+        rag_job.refresh_from_db()
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(rag_job.status, AIStatus.COMPLETED)
+        self.assertEqual(rag_job.stage, RAGStage.COMPLETED)
+        self.assertIn("문서 검색", rag_job.answer)
+        self.assertEqual(rag_job.citations, [])
+        request_payload = post.call_args.kwargs["json"]
+        final_user_prompt = request_payload["messages"][-1]["content"]
+        system_prompt = request_payload["messages"][0]["content"]
+        self.assertIn("without document citations", final_user_prompt)
+        self.assertIn("document retrieval is not required", system_prompt)
+
+    def test_cancel_rag_job_marks_job_and_search_canceled(self):
+        search_job = SearchJob.objects.create(
+            owner=self.user,
+            query="대책 요약",
+            top_k=3,
+            status=AIStatus.PROCESSING,
+            task_id="search-task-id",
+        )
+        rag_job = RAGJob.objects.create(
+            owner=self.user,
+            search_job=search_job,
+            question="대책 요약",
+            top_k=3,
+            status=AIStatus.PROCESSING,
+            stage=RAGStage.GENERATING,
+            task_id="rag-task-id",
+        )
+
+        with patch("document_ai.search.views.set_rag_cancel_signal", return_value=True) as cancel_signal, patch(
+            "document_ai.search.views.celery_app.control.revoke"
+        ) as revoke:
+            response = self.client.post(
+                f"/api/document-ai/v1/rag/jobs/{rag_job.id}/cancel/",
+                data={"reason": "stop"},
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        rag_job.refresh_from_db()
+        search_job.refresh_from_db()
+        self.assertEqual(rag_job.status, AIStatus.CANCELED)
+        self.assertEqual(rag_job.stage, RAGStage.CANCELED)
+        self.assertEqual(rag_job.cancel_reason, "stop")
+        self.assertIsNotNone(rag_job.canceled_at)
+        self.assertEqual(search_job.status, AIStatus.CANCELED)
+        cancel_signal.assert_called_once_with(rag_job.id)
+        revoke.assert_any_call("rag-task-id", terminate=False)
+        revoke.assert_any_call("search-task-id", terminate=False)
+        self.assertFalse(response.json()["can_cancel"])
+
+    def test_generate_rag_response_closes_stream_when_cancel_requested(self):
+        search_job = SearchJob.objects.create(
+            owner=self.user,
+            query="대책 요약",
+            top_k=3,
+            status=AIStatus.COMPLETED,
+            results=_search_results(),
+        )
+        rag_job = RAGJob.objects.create(
+            owner=self.user,
+            search_job=search_job,
+            question="대책 요약",
+            top_k=3,
+            language="ko",
+        )
+
+        class FakeResponse:
+            status_code = 200
+            text = ""
+            closed = False
+
+            def raise_for_status(self):
+                return None
+
+            def iter_lines(self, decode_unicode=False):
+                return [
+                    'data: {"type":"response.output_text.delta","delta":"생성 중입니다."}',
+                    'data: {"type":"response.output_text.delta","delta":"더 생성됩니다."}',
+                ]
+
+            def close(self):
+                self.closed = True
+
+        class FakeRedis:
+            def __init__(self):
+                self.exists_calls = 0
+
+            def exists(self, key):
+                self.exists_calls += 1
+                return self.exists_calls >= 2
+
+            def delete(self, key):
+                return 1
+
+        fake_response = FakeResponse()
+        fake_redis = FakeRedis()
+        fake_semaphore = SimpleNamespace(acquire=lambda timeout=None: None, release=lambda: None)
+
+        with patch("requests.post", return_value=fake_response), patch(
+            "redis.Redis.from_url", return_value=fake_redis
+        ), patch("redis_semaphore.Semaphore", return_value=fake_semaphore), patch(
+            "document_ai.rag.generation.time_module.monotonic", side_effect=[1.0, 2.0]
+        ):
+            result = generate_rag_response(rag_job.id)
+
+        rag_job.refresh_from_db()
+        self.assertEqual(result["status"], "canceled")
+        self.assertTrue(fake_response.closed)
+        self.assertEqual(rag_job.status, AIStatus.CANCELED)
+        self.assertEqual(rag_job.stage, RAGStage.CANCELED)
+        self.assertEqual(rag_job.answer, "")
 
     def test_llm_endpoint_healthcheck_marks_endpoint_available(self):
         endpoint = LLMEndpoint.objects.create(
@@ -447,19 +760,57 @@ class RAGFlowTests(TestCase):
         self.assertEqual(checked.last_check_status, "failed")
         self.assertIn("connection failed", checked.last_check_message)
 
-    def test_query_frontend_keeps_querydsl_experimental_and_passthrough(self):
-        plan = prepare_retrieval_query("지난주 pdf 계약 문서", mode="rag")
+    def test_query_frontend_passthrough_mode_records_fallback_log(self):
+        plan = prepare_retrieval_query("지난주 pdf 계약 문서", mode="rag", owner=self.user)
 
-        self.assertEqual(plan.source, "passthrough")
+        self.assertEqual(plan.source, "llm_query_frontend_disabled")
         self.assertEqual(plan.retrieval_query, "지난주 pdf 계약 문서")
-        self.assertEqual(plan.metadata, {})
+        self.assertEqual(plan.intent, QueryIntent.DOCUMENT_QUESTION)
+        self.assertEqual(plan.answer_mode, QueryAnswerMode.RAG)
+        self.assertTrue(plan.retrieval_required)
+        self.assertIsNotNone(plan.query_log)
+        self.assertEqual(plan.query_log.semantic_query, "지난주 pdf 계약 문서")
+        self.assertEqual(plan.query_log.source, "llm_query_frontend_disabled")
+        self.assertEqual(plan.warnings[0]["code"], "llm_query_frontend_disabled")
 
-        with patch.dict("os.environ", {"QUERY_FRONTEND_MODE": "experimental_querydsl"}):
-            experimental_plan = prepare_retrieval_query("지난주 pdf 계약 문서", mode="rag")
+    def test_query_frontend_llm_mode_returns_intent_and_semantic_query(self):
+        parsed_query = {
+            "status": "success",
+            "mode": "rag",
+            "source": "llm_query_pipeline",
+            "raw_query": "안녕 너 뭐 할 수 있어?",
+            "normalized_query": "안녕 너 뭐 할 수 있어?",
+            "semantic_query": "",
+            "intent": QueryIntent.CASUAL_CHAT.value,
+            "answer_mode": QueryAnswerMode.CASUAL.value,
+            "retrieval_required": False,
+            "confidence": 0.98,
+            "classification": {
+                "intent": QueryIntent.CASUAL_CHAT.value,
+                "answer_mode": QueryAnswerMode.CASUAL.value,
+                "retrieval_required": False,
+                "confidence": 0.98,
+                "reason": "일상 대화입니다.",
+            },
+            "analysis": {"warnings": []},
+            "metadata": {"filters": [], "sorts": [], "target_scopes": []},
+            "dsl": {"semantic_query": "", "filters": [], "sorts": [], "target_scopes": []},
+            "orm": {"filter_kwargs": {}, "exclude_kwargs": {}, "order_by": []},
+        }
 
-        self.assertEqual(experimental_plan.source, "querydsl_experimental_passthrough")
-        self.assertEqual(experimental_plan.retrieval_query, "지난주 pdf 계약 문서")
-        self.assertFalse(experimental_plan.metadata["querydsl_enabled"])
+        with patch.dict("os.environ", {"QUERY_FRONTEND_MODE": "llm"}), patch(
+            "document_ai.tasks.parse_user_query", return_value=parsed_query
+        ):
+            plan = prepare_retrieval_query("안녕 너 뭐 할 수 있어?", mode="rag", owner=self.user)
+
+        self.assertEqual(plan.source, "llm_query_pipeline")
+        self.assertEqual(plan.retrieval_query, "")
+        self.assertEqual(plan.intent, QueryIntent.CASUAL_CHAT)
+        self.assertEqual(plan.answer_mode, QueryAnswerMode.CASUAL)
+        self.assertFalse(plan.retrieval_required)
+        self.assertEqual(plan.confidence, 0.98)
+        self.assertEqual(plan.query_log.intent, QueryIntent.CASUAL_CHAT)
+        self.assertEqual(plan.query_log.semantic_query, "")
 
     def test_scope_expansion_includes_files_under_selected_folder(self):
         folder = Node.objects.create(

@@ -12,6 +12,7 @@ from document_ai.models import (
     DocumentChunk,
     DocumentParseResult,
     LLMEndpoint,
+    QueryUnderstandingLog,
     RAGJob,
     SearchJob,
     UserLLMPreference,
@@ -265,6 +266,92 @@ class ChunkEmbeddingAdmin(admin.ModelAdmin):
         return len(obj.sparse_vector or {})
 
 
+@admin.register(QueryUnderstandingLog)
+class QueryUnderstandingLogAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "owner_email",
+        "mode",
+        "intent",
+        "semantic_query_preview",
+        "retrieval_required",
+        "confidence",
+        "source",
+        "status",
+        "created_at",
+    )
+    list_filter = (
+        "mode",
+        "intent",
+        "answer_mode",
+        "retrieval_required",
+        "source",
+        "status",
+        "created_at",
+    )
+    search_fields = (
+        "raw_query",
+        "normalized_query",
+        "semantic_query",
+        "reason",
+        "owner__email",
+        "error_message",
+    )
+    readonly_fields = (
+        "owner",
+        "mode",
+        "raw_query",
+        "normalized_query",
+        "semantic_query",
+        "intent",
+        "answer_mode",
+        "retrieval_required",
+        "confidence",
+        "reason",
+        "source",
+        "status",
+        "warnings_pretty",
+        "classification_pretty",
+        "query_dsl_pretty",
+        "orm_pretty",
+        "raw_result_pretty",
+        "error_message",
+        "created_at",
+    )
+    raw_id_fields = ("owner",)
+    date_hierarchy = "created_at"
+    ordering = ("-created_at",)
+    list_select_related = ("owner",)
+
+    @admin.display(description="Owner")
+    def owner_email(self, obj):
+        return obj.owner.email
+
+    @admin.display(description="Semantic query")
+    def semantic_query_preview(self, obj):
+        return Truncator(obj.semantic_query).chars(80) if obj.semantic_query else "-"
+
+    @admin.display(description="Warnings")
+    def warnings_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.warnings, length=2000))
+
+    @admin.display(description="Classification")
+    def classification_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.classification, length=2000))
+
+    @admin.display(description="QueryDSL")
+    def query_dsl_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.query_dsl, length=3000))
+
+    @admin.display(description="ORM")
+    def orm_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.orm, length=3000))
+
+    @admin.display(description="Raw result")
+    def raw_result_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.raw_result, length=4000))
+
+
 @admin.register(SearchJob)
 class SearchJobAdmin(admin.ModelAdmin):
     list_display = (
@@ -293,6 +380,7 @@ class SearchJobAdmin(admin.ModelAdmin):
     )
     readonly_fields = (
         "owner",
+        "query_log",
         "query",
         "tuning_params_pretty",
         "results_pretty",
@@ -305,7 +393,7 @@ class SearchJobAdmin(admin.ModelAdmin):
         "duration",
         "result_count",
     )
-    raw_id_fields = ("owner",)
+    raw_id_fields = ("owner", "query_log")
     actions = ("requeue_selected_search_jobs",)
     date_hierarchy = "created_at"
     ordering = ("-created_at",)
@@ -367,6 +455,7 @@ class RAGJobAdmin(admin.ModelAdmin):
         "question_preview",
         "status",
         "stage",
+        "query_intent",
         "search_status",
         "llm_model",
         "citation_count",
@@ -377,6 +466,9 @@ class RAGJobAdmin(admin.ModelAdmin):
     list_filter = (
         "status",
         "stage",
+        "query_intent",
+        "answer_mode",
+        "retrieval_required",
         "language",
         "llm_endpoint_name",
         "created_at",
@@ -396,7 +488,13 @@ class RAGJobAdmin(admin.ModelAdmin):
     readonly_fields = (
         "owner",
         "search_job",
+        "query_log",
         "question",
+        "retrieval_query",
+        "query_intent",
+        "answer_mode",
+        "retrieval_required",
+        "query_confidence",
         "answer",
         "citations_pretty",
         "error_message",
@@ -412,7 +510,7 @@ class RAGJobAdmin(admin.ModelAdmin):
         "updated_at",
         "citation_count",
     )
-    raw_id_fields = ("owner", "search_job", "llm_endpoint")
+    raw_id_fields = ("owner", "search_job", "query_log", "llm_endpoint")
     actions = ("requeue_selected_rag_jobs",)
     date_hierarchy = "created_at"
     ordering = ("-created_at",)

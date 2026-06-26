@@ -56,11 +56,8 @@ celery-llm-rag-worker
 celery-query-worker
   experimental query parsing
 
-celery-text2sql-worker
-  experimental Text2SQL tasks
-
-llm-parser
-  llama.cpp-compatible local LLM endpoint
+llama-rag
+  llama.cpp-compatible local RAG runtime
 ```
 
 The web container stays lightweight. Heavy parsing, embedding, retrieval, and LLM work runs in worker containers.
@@ -169,7 +166,8 @@ The web `app` container intentionally stays light. Docling-based tests should ru
 - Uploaded files and database data live under `data/`.
 - The default Compose stack is production-like and uses `docker-compose.yml`.
 - The development stack uses `docker-compose.dev.yml` and serves the app on port `8888`.
-- RAG and Text2SQL use the local `llm-parser` container.
+- RAG uses the local `llama-rag` container.
+- Query parsing is expected to use a separate `vllm-query-parser` runtime.
 - The project disables and filters LLM reasoning/thinking output by default. See [LLM_REASONING_POLICY.md](LLM_REASONING_POLICY.md).
 - QueryDSL parsing is experimental. The default search/RAG path still uses semantic query passthrough.
 

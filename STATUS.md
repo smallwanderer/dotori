@@ -38,7 +38,7 @@
 - AI 처리 제외 파일의 parse/embed 큐잉 방지
 - AI 처리 제외 파일의 backlog recovery 큐잉 방지
 - 그리드/리스트 뷰 선택을 브라우저 `localStorage`에 저장
-- `parse`, `embed`, `text2sql` queue 구성
+- `parse`, `embed`, `query`, `rag`, `search` queue 구성
 - `search` queue와 검색 전용 Celery worker 구성
 - AI 검색 query embedding을 웹 서버에서 worker로 분리
 - 검색 요청을 `SearchJob`으로 저장하고 polling API로 결과 조회
@@ -161,7 +161,6 @@
 - parse/embed worker 분리 여부를 실제 부하 기준으로 결정
 - 업로드 -> 파싱 -> 임베딩까지의 통합 테스트 추가
 - RAG 1차 기능 설계: retriever evidence를 context로 사용한 문서 Q&A, 답변 근거 표시, prompt/context budget 정책
-- TEXT2SQL 1차 기능 설계: 자연어 질의 -> 제한된 SQL 생성 -> 검증 -> 읽기 전용 실행 흐름
 - Docker Compose 환경에서 `docker compose config` 및 smoke test 자동화
 
 ### 5.3 중기
@@ -173,15 +172,12 @@
 - 파일 미리보기, 즐겨찾기, 태그 기능 추가
 - 검색 결과에서 파일 열기/다운로드/위치 이동 동선 개선
 - RAG 답변 결과에서 근거 chunk, 페이지, 파일 이동 동선 제공
-- TEXT2SQL 결과를 표/요약/원본 SQL로 확인하는 사용자 화면 추가
-
 ### 5.4 장기
 
 - 운영 백업/복구 문서화
 - 로그/메트릭/알림 체계 구축
 - 검색 품질 평가 데이터셋 확장
 - RAG 평가셋과 hallucination 방지 정책 추가
-- TEXT2SQL 권한/스키마 제한/감사 로그 정리
 - 팀 공유, 권한 모델, 감사 로그 확장
 - 공유 링크, 만료 링크, 읽기 전용 공유 기능 검토
 
@@ -271,7 +267,7 @@
 - QueryDSL parser는 실험 모듈로 유지하며, 현재 검색/RAG 기본 경로는 원 질의를 semantic query로 그대로 사용
 - `query_frontend` 모듈을 검색/RAG 앞단에 배치해 향후 QueryDSL parser를 opt-in으로 연결할 수 있는 구조 유지
 - `QueryPipeline`은 시스템 모델 스키마 기준으로 QueryDSL 후보를 검증하고 ORM `filter_kwargs`/`exclude_kwargs`/`order_by`로 컴파일하는 실험 경로로 유지
-- thinking 모드 LLM 응답의 `<|channel>final` 추출 로직은 QueryDSL/RAG/TEXT2SQL 실험 경로에서 재사용
+- thinking 모드 LLM 응답의 `<|channel>final` 추출 로직은 QueryDSL/RAG 실험 경로에서 재사용
 
 개선 사항:
 
@@ -293,11 +289,11 @@
 
 - 좌측 사이드바 `RAG 질문` 진입점과 `/files/rag/` 화면 추가
 - 검색된 evidence chunk 기반 문서 Q&A API 추가
-- 답변 생성은 `celery-llm-rag-worker`/`llm-parser`를 사용
+- 답변 생성은 `celery-llm-rag-worker`/`llama-rag`를 사용
 - 사용자 질문 파싱/재작성 전용 `celery-query-worker` 구조 추가
 - RAG/AI 검색 앞단에 `query_frontend` 모듈을 배치했으며, 현재 기본 동작은 원 질의 passthrough
 - LLM QueryDSL parser는 실험/예정 기능으로 낮추고, opt-in 연결 전까지 기본 RAG/Search 경로에는 적용하지 않음
-- RAG/Text2SQL/query parser 응답에서 thought 누출을 줄이기 위한 final content 추출 로직 추가
+- RAG/query parser 응답에서 thought 누출을 줄이기 위한 final content 추출 로직 추가
 - 답변에 사용된 파일명, section, page, chunk 근거 표시
 - 단일 문서 질의와 여러 문서 질의 모드 진입점 추가
 
@@ -309,15 +305,7 @@
 - context budget, 최대 문서 수, evidence 수를 환경변수/관리자 설정으로 조정
 - QueryDSL parser를 opt-in 실험 플래그로 검색/RAG 앞단에 연결하고, 품질 검증 후 기본 경로 승격 여부 결정
 
-### 6.5 TEXT2SQL UX
-
-계획:
-
-- 파일/문서 메타데이터에 대한 자연어 질의를 SQL로 변환
-- 생성 SQL은 읽기 전용 쿼리로 제한
-- 실행 전 스키마/권한/위험 구문 검증
-- 결과를 표와 요약으로 표시
-- 관리자/개발자 모드에서 생성 SQL과 검증 로그 확인
+### 6.5 검색 보조 UX
 
 추가 기능 후보:
 

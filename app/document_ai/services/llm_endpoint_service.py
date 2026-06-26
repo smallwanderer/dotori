@@ -15,7 +15,7 @@ def _normalize_llm_base_url(base_url: str) -> str:
 
 def get_server_rag_base_url() -> str:
     return _normalize_llm_base_url(
-        os.getenv("RAG_LLM_URL", os.getenv("TEXT2SQL_LLM_URL", "http://llm-parser:8080"))
+        os.getenv("RAG_LLM_URL", "http://llama-rag:8080")
     )
 
 
@@ -218,11 +218,15 @@ class RAGLLMRequestConfig:
     def responses_url(self) -> str:
         return f"{self.base_url}/v1/responses"
 
+    @property
+    def chat_completions_url(self) -> str:
+        return f"{self.base_url}/v1/chat/completions"
+
 
 def resolve_rag_llm_request_config(rag_job) -> RAGLLMRequestConfig:
     base_url = _normalize_llm_base_url(
         rag_job.llm_base_url
-        or os.getenv("RAG_LLM_URL", os.getenv("TEXT2SQL_LLM_URL", "http://llm-parser:8080"))
+        or os.getenv("RAG_LLM_URL", "http://llama-rag:8080")
     )
     model = rag_job.llm_model or os.getenv("RAG_LLM_MODEL", "google/gemma-4-E4B-it")
     headers = {}

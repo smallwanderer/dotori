@@ -56,11 +56,8 @@ celery-llm-rag-worker
 celery-query-worker
   실험적 query parsing
 
-celery-text2sql-worker
-  실험적 Text2SQL 작업
-
-llm-parser
-  llama.cpp 호환 로컬 LLM endpoint
+llama-rag
+  llama.cpp 호환 로컬 RAG runtime
 ```
 
 웹 컨테이너는 가볍게 유지하고, 파싱/임베딩/검색/LLM 작업은 worker 컨테이너에서 처리합니다.
@@ -176,7 +173,8 @@ docker compose -f docker-compose.dev.yml exec app python -m pytest --reuse-db fi
 - 업로드 파일과 DB 데이터는 `data/` 아래에 저장됩니다.
 - 기본 Compose 파일은 운영에 가까운 `docker-compose.yml`입니다.
 - 개발용 Compose 파일은 `docker-compose.dev.yml`이며 `http://localhost:8888/`에서 실행됩니다.
-- RAG와 Text2SQL은 `llm-parser` 컨테이너를 사용합니다.
+- RAG는 로컬 `llama-rag` 컨테이너를 사용합니다.
+- Query parser는 별도 `vllm-query-parser` runtime을 사용하는 구성을 전제로 합니다.
 - LLM의 reasoning/thinking 출력은 기본적으로 요청하거나 저장하지 않습니다. 자세한 내용은 [LLM_REASONING_POLICY.md](LLM_REASONING_POLICY.md)를 참고하세요.
 - QueryDSL parser는 실험 기능입니다. 기본 검색/RAG 경로는 semantic query passthrough를 사용합니다.
 

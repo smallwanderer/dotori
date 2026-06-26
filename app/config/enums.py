@@ -25,6 +25,7 @@ class AIStatus(models.TextChoices):
     PROCESSING = "processing", "Processing"
     COMPLETED = "completed", "Completed"
     FAILED = "failed", "Failed"
+    CANCELED = "canceled", "Canceled"
 
 
 class RAGStage(models.TextChoices):
@@ -33,3 +34,20 @@ class RAGStage(models.TextChoices):
     GENERATING = "generating", "Generating"
     COMPLETED = "completed", "Completed"
     FAILED = "failed", "Failed"
+    CANCELED = "canceled", "Canceled"
+
+
+class QueryIntent(models.TextChoices):
+    DOCUMENT_QUESTION = "document_question", "Document question"
+    INFORMATION = "information", "Information"
+    CASUAL_CHAT = "casual_chat", "Casual chat"
+    APP_USAGE = "app_usage", "App usage"
+    AMBIGUOUS = "ambiguous", "Ambiguous"
+
+
+class QueryAnswerMode(models.TextChoices):
+    RAG = "rag", "RAG"
+    CASUAL = "casual", "Casual"
+    APP_HELP = "app_help", "App help"
+    GENERAL = "general", "General"
+    AMBIGUOUS = "ambiguous", "Ambiguous"

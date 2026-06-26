@@ -10,7 +10,9 @@ pytestmark = pytest.mark.unit
 
 from document_ai.embedding import embeding_models
 from document_ai.embedding.embeding_models import EmbeddingResult
+from document_ai.embedding.store_registry import get_embedding_store_instance
 from document_ai.parsers import config
+from document_ai.processing import embedding as embedding_processing
 
 
 def test_embedding_token_budget_uses_chunk_budget_plus_headroom():
@@ -30,6 +32,48 @@ def test_embedding_max_tokens_respects_explicit_override():
     settings.EMBEDDING_MAX_TOKENS = 1536
 
     assert config.get_embedding_max_tokens() == 1536
+
+
+def test_embedding_input_preparation_truncates_overflow(monkeypatch, settings):
+    settings.EMBEDDING_MAX_TOKENS = 5
+
+    class FakeTokenizer:
+        def count_tokens(self, text):
+            return len(text.split())
+
+    class FakeRawTokenizer:
+        def encode(self, text, add_special_tokens=False):
+            return text.split()
+
+        def decode(self, token_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True):
+            return " ".join(token_ids)
+
+    monkeypatch.setattr(embedding_processing, "get_hf_tokenizer", lambda: FakeTokenizer())
+    monkeypatch.setattr(embedding_processing, "get_raw_tokenizer", lambda: FakeRawTokenizer())
+
+    text, token_count, truncated = embedding_processing.prepare_embedding_input_text(
+        "one two three four five six"
+    )
+
+    assert text == "one two three four five"
+    assert token_count == 5
+    assert truncated is True
+
+
+def test_embedding_input_preparation_accepts_limit(monkeypatch, settings):
+    settings.EMBEDDING_MAX_TOKENS = 5
+
+    class FakeTokenizer:
+        def count_tokens(self, text):
+            return 5
+
+    monkeypatch.setattr(embedding_processing, "get_hf_tokenizer", lambda: FakeTokenizer())
+
+    text, token_count, truncated = embedding_processing.prepare_embedding_input_text("fits")
+
+    assert text == "fits"
+    assert token_count == 5
+    assert truncated is False
 
 
 def test_embedder_dispatches_to_bgem3_hybrid(monkeypatch):
@@ -91,3 +135,42 @@ def test_sparse_vector_is_l2_normalized():
 
     assert normalized["10"] == 0.6
     assert normalized["20"] == 0.8
+
+
+def test_embedding_store_rejects_dimension_mismatch(settings):
+    settings.EMBEDDING_MODEL = "dummy-model"
+    settings.EMBEDDING_BACKEND = "bgem3_hybrid"
+    settings.EMBEDDING_DIMENSION = 1024
+    settings.EMBEDDING_STORE = "pgvector_chunk_1024"
+    settings.EMBEDDING_SPARSE_ENABLED = True
+
+    store = get_embedding_store_instance()
+    embedding = EmbeddingResult(
+        dense_vector=[0.1, 0.2],
+        sparse_vector={"101": 1.0},
+        model_name="dummy-model",
+        backend="bgem3_hybrid",
+        dimension=2,
+    )
+
+    with pytest.raises(ValueError, match="dimension"):
+        store.validate_embedding(embedding)
+
+
+def test_embedding_store_accepts_active_model_backend_and_dimension(settings):
+    settings.EMBEDDING_MODEL = "dummy-model"
+    settings.EMBEDDING_BACKEND = "bgem3_hybrid"
+    settings.EMBEDDING_DIMENSION = 2
+    settings.EMBEDDING_STORE = "pgvector_chunk_1024"
+    settings.EMBEDDING_SPARSE_ENABLED = True
+
+    store = get_embedding_store_instance()
+    embedding = EmbeddingResult(
+        dense_vector=[0.1, 0.2],
+        sparse_vector={"101": 1.0},
+        model_name="dummy-model",
+        backend="bgem3_hybrid",
+        dimension=2,
+    )
+
+    store.validate_embedding(embedding)

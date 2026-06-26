@@ -30,12 +30,13 @@ def _make_embedding_row(
     node_name: str,
     dense_vector: list[float],
     sparse_vector: dict[str, float],
+    ext: str = ".txt",
     model_version: str = "bgem3_hybrid",
     status: str = AIStatus.COMPLETED,
     trashed: bool = False,
 ):
-    node = SimpleNamespace(uid=uid, name=node_name, owner=owner, trashed=trashed)
-    parse_result = SimpleNamespace(id=parse_result_id, node=node, metadata={"file_ext": ".txt"})
+    node = SimpleNamespace(uid=uid, name=node_name, owner=owner, trashed=trashed, ext=ext)
+    parse_result = SimpleNamespace(id=parse_result_id, node=node, metadata={"file_ext": ext})
     chunk = SimpleNamespace(
         id=chunk_id,
         parse_result_id=parse_result_id,
@@ -81,11 +82,22 @@ class FakeQuerySet:
                 filtered = [row for row in filtered if str(row.chunk.parse_result.node.uid) in allowed]
             elif key == "chunk__parse_result__node__trashed":
                 filtered = [row for row in filtered if row.chunk.parse_result.node.trashed == value]
+            elif key == "chunk__parse_result__node__ext":
+                filtered = [row for row in filtered if row.chunk.parse_result.node.ext == value]
             elif key == "distance__lte":
                 filtered = [row for row in filtered if row.distance <= value]
             else:
                 raise AssertionError(f"Unexpected filter: {key}")
 
+        return FakeQuerySet(filtered)
+
+    def exclude(self, **kwargs):
+        filtered = self.rows
+        for key, value in kwargs.items():
+            if key == "chunk__parse_result__node__ext":
+                filtered = [row for row in filtered if row.chunk.parse_result.node.ext != value]
+            else:
+                raise AssertionError(f"Unexpected exclude: {key}")
         return FakeQuerySet(filtered)
 
     def exists(self):
@@ -403,6 +415,60 @@ def test_retriever_excludes_trashed_nodes(monkeypatch):
     results = retriever.retrieve(query="query", top_k=5, user=owner)
 
     assert [item["node_name"] for item in results] == ["visible-doc"]
+
+
+def test_retriever_applies_querydsl_orm_filters(monkeypatch):
+    owner = SimpleNamespace(email="owner@example.com")
+    rows = [
+        _make_embedding_row(
+            parse_result_id=1,
+            uid=str(uuid4()),
+            owner=owner,
+            chunk_id=1,
+            chunk_index=0,
+            node_name="pdf-doc",
+            ext="pdf",
+            dense_vector=[0.9, 0.1],
+            sparse_vector={"999": 1.0},
+        ),
+        _make_embedding_row(
+            parse_result_id=2,
+            uid=str(uuid4()),
+            owner=owner,
+            chunk_id=2,
+            chunk_index=0,
+            node_name="txt-doc",
+            ext="txt",
+            dense_vector=[0.99, 0.01],
+            sparse_vector={"999": 1.0},
+        ),
+    ]
+
+    monkeypatch.setattr(retriever_module.ChunkEmbedding, "objects", FakeManager(rows))
+    monkeypatch.setattr(
+        retriever_module.DocumentChunk,
+        "objects",
+        FakeDocumentChunkManager([row.chunk for row in rows]),
+    )
+    monkeypatch.setattr(VectorRetriever, "_get_distance_func", lambda self, vector: vector)
+
+    fake_embedding_module = types.SimpleNamespace(
+        embed_query=lambda *args, **kwargs: SimpleNamespace(
+            dense_vector=[1.0, 0.0],
+            sparse_vector={"999": 1.0},
+        )
+    )
+    monkeypatch.setitem(sys.modules, "document_ai.embedding.embeding_models", fake_embedding_module)
+
+    retriever = VectorRetriever()
+    results = retriever.retrieve(
+        query="contract",
+        top_k=5,
+        user=owner,
+        filter_kwargs={"ext": "pdf"},
+    )
+
+    assert [item["node_name"] for item in results] == ["pdf-doc"]
 
 
 def test_retriever_returns_empty_when_backend_missing(monkeypatch):

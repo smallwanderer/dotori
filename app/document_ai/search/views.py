@@ -1,15 +1,17 @@
 from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.utils.decorators import method_decorator
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import TemplateView
 
+from config.celery import app as celery_app
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from config.enums import RAGStage
+from config.enums import AIStatus, QueryAnswerMode, QueryIntent, RAGStage
 from document_ai.models import RAGJob, SearchJob
 from document_ai.search.serializers import (
     RAGJobCreateResponseSerializer,
@@ -22,6 +24,8 @@ from document_ai.search.serializers import (
     VectorTuningRequestSerializer,
 )
 from document_ai.search.query_frontend import prepare_retrieval_query
+from document_ai.parsers.text_utils import normalize_extracted_text
+from document_ai.services.rag_cancel_service import set_rag_cancel_signal
 from document_ai.services.llm_endpoint_service import build_rag_llm_snapshot
 from document_ai.tasks import perform_vector_search
 from files.models import Node, NodeType
@@ -86,10 +90,13 @@ class VectorSearchView(APIView):
         query_plan = prepare_retrieval_query(
             serializer.validated_data["query"],
             mode="search",
+            owner=request.user,
         )
+        retrieval_query = query_plan.retrieval_query or normalize_extracted_text(serializer.validated_data["query"]).strip()
         job = SearchJob.objects.create(
             owner=request.user,
-            query=query_plan.retrieval_query,
+            query_log=query_plan.query_log,
+            query=retrieval_query,
             top_k=serializer.validated_data.get("top_k", 5),
             threshold=serializer.validated_data.get("threshold"),
             node_ids=scoped_node_ids,
@@ -206,12 +213,10 @@ class RAGView(APIView):
             getattr(settings, "RAG_RETRIEVAL_THRESHOLD", None),
         )
 
-        # prepare_retrieval_query is currently under development. 
-        query_plan = prepare_retrieval_query(question, mode="rag")
-
+        retrieval_query = normalize_extracted_text(question).strip()
         search_job = SearchJob.objects.create(
             owner=request.user,
-            query=query_plan.retrieval_query,
+            query=retrieval_query,
             top_k=top_k,
             threshold=threshold,
             node_ids=scoped_node_ids,
@@ -222,6 +227,11 @@ class RAGView(APIView):
             owner=request.user,
             search_job=search_job,
             question=question,
+            retrieval_query=retrieval_query,
+            query_intent=QueryIntent.DOCUMENT_QUESTION,
+            answer_mode=QueryAnswerMode.RAG,
+            retrieval_required=True,
+            query_confidence=0.0,
             top_k=top_k,
             language=serializer.validated_data.get("language", "ko"),
             node_ids=[str(node_id) for node_id in node_ids],
@@ -268,4 +278,70 @@ class RAGJobView(APIView):
 
         if rag_job.search_job_id:
             rag_job.search_job.refresh_from_db()
+        return Response(RAGJobSerializer(rag_job).data, status=status.HTTP_200_OK)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class RAGJobCancelView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Cancel RAG job",
+        operation_description=(
+            "Mark a RAG job as canceled and signal the worker to close the active LLM streaming connection."
+        ),
+        responses={200: RAGJobSerializer()},
+    )
+    def post(self, request, job_id: int, *args, **kwargs):
+        try:
+            rag_job = RAGJob.objects.select_related("search_job").get(id=job_id, owner=request.user)
+        except RAGJob.DoesNotExist:
+            return Response(
+                {"error": "RAG job not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if rag_job.status in {AIStatus.COMPLETED, AIStatus.FAILED, AIStatus.CANCELED}:
+            return Response(RAGJobSerializer(rag_job).data, status=status.HTTP_200_OK)
+
+        now = timezone.now()
+        reason = (request.data.get("reason") if isinstance(request.data, dict) else "") or "User canceled the RAG job."
+        try:
+            set_rag_cancel_signal(rag_job.id)
+        except Exception:
+            # DB state is the durable source of truth; Redis is a fast worker signal.
+            pass
+
+        if rag_job.task_id:
+            celery_app.control.revoke(rag_job.task_id, terminate=False)
+        if rag_job.search_job_id and rag_job.search_job.task_id:
+            celery_app.control.revoke(rag_job.search_job.task_id, terminate=False)
+
+        rag_job.status = AIStatus.CANCELED
+        rag_job.stage = RAGStage.CANCELED
+        rag_job.stage_message = "사용자 요청으로 RAG 작업을 중단했습니다."
+        rag_job.error_message = ""
+        rag_job.cancel_requested_at = rag_job.cancel_requested_at or now
+        rag_job.canceled_at = now
+        rag_job.cancel_reason = str(reason)[:255]
+        rag_job.completed_at = now
+        rag_job.save(
+            update_fields=[
+                "status",
+                "stage",
+                "stage_message",
+                "error_message",
+                "cancel_requested_at",
+                "canceled_at",
+                "cancel_reason",
+                "completed_at",
+                "updated_at",
+            ]
+        )
+        if rag_job.search_job_id and rag_job.search_job.status in {AIStatus.PENDING, AIStatus.PROCESSING}:
+            rag_job.search_job.status = AIStatus.CANCELED
+            rag_job.search_job.completed_at = now
+            rag_job.search_job.error_message = "Canceled by linked RAG job."
+            rag_job.search_job.save(update_fields=["status", "completed_at", "error_message"])
+
         return Response(RAGJobSerializer(rag_job).data, status=status.HTTP_200_OK)

@@ -221,6 +221,12 @@ CELERY_BEAT_SCHEDULE = {
 # Document AI — Parser & Chunker
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "bgem3_hybrid")
+_embedding_dimension_raw = os.getenv("EMBEDDING_DIMENSION", "1024")
+EMBEDDING_DIMENSION = None
+if _embedding_dimension_raw:
+    EMBEDDING_DIMENSION = int(_embedding_dimension_raw)
+EMBEDDING_SPARSE_ENABLED = _env_bool("EMBEDDING_SPARSE_ENABLED", True)
+EMBEDDING_STORE = os.getenv("EMBEDDING_STORE", "pgvector_chunk_1024")
 CHUNK_MAX_TOKENS = int(os.getenv("CHUNK_MAX_TOKENS", "1024"))
 EMBEDDING_TOKEN_HEADROOM = int(os.getenv("EMBEDDING_TOKEN_HEADROOM", "256"))
 # EMBEDDING_MAX_TOKENS: 미설정 시 config.py 가 CHUNK_MAX_TOKENS + HEADROOM 으로 계산

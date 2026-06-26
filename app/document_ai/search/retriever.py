@@ -4,15 +4,37 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from django.conf import settings
-from pgvector.django import CosineDistance, L2Distance, MaxInnerProduct
 
-from config.enums import AIStatus
+from document_ai.embedding.store_registry import get_embedding_store_instance
 from document_ai.models import ChunkEmbedding, DocumentChunk
-from document_ai.parsers.config import get_embedding_backend
+from document_ai.parsers.config import get_embedding_backend, get_embedding_model
 from document_ai.parsers.text_utils import normalize_extracted_text
 from document_ai.search.compression import EmbeddingContextualCompressor
 
 logger = logging.getLogger(__name__)
+
+
+def _translate_node_lookup_to_embedding_lookup(lookup: str) -> str:
+    if not lookup:
+        return ""
+    if lookup.startswith("blob__"):
+        return f"chunk__parse_result__node__{lookup}"
+    if lookup.startswith("owner__"):
+        return f"chunk__parse_result__node__{lookup}"
+    if lookup.startswith("parse_result__"):
+        return f"chunk__{lookup}"
+    return f"chunk__parse_result__node__{lookup}"
+
+
+def _translate_orm_kwargs_for_embedding_queryset(kwargs: dict[str, Any] | None) -> dict[str, Any]:
+    if not kwargs:
+        return {}
+    translated = {}
+    for lookup, value in kwargs.items():
+        embedding_lookup = _translate_node_lookup_to_embedding_lookup(str(lookup))
+        if embedding_lookup:
+            translated[embedding_lookup] = value
+    return translated
 
 
 def _sparse_dot_product(left: dict[str, float], right: dict[str, float]) -> float:
@@ -73,17 +95,22 @@ def _normalized_softmax_pool(scores: list[float], tau: float = 1.0) -> float:
 class VectorRetriever:
     def __init__(
         self,
-        model_name: str = "BAAI/bge-m3",
+        model_name: str | None = None,
         distance_strategy: str | None = None,
         embedding_backend: str | None = None,
     ):
-        self.model_name = model_name
+        self.model_name = model_name or get_embedding_model()
         self.distance_strategy = distance_strategy or getattr(
             settings,
             "EMBEDDING_DISTANCE_STRATEGY",
             "inner_product",
         )
         self.embedding_backend = embedding_backend or get_embedding_backend()
+        self.store = get_embedding_store_instance(
+            model_name=self.model_name,
+            backend=self.embedding_backend,
+            distance_strategy=self.distance_strategy,
+        )
         self.pooling_method = getattr(
             settings,
             "EMBEDDING_DOC_POOLING_METHOD",
@@ -164,13 +191,7 @@ class VectorRetriever:
         """
         Distance Strategy에 따른 Vector distance 계산 (ex: cosine, l2, inner_product)
         """
-        if self.distance_strategy == "cosine":
-            return CosineDistance("vector", vector)
-        if self.distance_strategy == "l2":
-            return L2Distance("vector", vector)
-        if self.distance_strategy == "inner_product":
-            return MaxInnerProduct("vector", vector)
-        raise ValueError(f"Unknown distance strategy: {self.distance_strategy}")
+        return self.store.distance_annotation(vector)
 
     def _distance_to_dense_score(self, distance: float | None) -> float:
         if distance is None or math.isnan(distance):
@@ -190,6 +211,14 @@ class VectorRetriever:
         if self.distance_strategy == "inner_product" and threshold >= 0:
             return -threshold
         return threshold
+
+    def _hybrid_score(self, *, dense_score: float, sparse_score: float, query_sparse: dict[str, float]) -> float:
+        if not self.store.spec.supports_sparse or not query_sparse:
+            return dense_score
+        return (
+            self.hybrid_dense_weight * dense_score
+            + self.hybrid_sparse_weight * sparse_score
+        )
 
     def _score_checks(
         self,
@@ -255,19 +284,14 @@ class VectorRetriever:
         node_ids: Optional[List[int]] = None,
         user=None,
         tuning_params: Optional[Dict[str, Any]] = None,
+        filter_kwargs: Optional[Dict[str, Any]] = None,
+        exclude_kwargs: Optional[Dict[str, Any]] = None,
+        order_by: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         # 튜닝 파라미터가 있으면 적용
         if tuning_params:
             self._apply_tuning_params(tuning_params)
-        qs = ChunkEmbedding.objects.select_related(
-            "chunk",
-            "chunk__parse_result",
-            "chunk__parse_result__node",
-        ).filter(
-            model_name=self.model_name,
-            status=AIStatus.COMPLETED,
-            chunk__parse_result__node__trashed=False,
-        )
+        qs = self.store.base_queryset()
 
         if user is not None:
             qs = qs.filter(chunk__parse_result__node__owner=user)
@@ -275,9 +299,25 @@ class VectorRetriever:
         if node_ids is not None:
             qs = qs.filter(chunk__parse_result__node__uid__in=node_ids)
 
+        translated_filters = _translate_orm_kwargs_for_embedding_queryset(filter_kwargs)
+        translated_excludes = _translate_orm_kwargs_for_embedding_queryset(exclude_kwargs)
+        if translated_filters:
+            qs = qs.filter(**translated_filters)
+        if translated_excludes:
+            qs = qs.exclude(**translated_excludes)
+        if order_by:
+            logger.debug(
+                "Vector retrieval ignores metadata order_by=%s because semantic distance controls candidate ordering.",
+                order_by,
+            )
+
         query_backend = self.embedding_backend
-        if not qs.filter(model_version=query_backend).exists():
-            logger.warning("No embeddings found for backend=%s.", query_backend)
+        if not qs.exists():
+            logger.warning(
+                "No embeddings found for model=%s backend=%s.",
+                self.model_name,
+                query_backend,
+            )
             return []
 
         try:
@@ -302,7 +342,7 @@ class VectorRetriever:
 
         distance_func = self._get_distance_func(query_embedding.dense_vector)
 
-        qs = qs.filter(model_version=query_backend).annotate(distance=distance_func)
+        qs = qs.annotate(distance=distance_func)
 
         distance_threshold = None
         if threshold is not None:
@@ -355,9 +395,10 @@ class VectorRetriever:
                 pruned_query_sparse,
                 emb.sparse_vector or {},
             )
-            hybrid_score = (
-                self.hybrid_dense_weight * dense_score
-                + self.hybrid_sparse_weight * sparse_score
+            hybrid_score = self._hybrid_score(
+                dense_score=dense_score,
+                sparse_score=sparse_score,
+                query_sparse=pruned_query_sparse,
             )
             candidate_dense_norm = _l2_norm(getattr(emb, "vector", None))
             score_checks = self._score_checks(

@@ -2,7 +2,7 @@ from django.db import models
 from django.conf import settings
 from pgvector.django import VectorField, HnswIndex
 
-from config.enums import AIStatus, FileLanguage, RAGStage
+from config.enums import AIStatus, FileLanguage, QueryAnswerMode, QueryIntent, RAGStage
 
 class DocumentParseResult(models.Model):
     """
@@ -342,11 +342,64 @@ class ChunkSegmentEmbedding(models.Model):
         return f"{self.chunk_id} - Segment {self.segment_index} (w={self.window_size})"
 
 
+class QueryUnderstandingLog(models.Model):
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="document_ai_query_understanding_logs",
+    )
+    mode = models.CharField(max_length=32, default="search", db_index=True)
+    raw_query = models.TextField()
+    normalized_query = models.TextField(blank=True)
+    semantic_query = models.TextField(blank=True)
+    intent = models.CharField(
+        max_length=64,
+        choices=QueryIntent.choices,
+        default=QueryIntent.AMBIGUOUS,
+        db_index=True,
+    )
+    answer_mode = models.CharField(
+        max_length=64,
+        choices=QueryAnswerMode.choices,
+        default=QueryAnswerMode.AMBIGUOUS,
+    )
+    retrieval_required = models.BooleanField(default=True)
+    confidence = models.FloatField(default=0.0)
+    reason = models.CharField(max_length=255, blank=True)
+    source = models.CharField(max_length=64, blank=True, db_index=True)
+    status = models.CharField(max_length=32, default="success", db_index=True)
+    warnings = models.JSONField(default=list, blank=True)
+    classification = models.JSONField(default=dict, blank=True)
+    query_dsl = models.JSONField(default=dict, blank=True)
+    orm = models.JSONField(default=dict, blank=True)
+    raw_result = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["owner", "mode", "-created_at"]),
+            models.Index(fields=["intent", "-created_at"]),
+            models.Index(fields=["retrieval_required", "-created_at"]),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"QueryUnderstandingLog({self.id}) {self.intent}: {self.raw_query[:40]}"
+
+
 class SearchJob(models.Model):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="document_ai_search_jobs",
+    )
+    query_log = models.ForeignKey(
+        "document_ai.QueryUnderstandingLog",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="search_jobs",
     )
 
     query = models.TextField()
@@ -493,8 +546,29 @@ class RAGJob(models.Model):
         blank=True,
         related_name="rag_jobs",
     )
+    query_log = models.ForeignKey(
+        "document_ai.QueryUnderstandingLog",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rag_jobs",
+    )
 
     question = models.TextField()
+    retrieval_query = models.TextField(blank=True)
+    query_intent = models.CharField(
+        max_length=64,
+        choices=QueryIntent.choices,
+        default=QueryIntent.AMBIGUOUS,
+        db_index=True,
+    )
+    answer_mode = models.CharField(
+        max_length=64,
+        choices=QueryAnswerMode.choices,
+        default=QueryAnswerMode.RAG,
+    )
+    retrieval_required = models.BooleanField(default=True)
+    query_confidence = models.FloatField(default=0.0)
     top_k = models.PositiveIntegerField(default=5)
     language = models.CharField(max_length=8, default="ko")
     node_ids = models.JSONField(default=list, blank=True)
@@ -526,6 +600,9 @@ class RAGJob(models.Model):
     answer = models.TextField(blank=True)
     citations = models.JSONField(default=list, blank=True)
     error_message = models.TextField(blank=True)
+    cancel_requested_at = models.DateTimeField(null=True, blank=True)
+    canceled_at = models.DateTimeField(null=True, blank=True)
+    cancel_reason = models.CharField(max_length=255, blank=True)
 
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

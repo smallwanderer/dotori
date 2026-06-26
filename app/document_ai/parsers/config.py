@@ -16,6 +16,18 @@ def get_embedding_model():
 def get_embedding_backend() -> str:
     return getattr(settings, "EMBEDDING_BACKEND", "bgem3_hybrid")
 
+def get_embedding_dimension() -> int | None:
+    value = getattr(settings, "EMBEDDING_DIMENSION", None)
+    if value in {None, ""}:
+        return None
+    return int(value)
+
+def get_embedding_sparse_enabled() -> bool:
+    return bool(getattr(settings, "EMBEDDING_SPARSE_ENABLED", True))
+
+def get_embedding_store() -> str:
+    return getattr(settings, "EMBEDDING_STORE", "pgvector_chunk_1024")
+
 def get_chunk_max_tokens() -> int:
     return getattr(settings, "CHUNK_MAX_TOKENS", getattr(settings, "MAX_TOKENS", 1024))
 
