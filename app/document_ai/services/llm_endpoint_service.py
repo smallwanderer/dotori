@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from django.utils import timezone
 
+from document_ai.llm_installation_helper.router import get_cached_server_rag_target
 from document_ai.models import LLMEndpoint, UserLLMPreference
 
 
@@ -15,21 +16,17 @@ def _normalize_llm_base_url(base_url: str) -> str:
 
 def get_server_rag_base_url() -> str:
     return _normalize_llm_base_url(
-        os.getenv("RAG_LLM_URL", "http://llama-rag:8080")
+        os.getenv("RAG_LLM_URL", get_cached_server_rag_target().base_url)
     )
 
 
 def get_server_rag_default_model() -> str:
-    return os.getenv("RAG_LLM_MODEL", "google/gemma-4-E4B-it")
+    return get_cached_server_rag_target().model
 
 
 def get_server_rag_model_choices() -> list[str]:
-    raw = os.getenv("RAG_AVAILABLE_MODELS", "")
-    choices = [item.strip() for item in raw.split(",") if item.strip()]
     default_model = get_server_rag_default_model()
-    if default_model and default_model not in choices:
-        choices.insert(0, default_model)
-    return choices
+    return [default_model] if default_model else []
 
 
 def upsert_llm_endpoint(
@@ -166,7 +163,7 @@ def build_rag_llm_snapshot(user) -> dict:
     try:
         preference = UserLLMPreference.objects.select_related("rag_endpoint").get(user=user)
     except UserLLMPreference.DoesNotExist:
-        return {}
+        return get_cached_server_rag_target().as_snapshot()
 
     endpoint = preference.rag_endpoint
     if not endpoint or not endpoint.is_active:
@@ -176,7 +173,7 @@ def build_rag_llm_snapshot(user) -> dict:
                 "llm_base_url": get_server_rag_base_url(),
                 "llm_model": preference.rag_model,
             }
-        return {}
+        return get_cached_server_rag_target().as_snapshot()
 
     return {
         "llm_endpoint": endpoint,
@@ -224,11 +221,21 @@ class RAGLLMRequestConfig:
 
 
 def resolve_rag_llm_request_config(rag_job) -> RAGLLMRequestConfig:
+    server_target = None
+    if not rag_job.llm_base_url or not rag_job.llm_model:
+        server_target = get_cached_server_rag_target()
+    server_base_url = server_target.base_url if server_target else ""
+    server_model = server_target.model if server_target else ""
     base_url = _normalize_llm_base_url(
         rag_job.llm_base_url
+        or server_base_url
         or os.getenv("RAG_LLM_URL", "http://llama-rag:8080")
     )
-    model = rag_job.llm_model or os.getenv("RAG_LLM_MODEL", "google/gemma-4-E4B-it")
+    model = (
+        rag_job.llm_model
+        or server_model
+        or get_server_rag_default_model()
+    )
     headers = {}
     endpoint = getattr(rag_job, "llm_endpoint", None)
     if rag_job.llm_endpoint_id and endpoint and endpoint.api_key:

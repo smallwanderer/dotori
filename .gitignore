@@ -24,6 +24,8 @@ staticfiles/
 
 # Docker volume / runtime data
 data/
+llama-rag/data/
+vllm-rag/data/
 
 # Celery runtime
 celerybeat-schedule
@@ -50,6 +52,8 @@ scratch.py
 app/tmp_*.js
 
 # AI Agent Meta-files
+.codex/
+.agents/
 task.md
 implementation_plan.md
 walkthrough.md

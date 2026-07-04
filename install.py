@@ -5,6 +5,7 @@ import subprocess
 import platform
 import shutil
 import re
+import json
 
 # CLI Text Styles
 BOLD = "\033[1m"
@@ -32,47 +33,182 @@ def run_command(cmd, shell=True, capture_output=True):
     except Exception as e:
         return False, "", str(e)
 
-def detect_hardware():
-    print_header("시스템 사양 감지 (Hardware Detection)")
-    
-    # OS
-    os_name = platform.system()
-    print(f"• OS: {BOLD}{os_name} {platform.release()}{RESET}")
-    
-    # Docker Check
-    docker_ok, docker_ver, _ = run_command("docker --version")
-    if docker_ok:
-        print(f"• Docker: {BOLD}{GREEN}설치됨 ({docker_ver}){RESET}")
-    else:
-        print(f"• Docker: {BOLD}{RED}감지되지 않음 (Docker Desktop이 실행 중인지 확인해 주세요.){RESET}")
+def run_interactive_command(cmd):
+    try:
+        return subprocess.call(cmd, shell=True) == 0
+    except Exception as e:
+        print(f"{RED}[에러] {e}{RESET}")
+        return False
 
-    # GPU Check via nvidia-smi
-    gpu_detected = False
-    gpu_name = "None"
-    nvidia_ok, nvidia_out, _ = run_command("nvidia-smi --query-gpu=name --format=csv,noheader")
-    if nvidia_ok and nvidia_out:
-        gpu_detected = True
-        gpu_name = nvidia_out.split('\n')[0].strip()
-        print(f"• GPU: {BOLD}{GREEN}NVIDIA GPU 감지됨 ({gpu_name}){RESET}")
-    else:
-        # Check torch CUDA (if torch is installed locally)
-        try:
-            import torch
-            if torch.cuda.is_available():
-                gpu_detected = True
-                gpu_name = torch.cuda.get_device_name(0)
-                print(f"• GPU: {BOLD}{GREEN}NVIDIA GPU 감지됨 (PyTorch: {gpu_name}){RESET}")
-            else:
-                print(f"• GPU: {BOLD}{YELLOW}NVIDIA GPU 없음 (CPU 모드로 구동됩니다.){RESET}")
-        except ImportError:
-            print(f"• GPU: {BOLD}{YELLOW}NVIDIA GPU 없음 / nvidia-smi 미작동 (CPU 모드 자동 설정){RESET}")
+# Append app directory to path to allow importing llm_installation_helper modules
+sys.path.append(os.path.join(os.path.dirname(__file__), "app"))
 
+from document_ai.llm_installation_helper.installer_adapter import (
+    detect_hardware,
+    detect_system_ram_mb,
+    format_mb,
+    load_llm_models,
+    evaluate_install_model_fit,
+)
+
+def print_install_model_table(models, hardware):
+    headers = ["#", "Model", "Quant", "Size", "Device", "Logical", "Pool Req", "RAM Req", "Backend", "Speed", "Safety", "Fit"]
+    widths = [3, 24, 9, 6, 7, 9, 9, 7, 10, 8, 8, 7]
+    line = " ".join(header.ljust(width) for header, width in zip(headers, widths))
+    print(line.rstrip())
+    print("-" * len(line.rstrip()))
+    for index, model in enumerate(models, start=1):
+        values = [
+            str(index),
+            str(model.get("model", model.get("id", ""))),
+            str(model.get("quant", "")),
+            str(model.get("size", "")),
+            str(model.get("device", "")),
+            format_mb(int(model.get("min_mem_mb") or 0)),
+            format_mb(int(model.get("rec_mem_mb") or 0)),
+            format_mb(int(model.get("ram_mb") or 0)),
+            str(model.get("backend", "")),
+            str(model.get("speed", "")),
+            str(model.get("safety", "safe")),
+            evaluate_install_model_fit(model, hardware),
+        ]
+        print(" ".join(value[:width].ljust(width) for value, width in zip(values, widths)).rstrip())
+
+def filter_llm_models(models, query):
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return models
+    return [
+        model
+        for model in models
+        if normalized in str(model.get("id", "")).lower()
+        or normalized in str(model.get("model", "")).lower()
+        or normalized in str(model.get("quant", "")).lower()
+        or normalized in str(model.get("device", "")).lower()
+        or normalized in str(model.get("backend", "")).lower()
+    ]
+
+def install_model_row(model, hardware, index):
     return {
-        "os": os_name,
-        "docker_installed": docker_ok,
-        "gpu_detected": gpu_detected,
-        "gpu_name": gpu_name
+        "index": index,
+        "id": model.get("id"),
+        "model": model.get("model"),
+        "quant": model.get("quant"),
+        "size": model.get("size"),
+        "device": model.get("device"),
+        "min_mem": format_mb(int(model.get("min_mem_mb") or 0)),
+        "rec_mem": format_mb(int(model.get("rec_mem_mb") or 0)),
+        "ram": format_mb(int(model.get("ram_mb") or 0)),
+        "backend": model.get("backend"),
+        "speed": model.get("speed"),
+        "fit": evaluate_install_model_fit(model, hardware),
     }
+
+def print_llm_model_detail(model, hardware, json_output=False):
+    detail = {
+        "id": model.get("id"),
+        "model": model.get("model"),
+        "quant": model.get("quant"),
+        "size": model.get("size"),
+        "device": model.get("device"),
+        "min_mem": format_mb(int(model.get("min_mem_mb") or 0)),
+        "rec_mem": format_mb(int(model.get("rec_mem_mb") or 0)),
+        "ram": format_mb(int(model.get("ram_mb") or 0)),
+        "backend": model.get("backend"),
+        "speed": model.get("speed"),
+        "fit": evaluate_install_model_fit(model, hardware),
+        "safety": model.get("safety"),
+        "description": model.get("description"),
+        "notes": model.get("notes"),
+    }
+    if json_output:
+        print(json.dumps(detail, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+    for key, value in detail.items():
+        print(f"{key}: {value}")
+
+def handle_llm_catalog_cli(args):
+    json_output = "--json-output" in args
+    models = sorted(load_llm_models(), key=lambda item: int(item.get("priority") or 0), reverse=True)
+    hardware = {
+        "ram_mb": detect_system_ram_mb(),
+        "gpu_detected": False,
+        "gpu_count": 0,
+        "gpu_name": "None",
+        "gpu_names": [],
+        "gpu_vram_mb": 0,
+        "gpu_vram_list": [],
+    }
+    nvidia_ok, nvidia_out, _ = run_command("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits")
+    if nvidia_ok and nvidia_out:
+        gpu_names = []
+        gpu_vram_list = []
+        for line in nvidia_out.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            gpu_parts = [part.strip() for part in line.split(",")]
+            if gpu_parts:
+                gpu_names.append(gpu_parts[0])
+                try:
+                    vram = int(gpu_parts[1]) if len(gpu_parts) > 1 else 0
+                except ValueError:
+                    vram = 0
+                gpu_vram_list.append(vram)
+        hardware["gpu_count"] = len(gpu_names)
+        if hardware["gpu_count"] > 0:
+            hardware["gpu_detected"] = True
+            hardware["gpu_name"] = gpu_names[0]
+            hardware["gpu_names"] = gpu_names
+            hardware["gpu_vram_list"] = gpu_vram_list
+            hardware["gpu_vram_mb"] = sum(gpu_vram_list)
+
+    if "--show-llm" in args:
+        index = args.index("--show-llm")
+        model_id = args[index + 1] if index + 1 < len(args) else ""
+        model = next((item for item in models if item.get("id") == model_id), None)
+        if not model:
+            print(f"{RED}[에러] 모델을 찾을 수 없습니다: {model_id}{RESET}")
+            return True
+        print_llm_model_detail(model, hardware, json_output=json_output)
+        return True
+
+    query = ""
+    if "--search-llm" in args:
+        index = args.index("--search-llm")
+        query = args[index + 1] if index + 1 < len(args) else ""
+    rows = filter_llm_models(models, query)
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "models": [
+                        install_model_row(model, hardware, index)
+                        for index, model in enumerate(rows, start=1)
+                    ]
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        print_install_model_table(rows, hardware)
+    return True
+
+def select_rag_priority():
+    print_header("RAG LLM 운영 우선순위")
+    print(f"{BOLD}[1] 속도 우선{RESET}")
+    print("    - 현재 하드웨어에서 응답 지연이 낮은 모델과 실행값을 우선합니다.")
+    print(f"{BOLD}[2] 균형{RESET}")
+    print("    - 속도, 메모리 여유, 답변 품질을 균형 있게 조정합니다.")
+    print(f"{BOLD}[3] 품질 우선{RESET}")
+    print("    - 하드웨어 안전 범위 안에서 모델 품질과 Context를 우선합니다.")
+    selected = input("선택 (기본값: 2): ").strip()
+    return {"1": "speed", "2": "balanced", "3": "quality"}.get(
+        selected or "2",
+        "balanced",
+    )
 
 def read_env_file(file_path):
     if not os.path.exists(file_path):
@@ -132,7 +268,54 @@ if %errorlevel% neq 0 (
         f.write(code)
     print(f"{GREEN}• Windows 더블클릭 실행기({launcher_path}) 생성 완료.{RESET}")
 
-def run_services(mode, query_parser_choice):
+def initialize_llm_runtime_config(mode, priority_mode="balanced", cluster_mode=False):
+    if mode != "1":
+        print(f"{YELLOW}• Full 로컬 AI RAG 모드가 아니므로 LLM runtime 자동 감지를 건너뜁니다.{RESET}")
+        return
+
+    print_header("🧭 LLM Runtime Wizard 설정")
+    cmd = (
+        "docker compose -f docker-compose.dev.yml exec app "
+        "python manage.py detect_llm_runtime --interactive"
+    )
+    if cluster_mode:
+        cmd += " --cluster-mode"
+    print(f"실행 명령어: {BOLD}{cmd}{RESET}\n")
+    if run_interactive_command(cmd):
+        if activate_selected_rag_runtime():
+            print(f"{GREEN}• LLM runtime 설정 및 서비스 전환 완료!{RESET}")
+            return
+        print(f"{YELLOW}• runtime 설정은 저장됐지만 선택된 서비스 기동에 실패했습니다.{RESET}")
+        return
+
+    print(f"{YELLOW}• LLM runtime 설정에 실패했습니다. 서비스는 내장 catalog fallback으로 계속 동작합니다.{RESET}")
+
+
+def selected_rag_runtime_service():
+    config_path = os.path.join("data", "config", "llm_runtime.json")
+    try:
+        with open(config_path, "r", encoding="utf-8") as config_file:
+            payload = json.load(config_file)
+        runtime = str((payload.get("target") or {}).get("runtime") or "").lower()
+    except (OSError, json.JSONDecodeError, AttributeError):
+        runtime = ""
+    return "vllm-rag" if runtime == "vllm" else "llama-rag"
+
+
+def activate_selected_rag_runtime():
+    runtime_service = selected_rag_runtime_service()
+    inactive_service = "llama-rag" if runtime_service == "vllm-rag" else "vllm-rag"
+    compose = ["docker", "compose", "-f", "docker-compose.dev.yml"]
+    start_cmd = [*compose, "up", "--build", "-d", runtime_service]
+    print(f"선택된 runtime 기동: {BOLD}{' '.join(start_cmd)}{RESET}")
+    result = subprocess.run(start_cmd, check=False)
+    if result.returncode != 0:
+        return False
+    subprocess.run([*compose, "stop", inactive_service], check=False)
+    subprocess.run([*compose, "restart", "rag-worker"], check=False)
+    return True
+
+def run_services(mode, query_parser_choice, initialize_llm=False, rag_priority="balanced"):
     print_header("🚀 3. Dotori Docker 컨테이너 구동")
     
     # Base services that always run
@@ -140,7 +323,9 @@ def run_services(mode, query_parser_choice):
     
     if mode == "1":
         # Full AI Mode
-        services += ["embedding-worker", "search-worker", "query-worker", "rag-worker", "llama-rag"]
+        services += ["embedding-worker", "search-worker", "query-worker", "rag-worker"]
+        if not initialize_llm:
+            services.append(selected_rag_runtime_service())
         if query_parser_choice == "1":
             services += ["llama-query-parser"]
         elif query_parser_choice == "2":
@@ -158,6 +343,8 @@ def run_services(mode, query_parser_choice):
     process.communicate()
     
     if process.returncode == 0:
+        if initialize_llm:
+            initialize_llm_runtime_config(mode, priority_mode=rag_priority)
         print_header("🎉 구동 완료!")
         print(f"• {BOLD}웹 애플리케이션 접속 주소:{RESET} {GREEN}http://localhost:8888/{RESET}")
         print(f"• {BOLD}종료하시려면:{RESET} {YELLOW}docker compose -f docker-compose.dev.yml down{RESET} 을 실행하세요.")
@@ -166,6 +353,12 @@ def run_services(mode, query_parser_choice):
 
 def main():
     has_run_flag = "--run" in sys.argv
+    if "--change-llm" in sys.argv:
+        initialize_llm_runtime_config("1", cluster_mode="--cluster-mode" in sys.argv)
+        return
+    if any(option in sys.argv for option in ("--list-llm-models", "--search-llm", "--show-llm")):
+        handle_llm_catalog_cli(sys.argv[1:])
+        return
     
     if not os.path.exists(".env.dev"):
         if os.path.exists(".env.dev.example"):
@@ -200,18 +393,14 @@ def main():
     hw = detect_hardware()
 
     print_header("⚙️  2. 서비스 작동 모드 선택 (Operation Mode)")
-    print("사용자 컴퓨터 스펙에 맞춰 최적의 동작 모드를 선택해 주세요.\n")
     print(f"{BOLD}[1] Full 로컬 AI RAG 모드 (전체 활성화){RESET}")
     print("    - 로컬 LLM 답변 생성 + 로컬 AI 쿼리 분석 + 로컬 임베딩 모두 구동")
-    print(f"    - {YELLOW}권장 스펙: 16GB+ RAM / NVIDIA GPU 보유자{RESET}")
     print()
     print(f"{BOLD}[2] Hybrid/Search AI 모드 (임베딩 및 의미론적 검색만 활성화){RESET}")
     print("    - 로컬 임베딩 및 하이브리드 검색만 사용 (답변 생성 LLM 미구동)")
-    print(f"    - {GREEN}권장 스펙: 8GB+ RAM / CPU만 있는 일반 노트북 등{RESET}")
     print()
-    print(f"{BOLD}[3] No AI 모드 (일반 웹 서버 전용 구동){RESET}")
-    print("    - 모든 AI 기능(임베딩, LLM)을 끄고 가벼운 기본 키워드 검색용 사이트만 구동")
-    print("    - 저사양 PC 및 리소스 최소화 목적")
+    print(f"{BOLD}[3] 기본적인 모드{RESET}")
+    print("    - 파일 입출력 기능만 사용 (AI 기능 미구동)")
     print("-" * 60)
     
     mode = input("선택 (기본값: 2): ").strip()
@@ -221,6 +410,7 @@ def main():
     updates = {}
     embedding_choice = "1"
     query_parser_choice = "3"
+    rag_priority = "balanced"
 
     if mode in ("1", "2"):
         # Embedding Model Selection
@@ -267,6 +457,8 @@ def main():
             updates["QUERY_PARSER_BASE_URL"] = "http://llama-query-parser:8080"
         else:
             updates["QUERY_PARSER_BASE_URL"] = "http://vllm-query-parser:8080"
+
+        rag_priority = select_rag_priority()
             
     else:
         # Disable Query LLM & Pipeline for lower modes
@@ -283,7 +475,12 @@ def main():
     print("\n" + "-" * 60)
     launch = input("지금 Dotori Docker 서비스를 바로 가동하시겠습니까? (Y/n): ").strip().lower()
     if launch in ("", "y", "yes"):
-        run_services(mode, query_parser_choice)
+        run_services(
+            mode,
+            query_parser_choice,
+            initialize_llm=True,
+            rag_priority=rag_priority,
+        )
     else:
         print(f"\n{YELLOW}• 세팅 완료! 다음에 서비스를 켤 때는 start.bat 또는 python install.py --run 을 실행해 주세요.{RESET}")
 

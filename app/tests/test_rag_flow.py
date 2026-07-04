@@ -192,6 +192,37 @@ class RAGFlowTests(TestCase):
         self.assertEqual(rag_job.llm_base_url, "http://server-rag:8080")
         self.assertEqual(rag_job.llm_model, "server-qwen")
 
+    def test_rag_request_snapshots_server_auto_target_without_user_preference(self):
+        server_target = SimpleNamespace(
+            as_snapshot=lambda: {
+                "llm_endpoint_name": "Server auto",
+                "llm_base_url": "http://auto-rag:8080",
+                "llm_model": "auto-model",
+            }
+        )
+
+        with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async, patch(
+            "document_ai.services.llm_endpoint_service.get_cached_server_rag_target",
+            return_value=server_target,
+        ):
+            apply_async.return_value = SimpleNamespace(id="search-task-id")
+            response = self.client.post(
+                "/api/document-ai/v1/rag/",
+                data={
+                    "question": "자동 서버 모델로 답변해줘",
+                    "top_k": 3,
+                    "language": "ko",
+                },
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 202)
+        rag_job = RAGJob.objects.get(pk=response.json()["job_id"])
+        self.assertIsNone(rag_job.llm_endpoint)
+        self.assertEqual(rag_job.llm_endpoint_name, "Server auto")
+        self.assertEqual(rag_job.llm_base_url, "http://auto-rag:8080")
+        self.assertEqual(rag_job.llm_model, "auto-model")
+
     def test_rag_request_accepts_explicit_retrieval_threshold(self):
         with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
             apply_async.return_value = SimpleNamespace(id="search-task-id")

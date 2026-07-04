@@ -1,0 +1,11 @@
+{
+  "id": "qwen2.5-7b-instruct-awq",
+  "model_id": "qwen2.5-7b-instruct",
+  "priority": 95,
+  "display_name": "Qwen2.5 7B Instruct AWQ",
+  "description": "Pre-quantized AWQ artifact served with vLLM.",
+  "hf": {"repo_id": "Qwen/Qwen2.5-7B-Instruct-AWQ"},
+  "artifact": {"format": "awq", "quant": "AWQ-INT4", "dtype": "int4", "download_size_mb": 5200, "disk_required_mb": 6000},
+  "backend_profiles": ["vllm-cuda"],
+  "policy": {"tags": ["awq", "vllm", "gpu", "rag"]}
+}

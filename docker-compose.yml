@@ -44,6 +44,7 @@ services:
       - ./data/uploads:/data/uploads
       - ./data/staticfiles:/app/staticfiles
       - ./data/logs:/data/logs
+      - ./data/config:/data/config
     depends_on:
       db:
         condition: service_healthy
@@ -129,13 +130,12 @@ services:
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/logs:/data/logs
+      - ./data/config:/data/config
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-      llama-rag:
-        condition: service_started
     command: [ "bash", "-lc", "celery -A config worker -l info -Q rag --concurrency=$${RAG_WORKER_CONCURRENCY:-1} --prefetch-multiplier=1" ]
 
   recovery-worker:
@@ -190,6 +190,7 @@ services:
       - .env
     volumes:
       - ./llama-rag/data/cache:/root/.cache
+      - ./data/config:/config:ro
     command: >
       --hf-repo ggml-org/gemma-4-E4B-it-GGUF:Q4_K_M --host 0.0.0.0 --port 8080 --threads 8 --ctx-size 4096 --parallel 1 --metrics
     healthcheck:
@@ -198,6 +199,34 @@ services:
       timeout: 5s
       retries: 12
       start_period: 120s
+
+  vllm-rag:
+    build:
+      context: ./vllm-rag
+      dockerfile: Dockerfile
+    container_name: vllm-rag
+    restart: always
+    expose:
+      - "8080"
+    env_file:
+      - .env
+    volumes:
+      - ./vllm-rag/data/cache:/root/.cache/huggingface
+      - ./data/config:/config:ro
+    shm_size: "4g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 180s
 
   vllm-query-parser:
     build:
