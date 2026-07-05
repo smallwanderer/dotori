@@ -384,6 +384,7 @@ class SearchJobAdmin(admin.ModelAdmin):
         "query",
         "tuning_params_pretty",
         "results_pretty",
+        "performance_metrics_pretty",
         "error_message",
         "task_id",
         "started_at",
@@ -423,6 +424,10 @@ class SearchJobAdmin(admin.ModelAdmin):
     def results_pretty(self, obj):
         return format_html("<pre>{}</pre>", _json_preview(obj.results, length=4000))
 
+    @admin.display(description="Performance metrics")
+    def performance_metrics_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.performance_metrics, length=4000))
+
     @admin.action(description="Requeue selected failed/pending search jobs")
     def requeue_selected_search_jobs(self, request, queryset):
         candidate_qs = queryset.filter(status__in=[AIStatus.PENDING, AIStatus.FAILED])
@@ -432,6 +437,7 @@ class SearchJobAdmin(admin.ModelAdmin):
             job.task_id = async_result.id
             job.status = AIStatus.PENDING
             job.error_message = ""
+            job.performance_metrics = {}
             job.started_at = None
             job.completed_at = None
             job.save(
@@ -441,6 +447,7 @@ class SearchJobAdmin(admin.ModelAdmin):
                     "error_message",
                     "started_at",
                     "completed_at",
+                    "performance_metrics",
                 ]
             )
             queued += 1
@@ -497,6 +504,7 @@ class RAGJobAdmin(admin.ModelAdmin):
         "query_confidence",
         "answer",
         "citations_pretty",
+        "performance_metrics_pretty",
         "error_message",
         "stage",
         "stage_message",
@@ -536,6 +544,10 @@ class RAGJobAdmin(admin.ModelAdmin):
     def citations_pretty(self, obj):
         return format_html("<pre>{}</pre>", _json_preview(obj.citations, length=4000))
 
+    @admin.display(description="Performance metrics")
+    def performance_metrics_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.performance_metrics, length=4000))
+
     @admin.action(description="Requeue selected completed-search RAG jobs")
     def requeue_selected_rag_jobs(self, request, queryset):
         queued = 0
@@ -552,6 +564,7 @@ class RAGJobAdmin(admin.ModelAdmin):
             job.citations = []
             job.started_at = None
             job.completed_at = None
+            job.performance_metrics = {}
             job.save(
                 update_fields=[
                     "task_id",
@@ -563,6 +576,7 @@ class RAGJobAdmin(admin.ModelAdmin):
                     "citations",
                     "started_at",
                     "completed_at",
+                    "performance_metrics",
                 ]
             )
             queued += 1

@@ -1,200 +1,147 @@
 # Dotori for Document
 
-**Dotori for Document is a lightweight full-stack document retriever and RAG system for personal and small-team use.**
+Dotori is a self-hosted document workspace for private file management, hybrid search, and retrieval-augmented generation (RAG). It runs as an operator-managed Docker Compose stack and keeps documents, indexes, and local AI runtimes on your server.
 
 <p align="center">
- <img src = "https://github.com/user-attachments/assets/263cba6d-04f6-49ba-9ccb-85481157539a", width="80%">
+  <img src="https://github.com/user-attachments/assets/263cba6d-04f6-49ba-9ccb-85481157539a" width="80%" alt="Dotori document workspace">
 </p>
 
 <p align="center">
- <img src = "https://github.com/user-attachments/assets/d240cf34-1dfb-462e-8366-3f0d3e4a435f", width="80%">
+  <img src="https://github.com/user-attachments/assets/d240cf34-1dfb-462e-8366-3f0d3e4a435f" width="80%" alt="Dotori RAG workspace">
 </p>
 
-It combines file storage, document parsing, hybrid vector retrieval, and retrieval-augmented generation in a Docker Compose stack that can run on a server or a Windows machine with Docker Desktop.
+한국어 문서는 [README.ko.md](README.ko.md)를 참고하세요. Detailed installation and runtime operations are covered in [WALKTHROUGH.md](WALKTHROUGH.md) and the [LLM operator guide](docs/llm_installation_docs/user-guide.md).
 
-Korean documentation is available in [README.ko.md](README.ko.md). A step-by-step setup guide is available in [WALKTHROUGH.md](WALKTHROUGH.md).
+## Highlights
 
-## What It Does
+- Private file and folder management with authentication, trash, favorites, and recent files.
+- Asynchronous parsing, chunking, and embedding for PDF, Office, HWP/HWPX, text, Markdown, HTML, and common image files.
+- Dense and sparse hybrid retrieval backed by PostgreSQL and pgvector.
+- RAG answers with source evidence, streaming output, cancellation, and job progress.
+- Server-wide local LLM selection based on detected CPU, RAM, GPU, VRAM, and disk capacity.
+- Automatic `llama.cpp` or vLLM runtime planning with `speed`, `balanced`, and `quality` presets.
+- Three installation modes, from file storage only to a complete local RAG stack.
+- Korean and English web interfaces and a sync API for external clients.
 
-Dotori for Document helps you keep documents in a private web workspace and ask questions over them.
+## Installation Modes
 
-- Upload and manage files and folders through a Django web UI.
-- Parse documents asynchronously with Celery workers.
-- Store document embeddings in PostgreSQL with pgvector.
-- Search documents with dense/sparse hybrid retrieval.
-- Ask RAG questions and receive answers with citations.
-- Run the full system locally or on a small server using Docker Compose.
+The installer asks for an operating mode. AI models and runtimes are configured for the server, not separately for each user.
 
-## Current Release
+| Mode | Services |
+| --- | --- |
+| Full local AI RAG | File management, parsing, embeddings, hybrid search, query processing, and local RAG generation |
+| Hybrid/Search AI | File management, parsing, embeddings, and hybrid search without an answer-generation LLM |
+| Basic | File management only |
 
-`0.1.1` is a source-based early release. Core file management, document parsing and embedding, AI search, and RAG flows are usable, while deployment automation and some advanced features are still being improved.
+In Full mode, the operator selects only `speed`, `balanced`, or `quality`. Dotori derives the model, backend, quantization, context length, concurrency, and memory policy from the detected hardware. GGUF and RAM-offload configurations use `llama.cpp`; compatible NVIDIA GPU and cluster configurations can use vLLM.
 
-This release is source-based. Docker images are not published yet. Deploy by checking out the release tag and building with Docker Compose.
+## Quick Start
 
-## Architecture
-
-```text
-nginx
-  -> app
-      Django web UI, file APIs, task enqueueing
-
-redis
-  -> Celery broker
-
-db
-  PostgreSQL + pgvector
-
-celery-core-worker
-  document parsing, chunking, embedding
-
-celery-search-worker
-  query embedding, hybrid retrieval, search jobs
-
-celery-llm-rag-worker
-  RAG answer generation
-
-celery-query-worker
-  experimental query parsing
-
-llama-rag
-  llama.cpp-compatible local RAG runtime
-```
-
-The web container stays lightweight. Heavy parsing, embedding, retrieval, and LLM work runs in worker containers.
-
-## Main Features
-
-- File and folder management with authenticated access.
-- Asynchronous document AI pipeline.
-- BGE-M3 based dense/sparse hybrid retrieval.
-- RAG question workspace with citation display.
-- Embedding-based contextual compression for search and RAG evidence.
-- Local desktop sync API groundwork for Shelf-Sync.
-- Per-file and per-folder controls for AI parsing and embedding.
-- Saved Korean/English interface language preference.
-- Django admin extensions for operational visibility.
-- Experimental QueryDSL parser path with validation and fallback behavior.
-
-## Requirements
+### Requirements
 
 - Docker Engine or Docker Desktop
 - Docker Compose v2
+- Python 3
 - Git
-- Hugging Face token if the configured LLM or embedding model requires authentication
+- An NVIDIA driver and NVIDIA Container Toolkit when using the vLLM GPU runtime
+- A Hugging Face token when a selected model requires authentication
 
-For Windows, Docker Desktop with WSL2 backend is recommended.
+Docker Desktop with the WSL2 backend is recommended on Windows.
 
-## Quick Start
+### Run the installer
 
 ```bash
 git clone https://github.com/smallwanderer/dotori.git
 cd dotori
-cp .env.example .env
-docker compose up -d --build
-docker compose exec app python manage.py createsuperuser
+python install.py
 ```
 
-Open:
-
-```text
-http://localhost/
-```
-
-Admin:
-
-```text
-http://localhost/admin/
-```
-
-For development on Windows or local machines:
-
-```bash
-cp .env.example .env.dev
-docker compose -f docker-compose.dev.yml up -d --build
-```
-
-Open:
+The installer creates `.env.dev`, detects the host hardware, lets you choose an operating mode, builds the required services, and configures the selected RAG runtime. Open the development service at:
 
 ```text
 http://localhost:8888/
 ```
 
-See [WALKTHROUGH.md](WALKTHROUGH.md) for server and Windows-specific setup steps.
-
-## Important Configuration
-
-Most runtime settings are controlled through `.env` or `.env.dev`.
-
-Key settings:
-
-| Variable | Purpose |
-| --- | --- |
-| `DJANGO_SECRET_KEY` | Django secret key. Change for real deployments. |
-| `DJANGO_ALLOWED_HOSTS` | Allowed hostnames or IPs. |
-| `DJANGO_CSRF_TRUSTED_ORIGINS` | Trusted browser origins. |
-| `POSTGRES_*` | PostgreSQL credentials. |
-| `HF_TOKEN` | Hugging Face token for model downloads when required. |
-| `EMBEDDING_MODEL` | Embedding model, currently BGE-M3 by default. |
-| `EMBEDDING_DISTANCE_STRATEGY` | Dense retrieval distance strategy. |
-| `EMBEDDING_HYBRID_DENSE_WEIGHT` | Dense score weight. |
-| `EMBEDDING_HYBRID_SPARSE_WEIGHT` | Sparse score weight. |
-| `CONTEXTUAL_COMPRESSION_ENABLED` | Enables evidence compression. |
-| `RAG_SEARCH_TOP_K` | Default number of documents searched for RAG. |
-| `RAG_RETRIEVAL_THRESHOLD` | RAG dense similarity threshold. |
-| `RAG_EVIDENCE_LIMIT` | Maximum citations sent to the RAG prompt. |
-| `QUERY_FRONTEND_MODE` | Query parser mode. Default is passthrough. |
-
-## Testing
-
-Run the CI-style unit test command:
+Create an administrator account after the containers are running:
 
 ```bash
-docker compose -f docker-compose.dev.yml run --rm celery-core-worker python -m pytest -m "unit"
+docker compose -f docker-compose.dev.yml exec app python manage.py createsuperuser
 ```
 
-Run web/API focused development checks from the dev app container:
+On later starts, use `python install.py --run` or `start.bat` on Windows. To change the local RAG model or runtime explicitly, run:
+
+```bash
+python install.py --change-llm
+```
+
+For domain, HTTPS, production Compose, and environment-specific setup, follow [WALKTHROUGH.md](WALKTHROUGH.md).
+
+## How It Works
+
+```text
+Browser / sync client
+        |
+      Nginx
+        |
+   Django app -------------- PostgreSQL + pgvector
+        |
+      Redis
+        |
+        +-- embedding-worker  [parse, embed]
+        +-- search-worker     [search]
+        +-- query-worker      [query]
+        +-- rag-worker        [rag] ---- selected local runtime
+                                          |-- llama-rag (llama.cpp)
+                                          `-- vllm-rag  (vLLM)
+```
+
+Django handles the web application, APIs, and task submission. Parsing, embedding, retrieval, query processing, and answer generation run in dedicated Celery queues. Only the selected RAG runtime should remain active. Its resolved configuration is stored in `data/config/llm_runtime.json`, and normal RAG requests reuse that saved configuration without probing hardware or selecting a model again.
+
+## Common Commands
+
+```bash
+# Start or rebuild the development stack
+docker compose -f docker-compose.dev.yml up --build
+
+# Apply database migrations
+docker compose -f docker-compose.dev.yml exec app python manage.py migrate
+
+# Run the test suite in the development image
+docker compose -f docker-compose.dev.yml exec app python -m pytest
+
+# Follow one service's logs
+docker compose -f docker-compose.dev.yml logs -f rag-worker
+
+# Inspect the saved LLM runtime configuration
+docker compose -f docker-compose.dev.yml exec app \
+  python manage.py inspect_llm_runtime
+```
+
+Model catalog and runtime-management commands are documented in the [LLM operator guide](docs/llm_installation_docs/user-guide.md).
+
+## Data and Configuration
+
+- `.env.dev` configures the development stack; `.env` configures the production-oriented stack.
+- `data/uploads/`, `data/pgdata/`, `data/logs/`, and `data/config/` contain persistent local state and must not be committed.
+- `data/config/llm_runtime.json` is generated during local RAG setup and is the server-wide runtime source of truth.
+- The default embedding profile uses BGE-M3 with 1024-dimensional dense vectors and sparse lexical weights.
+- Advanced retrieval and worker settings are available in `.env.example`; start with the defaults unless you are evaluating a specific workload.
+
+## Development
+
+The repository keeps application ownership in `files`, `accounts`, and `document_ai`. Heavy AI work is separated into processing, embedding, query-understanding, search, RAG, and installation/runtime modules. The production-like application image intentionally excludes test dependencies, so tests should run with `docker-compose.dev.yml`.
+
+Before submitting a change, run focused tests for the affected module and then the full suite when practical:
 
 ```bash
 docker compose -f docker-compose.dev.yml exec app python manage.py check
-docker compose -f docker-compose.dev.yml exec app python -m pytest --reuse-db files/tests.py tests/test_rag_flow.py
+docker compose -f docker-compose.dev.yml exec app python -m pytest
 ```
 
-The web `app` container intentionally stays light. Docling-based tests should run in `celery-core-worker`.
+## Project Status
 
-## Operational Notes
+Dotori is under active development. The current source includes the server-wide LLM installation service, hybrid retrieval, local and external RAG endpoint support, and the document workspace. Production operators should review their TLS, backup, monitoring, storage, model licensing, and hardware requirements before deployment.
 
-- Uploaded files and database data live under `data/`.
-- The default Compose stack is production-like and uses `docker-compose.yml`.
-- The development stack uses `docker-compose.dev.yml` and serves the app on port `8888`.
-- RAG uses the local `llama-rag` container.
-- Query parsing is expected to use a separate `vllm-query-parser` runtime.
-- The project disables and filters LLM reasoning/thinking output by default. See [LLM_REASONING_POLICY.md](LLM_REASONING_POLICY.md).
-- QueryDSL parsing is experimental. The default search/RAG path still uses semantic query passthrough.
+## License
 
-## Release Notes
-
-For `0.1.1`, the main focus is:
-
-- Added user settings and persisted interface language preference.
-- Expanded Korean/English language switching across file, upload, and RAG surfaces.
-- Added UI and API controls to disable or re-enable AI processing for files and folders.
-- Excluded trashed nodes from AI processing and kept restored nodes disabled until explicitly re-enabled.
-- Added `ai_processing_enabled` support to the Shelf-Sync upload API.
-- Prevented disabled files from being queued or recovered for parsing and embedding.
-
-For `0.1.0-alpha`, the main focus is:
-
-- Full-stack RAG integration.
-- Hybrid retrieval improvements.
-- Contextual compression for evidence.
-- Server-side sync API groundwork.
-- Django admin operational monitoring.
-- LLM output policy documentation.
-
-## Roadmap
-
-- Retrieval evaluation with a larger golden set.
-- RAG quality evaluation and citation navigation improvements.
-- More complete Text2SQL workflow.
-- Optional QueryDSL parser rollout after evaluation.
-- Backup, security, and monitoring documentation for production use.
+See [LICENSE](LICENSE).

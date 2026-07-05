@@ -68,6 +68,20 @@ class RAGFlowTests(TestCase):
         self.query_frontend_env = patch.dict("os.environ", {"QUERY_FRONTEND_MODE": "passthrough"})
         self.query_frontend_env.start()
         self.addCleanup(self.query_frontend_env.stop)
+        self.server_target_patch = patch(
+            "document_ai.services.llm_endpoint_service.get_cached_server_rag_target",
+            return_value=SimpleNamespace(
+                base_url="http://test-rag:8080",
+                model="test-rag-model",
+                as_snapshot=lambda: {
+                    "llm_endpoint_name": "Test server runtime",
+                    "llm_base_url": "http://test-rag:8080",
+                    "llm_model": "test-rag-model",
+                },
+            ),
+        )
+        self.server_target_patch.start()
+        self.addCleanup(self.server_target_patch.stop)
 
     def test_rag_request_creates_search_and_rag_jobs_then_queues_search(self):
         with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
@@ -336,6 +350,10 @@ class RAGFlowTests(TestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["queued_rag_jobs"], 1)
         self.assertEqual(search_job.status, AIStatus.COMPLETED)
+        self.assertGreaterEqual(search_job.performance_metrics["queue_wait_ms"], 0)
+        self.assertGreaterEqual(search_job.performance_metrics["worker_total_ms"], 0)
+        self.assertGreaterEqual(search_job.performance_metrics["end_to_end_ms"], 0)
+        self.assertEqual(search_job.performance_metrics["result_count"], 1)
         self.assertEqual(rag_job.task_id, "rag-task-id")
         self.assertEqual(rag_job.stage, RAGStage.GENERATING)
         self.assertIn("답변", rag_job.stage_message)
@@ -389,6 +407,14 @@ class RAGFlowTests(TestCase):
         self.assertEqual(rag_job.status, AIStatus.COMPLETED)
         self.assertIn("공급 확대", rag_job.answer)
         self.assertEqual(len(rag_job.citations), 1)
+        self.assertGreaterEqual(rag_job.performance_metrics["queue_wait_ms"], 0)
+        self.assertGreaterEqual(rag_job.performance_metrics["context_build_ms"], 0)
+        self.assertGreaterEqual(rag_job.performance_metrics["semaphore_wait_ms"], 0)
+        self.assertGreaterEqual(rag_job.performance_metrics["llm_ttft_ms"], 0)
+        self.assertGreaterEqual(rag_job.performance_metrics["llm_total_ms"], 0)
+        self.assertGreaterEqual(rag_job.performance_metrics["worker_total_ms"], 0)
+        self.assertEqual(rag_job.performance_metrics["citation_count"], 1)
+        self.assertGreater(rag_job.performance_metrics["output_chars"], 0)
         self.assertEqual(rag_job.citations[0]["node_name"], "policy.pdf")
         self.assertEqual(rag_job.citations[0]["text"], "압축 근거: 공급 확대와 할인 지원을 병행한다.")
         post.assert_called_once()

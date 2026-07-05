@@ -34,14 +34,14 @@ try:
     
     original_create_sql = pgvector.django.indexes.HnswIndex.create_sql
     
-    def sqlite_create_sql(self, model, schema_editor, using=""):
+    def sqlite_create_sql(self, model, schema_editor, using="", **kwargs):
         if schema_editor.connection.vendor == "sqlite":
             orig_opclasses = self.opclasses
             self.opclasses = []
             sql = Index.create_sql(self, model, schema_editor, using=using)
             self.opclasses = orig_opclasses
             return sql
-        return original_create_sql(self, model, schema_editor, using=using)
+        return original_create_sql(self, model, schema_editor, using=using, **kwargs)
         
     pgvector.django.indexes.HnswIndex.create_sql = sqlite_create_sql
 except ImportError:

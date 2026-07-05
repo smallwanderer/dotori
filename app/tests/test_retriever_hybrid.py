@@ -285,10 +285,12 @@ def test_retriever_hybrid_reranks_by_sparse_score(monkeypatch):
     )
 
     retriever = VectorRetriever()
+    performance_metrics = {}
     results = retriever.retrieve(
         query="hybrid query",
         top_k=2,
         user=owner,
+        performance_metrics=performance_metrics,
     )
 
     assert len(results) == 2
@@ -304,6 +306,12 @@ def test_retriever_hybrid_reranks_by_sparse_score(monkeypatch):
     assert results[0]["compression"]["method"] == "embedding_lazy_segment_document"
     assert results[0]["evidences"][0]["compressed_text"].startswith("compressed:")
     assert results[0]["evidences"][0]["compression"]["method"] == "test"
+    assert performance_metrics["candidate_count"] == 2
+    assert performance_metrics["result_count"] == 2
+    assert performance_metrics["query_embedding_ms"] >= 0
+    assert performance_metrics["vector_query_ms"] >= 0
+    assert performance_metrics["contextual_compression_ms"] >= 0
+    assert performance_metrics["retrieval_total_ms"] >= 0
 
 
 def test_retriever_top_k_zero_returns_all_candidates(monkeypatch):

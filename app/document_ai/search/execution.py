@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+from time import perf_counter
 
 from django.utils import timezone
 
 from config.enums import AIStatus, RAGStage
+from document_ai.performance import datetime_delta_ms, elapsed_ms, put_metric
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +73,16 @@ def perform_vector_search_sync(job_id: int, *, retries: int = 0, max_retries: in
             "error": f"Search job {job_id} not found",
         }
 
+    worker_started = perf_counter()
     job.status = AIStatus.PROCESSING
     job.started_at = timezone.now()
     job.error_message = ""
-    job.save(update_fields=["status", "started_at", "error_message"])
+    metrics = dict(job.performance_metrics or {})
+    if "queue_wait_ms" not in metrics:
+        put_metric(metrics, "queue_wait_ms", datetime_delta_ms(job.created_at, job.started_at))
+    metrics["attempt"] = retries + 1
+    job.performance_metrics = metrics
+    job.save(update_fields=["status", "started_at", "error_message", "performance_metrics"])
 
     try:
         retriever = VectorRetriever()
@@ -85,6 +93,7 @@ def perform_vector_search_sync(job_id: int, *, retries: int = 0, max_retries: in
             job.top_k,
             job.tuning_params,
         )
+        retrieval_metrics = {}
         results = retriever.retrieve(
             query=job.query,
             top_k=job.top_k,
@@ -92,6 +101,7 @@ def perform_vector_search_sync(job_id: int, *, retries: int = 0, max_retries: in
             node_ids=job.node_ids or None,
             user=job.owner,
             tuning_params=job.tuning_params,
+            performance_metrics=retrieval_metrics,
             **_get_search_job_orm_constraints(job),
         )
 
@@ -101,12 +111,18 @@ def perform_vector_search_sync(job_id: int, *, retries: int = 0, max_retries: in
         job.status = AIStatus.COMPLETED
         job.completed_at = timezone.now()
         job.error_message = ""
-        job.save(update_fields=["results", "status", "completed_at", "error_message"])
+        metrics.update(retrieval_metrics)
+        put_metric(metrics, "worker_total_ms", elapsed_ms(worker_started))
+        put_metric(metrics, "end_to_end_ms", datetime_delta_ms(job.created_at, job.completed_at))
+        put_metric(metrics, "result_count", len(normalized_results))
+        job.performance_metrics = metrics
+        job.save(update_fields=["results", "status", "completed_at", "error_message", "performance_metrics"])
 
         logger.info(
-            "Vector search completed: job_id=%s, result_count=%s",
+            "Vector search completed: job_id=%s, result_count=%s, performance=%s",
             job.id,
             len(normalized_results),
+            metrics,
         )
         queued_rag_jobs = _queue_rag_generation_for_search_job(job)
         if queued_rag_jobs:
@@ -130,7 +146,11 @@ def perform_vector_search_sync(job_id: int, *, retries: int = 0, max_retries: in
         job.status = AIStatus.FAILED
         job.completed_at = timezone.now()
         job.error_message = str(exc)
-        job.save(update_fields=["status", "completed_at", "error_message"])
+        put_metric(metrics, "worker_total_ms", elapsed_ms(worker_started))
+        put_metric(metrics, "end_to_end_ms", datetime_delta_ms(job.created_at, job.completed_at))
+        metrics["failed"] = True
+        job.performance_metrics = metrics
+        job.save(update_fields=["status", "completed_at", "error_message", "performance_metrics"])
         _fail_rag_jobs_for_search_job(job, job.error_message or "Search failed.")
 
         logger.exception("Vector search failed: job_id=%s", job_id)

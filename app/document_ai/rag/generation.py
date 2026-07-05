@@ -9,6 +9,7 @@ import time as time_module
 from django.utils import timezone
 
 from config.enums import AIStatus, QueryIntent, RAGStage
+from document_ai.performance import datetime_delta_ms, elapsed_ms, put_metric
 
 logger = logging.getLogger(__name__)
 
@@ -404,7 +405,7 @@ def _fallback_rag_answer(citations: list[dict], language: str) -> str:
     return "\n".join(lines)
 
 
-def _mark_rag_canceled(rag_job, redis_client) -> dict:
+def _mark_rag_canceled(rag_job, redis_client, performance_metrics=None) -> dict:
     from document_ai.services.rag_cancel_service import clear_rag_cancel_signal
 
     rag_job.status = AIStatus.CANCELED
@@ -412,7 +413,11 @@ def _mark_rag_canceled(rag_job, redis_client) -> dict:
     rag_job.stage_message = "사용자 요청으로 RAG 작업을 중단했습니다."
     rag_job.canceled_at = rag_job.canceled_at or timezone.now()
     rag_job.completed_at = rag_job.completed_at or timezone.now()
-    rag_job.save(update_fields=["status", "stage", "stage_message", "canceled_at", "completed_at"])
+    update_fields = ["status", "stage", "stage_message", "canceled_at", "completed_at"]
+    if performance_metrics is not None:
+        rag_job.performance_metrics = performance_metrics
+        update_fields.append("performance_metrics")
+    rag_job.save(update_fields=update_fields)
     clear_rag_cancel_signal(rag_job.id, redis_client=redis_client)
     return {"status": "canceled", "job_id": rag_job.id}
 
@@ -489,11 +494,22 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
         is_rag_cancel_requested,
     )
 
+    worker_started = time_module.perf_counter()
     try:
         rag_job = RAGJob.objects.select_related("search_job", "llm_endpoint").get(pk=rag_job_id)
     except RAGJob.DoesNotExist:
         logger.error("RAG job %s not found", rag_job_id)
         return {"status": "failed", "job_id": rag_job_id, "error": f"RAG job {rag_job_id} not found"}
+
+    metrics = dict(rag_job.performance_metrics or {})
+
+    def finish_metrics(**extra):
+        for name, value in extra.items():
+            put_metric(metrics, name, value)
+        put_metric(metrics, "worker_total_ms", elapsed_ms(worker_started))
+        completed_at = rag_job.completed_at or timezone.now()
+        put_metric(metrics, "end_to_end_ms", datetime_delta_ms(rag_job.created_at, completed_at))
+        return metrics
 
     skip_retrieval = not rag_job.search_job and (
         not rag_job.retrieval_required
@@ -506,7 +522,8 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
         rag_job.stage_message = "검색 결과가 완료되지 않아 답변을 생성할 수 없습니다."
         rag_job.completed_at = timezone.now()
         rag_job.error_message = "Search job is not completed."
-        rag_job.save(update_fields=["status", "stage", "stage_message", "completed_at", "error_message"])
+        rag_job.performance_metrics = finish_metrics(failed=True)
+        rag_job.save(update_fields=["status", "stage", "stage_message", "completed_at", "error_message", "performance_metrics"])
         return {"status": "failed", "job_id": rag_job_id, "error": rag_job.error_message}
 
     rag_job.status = AIStatus.PROCESSING
@@ -514,7 +531,16 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
     rag_job.stage_message = "검색된 근거를 바탕으로 답변을 생성하고 있습니다."
     rag_job.started_at = timezone.now()
     rag_job.error_message = ""
-    rag_job.save(update_fields=["status", "stage", "stage_message", "started_at", "error_message"])
+    if "queue_wait_ms" not in metrics:
+        put_metric(metrics, "queue_wait_ms", datetime_delta_ms(rag_job.created_at, rag_job.started_at))
+    if rag_job.search_job_id:
+        put_metric(
+            metrics,
+            "generation_queue_wait_ms",
+            datetime_delta_ms(rag_job.search_job.completed_at, rag_job.started_at),
+        )
+    rag_job.performance_metrics = metrics
+    rag_job.save(update_fields=["status", "stage", "stage_message", "started_at", "error_message", "performance_metrics"])
 
     llm_config = resolve_rag_llm_request_config(rag_job)
     redis_url = os.getenv("RAG_REDIS_URL", os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"))
@@ -531,6 +557,7 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
         "llama_rag_v1",
     )
 
+    context_started = time_module.perf_counter()
     if skip_retrieval:
         context_text, citations = "", []
     else:
@@ -540,6 +567,9 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
             context_max_chars=context_max_chars,
             evidence_text_max_chars=evidence_text_max_chars,
         )
+    put_metric(metrics, "context_build_ms", elapsed_ms(context_started))
+    metrics["citation_count"] = len(citations)
+    metrics["context_chars"] = len(context_text)
     if not skip_retrieval and not _evidence_is_sufficient(citations, rag_job.search_job.threshold):
         rag_job.answer = _insufficient_evidence_answer(rag_job.language, scoped=bool(rag_job.node_ids))
         rag_job.status = AIStatus.COMPLETED
@@ -548,7 +578,8 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
         rag_job.completed_at = timezone.now()
         rag_job.error_message = ""
         rag_job.citations = []
-        rag_job.save(update_fields=["answer", "status", "stage", "stage_message", "completed_at", "error_message", "citations"])
+        rag_job.performance_metrics = finish_metrics(skipped_llm=True, output_chars=len(rag_job.answer))
+        rag_job.save(update_fields=["answer", "status", "stage", "stage_message", "completed_at", "error_message", "citations", "performance_metrics"])
         return {"status": "insufficient_evidence", "job_id": rag_job_id, "citation_count": 0}
 
     system_prompt, user_prompt, fewshot_user, fewshot_assistant = _build_generation_prompts(
@@ -566,21 +597,25 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
     )
 
     acquired = False
+    semaphore_started = time_module.perf_counter()
     try:
         semaphore.acquire(timeout=semaphore_timeout)
         acquired = True
+        put_metric(metrics, "semaphore_wait_ms", elapsed_ms(semaphore_started))
     except NotAvailable as exc:
+        put_metric(metrics, "semaphore_wait_ms", elapsed_ms(semaphore_started))
         rag_job.status = AIStatus.PENDING
         rag_job.stage = RAGStage.QUEUED
         rag_job.stage_message = "RAG worker가 바빠서 잠시 후 다시 시도합니다."
         rag_job.task_id = ""
         rag_job.error_message = "RAG worker is busy. Please retry shortly."
-        rag_job.save(update_fields=["status", "stage", "stage_message", "task_id", "error_message"])
+        rag_job.performance_metrics = finish_metrics(semaphore_busy=True)
+        rag_job.save(update_fields=["status", "stage", "stage_message", "task_id", "error_message", "performance_metrics"])
         raise RAGGenerationBusy("RAG worker is busy. Please retry shortly.") from exc
 
     try:
         if rag_job.status == AIStatus.CANCELED or is_rag_cancel_requested(rag_job.id, redis_client=redis_client):
-            return _mark_rag_canceled(rag_job, redis_client)
+            return _mark_rag_canceled(rag_job, redis_client, finish_metrics(canceled=True))
 
         request_url, payload = _build_llm_request(
             llm_config=llm_config,
@@ -590,6 +625,7 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
             user_prompt=user_prompt,
             max_tokens=max_tokens,
         )
+        llm_started = time_module.perf_counter()
         response = requests.post(
             request_url,
             json=payload,
@@ -597,6 +633,7 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
             timeout=(5, request_timeout),
             stream=True,
         )
+        put_metric(metrics, "llm_connect_ms", elapsed_ms(llm_started))
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:
@@ -606,7 +643,11 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
             ) from exc
         raw_parts = []
         last_cancel_check = 0.0
+        first_token_at = None
         for content in _iter_openai_responses_stream_content(response):
+            if first_token_at is None:
+                first_token_at = time_module.perf_counter()
+                put_metric(metrics, "llm_ttft_ms", elapsed_ms(llm_started, first_token_at))
             raw_parts.append(content)
             now_monotonic = time_module.monotonic()
             if now_monotonic - last_cancel_check < 0.5:
@@ -614,16 +655,21 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
             last_cancel_check = now_monotonic
             if is_rag_cancel_requested(rag_job.id, redis_client=redis_client):
                 response.close()
-                return _mark_rag_canceled(rag_job, redis_client)
+                return _mark_rag_canceled(rag_job, redis_client, finish_metrics(canceled=True))
 
         raw_answer = "".join(raw_parts).strip()
+        put_metric(metrics, "llm_total_ms", elapsed_ms(llm_started))
+        if first_token_at is not None:
+            put_metric(metrics, "llm_generation_after_first_token_ms", elapsed_ms(first_token_at))
         if is_rag_cancel_requested(rag_job.id, redis_client=redis_client):
-            return _mark_rag_canceled(rag_job, redis_client)
+            return _mark_rag_canceled(rag_job, redis_client, finish_metrics(canceled=True))
 
         rag_job.refresh_from_db(fields=["status", "stage"])
         if rag_job.status == AIStatus.CANCELED:
             from document_ai.services.rag_cancel_service import clear_rag_cancel_signal
 
+            rag_job.performance_metrics = finish_metrics(canceled=True)
+            rag_job.save(update_fields=["performance_metrics"])
             clear_rag_cancel_signal(rag_job.id, redis_client=redis_client)
             return {"status": "canceled", "job_id": rag_job_id}
         answer = _normalize_rag_answer(raw_answer)
@@ -644,7 +690,9 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
         rag_job.stage = RAGStage.COMPLETED
         rag_job.stage_message = "답변 생성이 완료되었습니다."
         rag_job.completed_at = timezone.now()
-        rag_job.save(update_fields=["answer", "citations", "status", "stage", "stage_message", "completed_at", "error_message"])
+        rag_job.performance_metrics = finish_metrics(output_chars=len(answer))
+        rag_job.save(update_fields=["answer", "citations", "status", "stage", "stage_message", "completed_at", "error_message", "performance_metrics"])
+        logger.info("RAG generation completed: job_id=%s performance=%s", rag_job.id, rag_job.performance_metrics)
 
         return {"status": "success", "job_id": rag_job_id, "citation_count": len(citations)}
     except requests.Timeout as exc:
@@ -653,7 +701,8 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
         rag_job.stage_message = "모델 응답 시간이 초과되었습니다."
         rag_job.completed_at = timezone.now()
         rag_job.error_message = f"RAG request timed out after {request_timeout}s"
-        rag_job.save(update_fields=["status", "stage", "stage_message", "completed_at", "error_message"])
+        rag_job.performance_metrics = finish_metrics(failed=True, timeout=True)
+        rag_job.save(update_fields=["status", "stage", "stage_message", "completed_at", "error_message", "performance_metrics"])
         logger.error("RAG LLM timeout after %ss: %s", request_timeout, exc)
         return {"status": "failed", "job_id": rag_job_id, "error": rag_job.error_message}
     except Exception as exc:
@@ -662,7 +711,8 @@ def generate_rag_response_sync(rag_job_id: int) -> dict:
         rag_job.stage_message = "답변 생성 중 오류가 발생했습니다."
         rag_job.completed_at = timezone.now()
         rag_job.error_message = str(exc)
-        rag_job.save(update_fields=["status", "stage", "stage_message", "completed_at", "error_message"])
+        rag_job.performance_metrics = finish_metrics(failed=True)
+        rag_job.save(update_fields=["status", "stage", "stage_message", "completed_at", "error_message", "performance_metrics"])
         logger.exception("RAG LLM error: job_id=%s", rag_job_id)
         return {"status": "failed", "job_id": rag_job_id, "error": str(exc)}
     finally:

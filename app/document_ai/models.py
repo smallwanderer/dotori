@@ -241,7 +241,7 @@ class ChunkEmbedding(models.Model):
                 fields=['vector'],
                 m=16,
                 ef_construction=64,
-                opclasses=['vector_cosine_ops']
+                opclasses=['vector_ip_ops']
             )
         ]
 
@@ -293,7 +293,7 @@ class ChunkSentenceEmbedding(models.Model):
                 fields=['vector'],
                 m=16,
                 ef_construction=64,
-                opclasses=['vector_cosine_ops']
+                opclasses=['vector_ip_ops']
             )
         ]
 
@@ -417,6 +417,7 @@ class SearchJob(models.Model):
     task_id = models.CharField(max_length=255, blank=True)
     results = models.JSONField(default=list, blank=True)
     error_message = models.TextField(blank=True)
+    performance_metrics = models.JSONField(default=dict, blank=True)
 
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -603,6 +604,7 @@ class RAGJob(models.Model):
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
     canceled_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=255, blank=True)
+    performance_metrics = models.JSONField(default=dict, blank=True)
 
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

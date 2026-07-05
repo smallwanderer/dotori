@@ -76,7 +76,7 @@ class Migration(migrations.Migration):
                 ('chunk', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='embeddings', to='document_ai.documentchunk')),
             ],
             options={
-                'indexes': [models.Index(fields=['model_name'], name='document_ai_model_n_3ebeeb_idx'), pgvector.django.indexes.HnswIndex(ef_construction=64, fields=['vector'], m=16, name='chunk_embedding_vector_hnsw_idx', opclasses=['vector_cosine_ops'])],
+                'indexes': [models.Index(fields=['model_name'], name='document_ai_model_n_3ebeeb_idx'), pgvector.django.indexes.HnswIndex(ef_construction=64, fields=['vector'], m=16, name='chunk_embedding_vector_hnsw_idx', opclasses=['vector_ip_ops'])],
                 'constraints': [models.UniqueConstraint(fields=('chunk', 'model_name', 'model_version'), name='uniq_embedding_per_chunk_model_version')],
             },
         ),

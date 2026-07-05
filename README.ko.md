@@ -1,205 +1,147 @@
 # 도토리 문서
 
-**도토리 문서는 개인 또는 소규모 팀이 직접 운영할 수 있는 가벼운 문서 검색 및 RAG 시스템입니다.**
+도토리는 문서 관리, 하이브리드 검색, 검색 증강 생성(RAG)을 한 서버에서 운영하는 셀프호스팅 문서 작업 공간입니다. 문서, 검색 인덱스, 로컬 AI 런타임을 운영자가 관리하는 Docker Compose 환경 안에 보관합니다.
 
 <p align="center">
- <img src = "https://github.com/user-attachments/assets/263cba6d-04f6-49ba-9ccb-85481157539a", width="80%">
+  <img src="https://github.com/user-attachments/assets/263cba6d-04f6-49ba-9ccb-85481157539a" width="80%" alt="도토리 문서 작업 공간">
 </p>
 
 <p align="center">
- <img src = "https://github.com/user-attachments/assets/d240cf34-1dfb-462e-8366-3f0d3e4a435f", width="80%">
+  <img src="https://github.com/user-attachments/assets/d240cf34-1dfb-462e-8366-3f0d3e4a435f" width="80%" alt="도토리 RAG 작업 공간">
 </p>
 
-파일 저장소, 문서 파싱, 하이브리드 벡터 검색, RAG 답변 생성을 하나의 Docker Compose 환경에서 실행할 수 있도록 구성되어 있습니다. 서버에서도 실행할 수 있고, Windows에서는 Docker Desktop과 WSL2 기반으로 실행할 수 있습니다.
-
-영문 문서는 [README.md](README.md), 단계별 실행 가이드는 [WALKTHROUGH.md](WALKTHROUGH.md)를 참고하세요.
-
-## 무엇을 하는 시스템인가요?
-
-도토리 문서는 개인 문서나 팀 문서를 웹 화면에서 관리하고, 업로드된 문서에 대해 검색과 질문 답변을 수행하는 시스템입니다.
-
-- 파일과 폴더를 웹 UI에서 관리합니다.
-- 문서를 비동기 worker가 파싱하고 임베딩합니다.
-- PostgreSQL + pgvector에 문서 벡터를 저장합니다.
-- dense/sparse hybrid retriever로 문서를 검색합니다.
-- RAG 화면에서 질문하고, 근거 문서와 함께 답변을 확인합니다.
-- Docker Compose로 서버 또는 Windows 환경에서 실행할 수 있습니다.
-
-## 현재 릴리즈
-
-`0.1.1`은 source-based early release입니다. 핵심 파일 관리, 문서 파싱/임베딩, AI 검색, RAG 흐름은 사용할 수 있지만 운영 자동화와 일부 고급 기능은 아직 개선 중입니다.
-
-이 릴리즈는 source-based release입니다. 아직 Docker 이미지를 별도로 배포하지 않습니다. release tag를 checkout한 뒤 Docker Compose로 직접 build해서 실행합니다.
-
-## 구조
-
-```text
-nginx
-  -> app
-      Django 웹 UI, 파일 API, 작업 큐잉
-
-redis
-  Celery broker
-
-db
-  PostgreSQL + pgvector
-
-celery-core-worker
-  문서 파싱, 청킹, 임베딩
-
-celery-search-worker
-  query embedding, hybrid retrieval, 검색 job 처리
-
-celery-llm-rag-worker
-  RAG 답변 생성
-
-celery-query-worker
-  실험적 query parsing
-
-llama-rag
-  llama.cpp 호환 로컬 RAG runtime
-```
-
-웹 컨테이너는 가볍게 유지하고, 파싱/임베딩/검색/LLM 작업은 worker 컨테이너에서 처리합니다.
+영문 문서는 [README.md](README.md)를 참고하세요. 상세 설치 및 운영 절차는 [WALKTHROUGH.md](WALKTHROUGH.md)와 [LLM 설치 서비스 운영자 가이드](docs/llm_installation_docs/user-guide.md)에 있습니다.
 
 ## 주요 기능
 
-- 로그인 기반 파일 및 폴더 관리
-- 비동기 문서 AI 처리 파이프라인
-- BGE-M3 기반 dense/sparse hybrid 검색
-- 근거 문서가 표시되는 RAG 질문 화면
-- 검색/RAG evidence에 대한 embedding 기반 contextual compression
-- Shelf-Sync 연동을 위한 서버 측 sync API 기반
-- 업로드/동기화 파일의 AI 파싱 및 임베딩 처리 여부 제어
-- 한국어/영어 화면 언어 설정 저장
-- 운영 상태 확인을 위한 Django admin 확장
-- 검증과 fallback을 포함한 실험적 QueryDSL parser 경로
+- 인증, 휴지통, 즐겨찾기, 최근 파일을 포함한 비공개 파일·폴더 관리
+- PDF, Office, HWP/HWPX, 텍스트, Markdown, HTML, 일반 이미지 파일의 비동기 파싱·청킹·임베딩
+- PostgreSQL과 pgvector를 이용한 dense/sparse 하이브리드 검색
+- 근거 문서, 스트리밍 출력, 작업 취소, 진행 상태를 제공하는 RAG
+- CPU, RAM, GPU, VRAM, 디스크 용량을 탐지하는 서버 단위 로컬 LLM 선택
+- `speed`, `balanced`, `quality` 프리셋에 따른 `llama.cpp` 또는 vLLM 실행 계획 자동 생성
+- 파일 관리 전용부터 전체 로컬 RAG까지 선택할 수 있는 세 가지 설치 모드
+- 한국어·영어 웹 UI와 외부 클라이언트용 동기화 API
 
-## 요구 사항
+## 설치 모드
+
+설치 프로그램에서 운영 모드를 선택합니다. AI 모델과 런타임은 사용자별 설정이 아니라 서버 전체 설정으로 관리됩니다.
+
+| 모드 | 실행 범위 |
+| --- | --- |
+| Full 로컬 AI RAG | 파일 관리, 파싱, 임베딩, 하이브리드 검색, 쿼리 처리, 로컬 RAG 답변 생성 |
+| Hybrid/Search AI | 답변 생성 LLM을 제외한 파일 관리, 파싱, 임베딩, 하이브리드 검색 |
+| 기본 모드 | 파일 관리만 사용 |
+
+Full 모드에서 운영자가 선택하는 항목은 `speed`, `balanced`, `quality` 중 하나입니다. 도토리가 탐지한 하드웨어를 기준으로 모델, 백엔드, 양자화, 컨텍스트 길이, 동시성, 메모리 정책을 내부에서 결정합니다. GGUF 및 RAM 오프로딩 구성은 `llama.cpp`를 사용하고, 호환되는 NVIDIA GPU 또는 클러스터 구성은 vLLM을 사용할 수 있습니다.
+
+## 빠른 시작
+
+### 요구 사항
 
 - Docker Engine 또는 Docker Desktop
 - Docker Compose v2
+- Python 3
 - Git
-- 모델 다운로드에 필요한 Hugging Face token
+- vLLM GPU 런타임 사용 시 NVIDIA 드라이버와 NVIDIA Container Toolkit
+- 선택한 모델이 인증을 요구할 경우 Hugging Face 토큰
 
-Windows에서는 Docker Desktop의 WSL2 backend 사용을 권장합니다.
+Windows에서는 Docker Desktop의 WSL2 백엔드를 권장합니다.
 
-## 빠른 시작
+### 설치 프로그램 실행
 
 ```bash
 git clone https://github.com/smallwanderer/dotori.git
 cd dotori
-cp .env.example .env
-docker compose up -d --build
-docker compose exec app python manage.py createsuperuser
+python install.py
 ```
 
-접속:
-
-```text
-http://localhost/
-```
-
-관리자 페이지:
-
-```text
-http://localhost/admin/
-```
-
-Windows 또는 로컬 개발 환경:
-
-```bash
-cp .env.example .env.dev
-docker compose -f docker-compose.dev.yml up -d --build
-```
-
-접속:
+설치 프로그램은 `.env.dev`를 만들고, 서버 하드웨어를 탐지한 뒤, 선택한 모드에 필요한 서비스를 빌드하고 RAG 런타임을 설정합니다. 개발 환경 접속 주소는 다음과 같습니다.
 
 ```text
 http://localhost:8888/
 ```
 
-서버와 Windows 환경별 자세한 실행 순서는 [WALKTHROUGH.md](WALKTHROUGH.md)를 참고하세요.
-
-## 주요 설정
-
-대부분의 설정은 `.env` 또는 `.env.dev`에서 변경합니다.
-
-| 변수 | 설명 |
-| --- | --- |
-| `DJANGO_SECRET_KEY` | Django secret key. 실제 운영에서는 반드시 변경해야 합니다. |
-| `DJANGO_ALLOWED_HOSTS` | 접속을 허용할 도메인 또는 IP |
-| `DJANGO_CSRF_TRUSTED_ORIGINS` | 브라우저 요청을 신뢰할 origin |
-| `NGINX_SERVER_NAME` | Nginx가 요청을 받을 서버 이름. 개발 환경 기본값은 `_` |
-| `LETSENCRYPT_DOMAIN` | Let’s Encrypt 인증서를 발급받고 Nginx 인증서 경로에서 사용할 도메인 |
-| `LETSENCRYPT_EMAIL` | Let’s Encrypt 인증서 발급/만료 알림 이메일 |
-| `DJANGO_SECURE_PROXY_SSL_HEADER` | Nginx HTTPS 프록시 헤더를 Django가 신뢰할지 여부 |
-| `DJANGO_SECURE_SSL_REDIRECT` | Django 레벨 HTTPS 리다이렉트 여부 |
-| `DJANGO_SESSION_COOKIE_SECURE` | 세션 쿠키를 HTTPS 전용으로 설정 |
-| `DJANGO_CSRF_COOKIE_SECURE` | CSRF 쿠키를 HTTPS 전용으로 설정 |
-| `POSTGRES_*` | PostgreSQL 접속 정보 |
-| `HF_TOKEN` | 모델 다운로드에 필요한 Hugging Face token |
-| `EMBEDDING_MODEL` | 임베딩 모델. 기본값은 BGE-M3 |
-| `EMBEDDING_DISTANCE_STRATEGY` | dense 검색 거리 계산 방식 |
-| `EMBEDDING_HYBRID_DENSE_WEIGHT` | dense score 가중치 |
-| `EMBEDDING_HYBRID_SPARSE_WEIGHT` | sparse score 가중치 |
-| `CONTEXTUAL_COMPRESSION_ENABLED` | evidence 압축 사용 여부 |
-| `RAG_SEARCH_TOP_K` | RAG에서 기본으로 검색할 문서 수 |
-| `RAG_RETRIEVAL_THRESHOLD` | RAG dense similarity threshold |
-| `RAG_EVIDENCE_LIMIT` | RAG prompt에 넣을 최대 근거 수 |
-| `QUERY_FRONTEND_MODE` | Query parser 사용 방식. 기본은 passthrough |
-
-운영 HTTPS 인증서는 별도 [docker-compose.certbot.yml](docker-compose.certbot.yml)로 발급/갱신합니다. Nginx는 `./data/certbot/www`와 `./data/certbot/conf`만 공유해서 challenge 파일과 인증서를 읽습니다. 일반적인 단일 도메인 배포에서는 `NGINX_SERVER_NAME`과 `LETSENCRYPT_DOMAIN`을 같은 값으로 설정합니다.
-
-## 테스트
-
-CI와 같은 unit test:
+컨테이너 실행 후 관리자 계정을 생성합니다.
 
 ```bash
-docker compose -f docker-compose.dev.yml run --rm celery-core-worker python -m pytest -m "unit"
+docker compose -f docker-compose.dev.yml exec app python manage.py createsuperuser
 ```
 
-웹/API 중심 개발 테스트:
+다음 실행부터는 `python install.py --run`을 사용하며 Windows에서는 `start.bat`도 사용할 수 있습니다. 로컬 RAG 모델이나 런타임을 명시적으로 변경하려면 다음 명령을 실행합니다.
+
+```bash
+python install.py --change-llm
+```
+
+도메인, HTTPS, 운영용 Compose, 환경별 설치 절차는 [WALKTHROUGH.md](WALKTHROUGH.md)를 따르세요.
+
+## 시스템 구조
+
+```text
+브라우저 / 동기화 클라이언트
+        |
+      Nginx
+        |
+   Django app -------------- PostgreSQL + pgvector
+        |
+      Redis
+        |
+        +-- embedding-worker  [parse, embed]
+        +-- search-worker     [search]
+        +-- query-worker      [query]
+        +-- rag-worker        [rag] ---- 선택된 로컬 런타임
+                                          |-- llama-rag (llama.cpp)
+                                          `-- vllm-rag  (vLLM)
+```
+
+Django는 웹 애플리케이션, API, 작업 등록을 담당합니다. 파싱, 임베딩, 검색, 쿼리 처리, 답변 생성은 전용 Celery 큐에서 실행합니다. RAG 런타임은 선택된 하나만 활성 상태로 유지해야 합니다. 확정된 설정은 `data/config/llm_runtime.json`에 저장되며 일반 RAG 요청은 하드웨어를 다시 탐지하거나 모델을 다시 선택하지 않고 이 설정을 사용합니다.
+
+## 자주 사용하는 명령
+
+```bash
+# 개발 스택 시작 또는 다시 빌드
+docker compose -f docker-compose.dev.yml up --build
+
+# 데이터베이스 마이그레이션
+docker compose -f docker-compose.dev.yml exec app python manage.py migrate
+
+# 개발 이미지에서 전체 테스트 실행
+docker compose -f docker-compose.dev.yml exec app python -m pytest
+
+# 특정 서비스 로그 확인
+docker compose -f docker-compose.dev.yml logs -f rag-worker
+
+# 저장된 LLM 런타임 설정 확인
+docker compose -f docker-compose.dev.yml exec app \
+  python manage.py inspect_llm_runtime
+```
+
+모델 카탈로그와 런타임 관리 명령은 [LLM 설치 서비스 운영자 가이드](docs/llm_installation_docs/user-guide.md)를 참고하세요.
+
+## 데이터와 설정
+
+- `.env.dev`는 개발 스택, `.env`는 운영 지향 스택의 설정 파일입니다.
+- `data/uploads/`, `data/pgdata/`, `data/logs/`, `data/config/`에는 로컬 영속 데이터가 저장되며 Git에 커밋하면 안 됩니다.
+- `data/config/llm_runtime.json`은 로컬 RAG 설정 과정에서 생성되는 서버 단위 런타임 기준 파일입니다.
+- 기본 임베딩 구성은 1024차원 dense 벡터와 sparse lexical weight를 함께 사용하는 BGE-M3입니다.
+- 고급 검색 및 worker 설정은 `.env.example`에 있습니다. 특정 부하를 평가하는 경우가 아니라면 기본값으로 시작하세요.
+
+## 개발
+
+저장소의 주요 애플리케이션 경계는 `files`, `accounts`, `document_ai`입니다. 무거운 AI 작업은 processing, embedding, query-understanding, search, RAG, 설치·런타임 모듈로 분리되어 있습니다. 운영 지향 애플리케이션 이미지에는 테스트 의존성이 없으므로 테스트는 `docker-compose.dev.yml`에서 실행해야 합니다.
+
+변경 사항을 제출하기 전에 관련 모듈의 집중 테스트를 실행하고, 가능하면 전체 테스트도 실행합니다.
 
 ```bash
 docker compose -f docker-compose.dev.yml exec app python manage.py check
-docker compose -f docker-compose.dev.yml exec app python -m pytest --reuse-db files/tests.py tests/test_rag_flow.py
+docker compose -f docker-compose.dev.yml exec app python -m pytest
 ```
 
-웹 `app` 컨테이너는 AI 의존성을 가볍게 유지하므로 Docling 기반 테스트는 `celery-core-worker`에서 실행해야 합니다.
+## 프로젝트 상태
 
-## 운영 메모
+도토리는 현재 개발 중입니다. 현 소스에는 서버 단위 LLM 설치 서비스, 하이브리드 검색, 로컬·외부 RAG 엔드포인트 지원, 문서 작업 공간이 포함되어 있습니다. 운영 배포 전에는 TLS, 백업, 모니터링, 저장 공간, 모델 라이선스, 하드웨어 요구 사항을 환경에 맞게 검토해야 합니다.
 
-- 업로드 파일과 DB 데이터는 `data/` 아래에 저장됩니다.
-- 기본 Compose 파일은 운영에 가까운 `docker-compose.yml`입니다.
-- 개발용 Compose 파일은 `docker-compose.dev.yml`이며 `http://localhost:8888/`에서 실행됩니다.
-- RAG는 로컬 `llama-rag` 컨테이너를 사용합니다.
-- Query parser는 별도 `vllm-query-parser` runtime을 사용하는 구성을 전제로 합니다.
-- LLM의 reasoning/thinking 출력은 기본적으로 요청하거나 저장하지 않습니다. 자세한 내용은 [LLM_REASONING_POLICY.md](LLM_REASONING_POLICY.md)를 참고하세요.
-- QueryDSL parser는 실험 기능입니다. 기본 검색/RAG 경로는 semantic query passthrough를 사용합니다.
+## 라이선스
 
-## 0.1.1 요약
-
-- 사용자 설정 화면 및 화면 언어 저장 기능 추가
-- 파일 목록, 상세, 업로드 화면의 한국어/영어 전환 범위 확대
-- 파일/폴더별 AI 처리 제외 및 재허용 UI 추가
-- 휴지통 이동 시 AI 처리 대상에서 제외하고 복원 후에도 자동 재처리하지 않도록 조정
-- Shelf-Sync 업로드 API에서 `ai_processing_enabled` 옵션 지원
-- AI 처리 제외 파일의 파싱/임베딩 큐잉 및 복구 큐잉 방지
-
-## 0.1.0-alpha 요약
-
-- Full-stack RAG 통합
-- Hybrid retriever 개선
-- Evidence contextual compression 추가
-- 서버 측 sync API 기반 추가
-- Django admin 운영 모니터링 확장
-- LLM reasoning/thinking 출력 정책 문서화
-
-## 앞으로의 계획
-
-- golden set 기반 검색 성능 평가 확대
-- RAG 답변 품질 평가와 citation 이동 개선
-- Text2SQL workflow 확장
-- QueryDSL parser 평가 후 선택적 활성화
-- 운영 보안, 백업, 모니터링 문서화
+[LICENSE](LICENSE)를 참고하세요.
