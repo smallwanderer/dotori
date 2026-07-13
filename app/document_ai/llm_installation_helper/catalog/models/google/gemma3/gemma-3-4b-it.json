@@ -1,0 +1,35 @@
+{
+    "id": "gemma-3-4b-it",
+    "display_name": "Gemma3 4B Instruct",
+    "description": "Google's lightweight multimodal instruction-tuned model.",
+    "license": "gemma",
+    "model_metadata": {
+        "architecture": "gemma3",
+        "parameter_count_b": 4.0,
+        "max_context_length": 131072,
+        "hidden_size": 2304,
+        "num_hidden_layers": 26,
+        "num_attention_heads": 8,
+        "num_key_value_heads": 4,
+        "extra": {
+            "metadata_source": "autoconfig:google/gemma-3-4b-it",
+            "root_architecture": "gemma3"
+        }
+    },
+    "capabilities": {
+        "modalities": [
+            "text",
+            "vision"
+        ],
+        "tasks": [
+            "rag",
+            "chat",
+            "reasoning",
+            "code"
+        ],
+        "languages": [
+            "ko",
+            "en"
+        ]
+    }
+}

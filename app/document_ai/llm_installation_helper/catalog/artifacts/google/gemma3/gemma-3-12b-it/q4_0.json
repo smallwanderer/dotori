@@ -1,0 +1,30 @@
+{
+    "id": "gemma-3-12b-it-qat-q4_0-gguf",
+    "model_id": "gemma-3-12b-it",
+    "priority": 80,
+    "display_name": "Gemma3 12B Instruct Q4_0 GGUF",
+    "description": "QAT Q4_0 artifact served with llama.cpp.",
+    "hf": {
+        "repo_id": "google/gemma-3-12b-it-qat-q4_0-gguf"
+    },
+    "artifact": {
+        "format": "gguf",
+        "quant": "Q4_0",
+        "filename": "gemma-3-12b-it-q4_0.gguf",
+        "disk_required_mb": 0
+    },
+    "backend_profiles": [
+        "llamacpp-cpu",
+        "llamacpp-gpu-offload"
+    ],
+    "policy": {
+        "tags": [
+            "q4_0",
+            "gguf",
+            "llama.cpp",
+            "cpu",
+            "rag",
+            "ram-offload"
+        ]
+    }
+}

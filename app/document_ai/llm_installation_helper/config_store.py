@@ -41,9 +41,13 @@ def _write_llama_runtime_args(config_path: Path, *, target, profile) -> Path | N
     hf = entry.get("hf") or {}
     artifact = entry.get("artifact") or {}
     hf_repo = str(hf.get("repo_id") or "")
-    if artifact.get("quant"):
-        hf_repo = f"{hf_repo}:{artifact['quant']}"
-    args = ["--hf-repo", hf_repo]
+    filename = artifact.get("filename")
+    if filename:
+        args = ["--hf-repo", hf_repo, "--hf-file", str(filename)]
+    else:
+        if artifact.get("quant"):
+            hf_repo = f"{hf_repo}:{artifact['quant']}"
+        args = ["--hf-repo", hf_repo]
     args.extend(
         [
             "--alias",

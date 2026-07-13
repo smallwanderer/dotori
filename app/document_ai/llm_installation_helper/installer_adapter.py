@@ -129,14 +129,24 @@ def _fallback_load_llm_models():
     artifact_dir = os.path.join(catalog_dir, "artifacts")
     models = []
     try:
-        model_filenames = sorted(name for name in os.listdir(model_dir) if name.endswith(".json"))
-        artifact_filenames = sorted(name for name in os.listdir(artifact_dir) if name.endswith(".json"))
+        model_filenames = sorted(
+            os.path.join(root, name)
+            for root, _, files in os.walk(model_dir)
+            for name in files
+            if name.endswith(".json")
+        )
+        artifact_filenames = sorted(
+            os.path.join(root, name)
+            for root, _, files in os.walk(artifact_dir)
+            for name in files
+            if name.endswith(".json")
+        )
     except OSError:
         return []
     model_payloads = {}
     for filename in model_filenames:
         try:
-            with open(os.path.join(model_dir, filename), "r", encoding="utf-8") as f:
+            with open(filename, "r", encoding="utf-8") as f:
                 payload = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
@@ -146,7 +156,7 @@ def _fallback_load_llm_models():
 
     for filename in artifact_filenames:
         try:
-            with open(os.path.join(artifact_dir, filename), "r", encoding="utf-8") as f:
+            with open(filename, "r", encoding="utf-8") as f:
                 payload = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
@@ -201,6 +211,9 @@ def _fallback_load_llm_models():
         runtime_overhead_mb = 512
         runtime = "vllm" if artifact_format in {"awq", "gptq", "safetensors"} else "llama.cpp"
         device = "GPU" if runtime == "vllm" else "CPU"
+        # llama.cpp artifacts can serve from CPU-only or GPU-offload, unlike
+        # vLLM which requires a GPU; reflect that in the displayed device label.
+        device_label = "GPU" if runtime == "vllm" else "GPU/CPU"
         base_memory_mb = weight_mb + kv_cache_mb + runtime_overhead_mb
         if device == "GPU":
             min_memory_mb = base_memory_mb
@@ -216,7 +229,7 @@ def _fallback_load_llm_models():
                 "model": payload.get("display_name") or payload["id"],
                 "quant": artifact.get("quant", ""),
                 "size": f"{parameters:g}B" if isinstance(parameters, (int, float)) else "-",
-                "device": device,
+                "device": device_label,
                 "min_mem_mb": min_memory_mb,
                 "rec_mem_mb": recommended_memory_mb,
                 "ram_mb": required_ram_mb,
@@ -275,7 +288,7 @@ def _fallback_evaluate_install_model_fit(model, hardware):
     return "FIT"
 
 def detect_hardware():
-    print_header("시스템 사양 감지 (Hardware Detection)")
+    print_header("Hardware Detection")
     try:
         from document_ai.llm_installation_helper.runtime_probe import probe_server_runtime
         profile = probe_server_runtime()
@@ -293,22 +306,22 @@ def detect_hardware():
             pass
 
         if profile.docker_available:
-            print(f"• Docker: {BOLD}{GREEN}설치됨{RESET}")
+            print(f"• Docker: {BOLD}{GREEN}Available{RESET}")
         else:
-            print(f"• Docker: {BOLD}{RED}감지되지 않음 (Docker Desktop이 실행 중인지 확인해 주세요.){RESET}")
+            print(f"• Docker: {BOLD}{RED}Not detected (verify that Docker Desktop is running){RESET}")
 
         if profile.has_gpu:
             if profile.gpu_count > 1:
                 gpu_details = ", ".join(f"{profile.gpu_name} ({format_mb(vram)})" for vram in (profile.gpu_vram_list or []))
-                print(f"• GPU: {BOLD}{GREEN}GPU {profile.gpu_count}개 감지됨 ({gpu_details}){RESET}")
+                print(f"• GPU: {BOLD}{GREEN}{profile.gpu_count} GPUs detected ({gpu_details}){RESET}")
             else:
-                print(f"• GPU: {BOLD}{GREEN}GPU 감지됨 ({profile.gpu_name}, {format_mb(profile.gpu_vram_mb)}){RESET}")
+                print(f"• GPU: {BOLD}{GREEN}Detected ({profile.gpu_name}, {format_mb(profile.gpu_vram_mb)}){RESET}")
             if profile.gpu_compute_cap:
                 print(f"• GPU Compute Cap: {BOLD}{profile.gpu_compute_cap}{RESET}")
             if profile.gpu_mem_bandwidth_gb_s:
                 print(f"• GPU Bandwidth: {BOLD}{profile.gpu_mem_bandwidth_gb_s:.1f} GB/s{RESET}")
         else:
-            print(f"• GPU: {BOLD}{YELLOW}GPU 없음 (CPU 모드로 구동됩니다.){RESET}")
+            print(f"• GPU: {BOLD}{YELLOW}Not detected (CPU mode will be used){RESET}")
 
         return {
             "os": profile.platform,
@@ -333,13 +346,13 @@ def detect_hardware():
         except OSError:
             pass
         if hw["docker_installed"]:
-            print(f"• Docker: {BOLD}{GREEN}설치됨{RESET}")
+            print(f"• Docker: {BOLD}{GREEN}Available{RESET}")
         else:
-            print(f"• Docker: {BOLD}{RED}감지되지 않음 (Docker Desktop이 실행 중인지 확인해 주세요.){RESET}")
+            print(f"• Docker: {BOLD}{RED}Not detected (verify that Docker Desktop is running){RESET}")
         if hw["gpu_detected"]:
-            print(f"• GPU: {BOLD}{GREEN}GPU 감지됨 ({hw['gpu_name']}, {format_mb(hw['gpu_vram_mb'])}){RESET}")
+            print(f"• GPU: {BOLD}{GREEN}Detected ({hw['gpu_name']}, {format_mb(hw['gpu_vram_mb'])}){RESET}")
         else:
-            print(f"• GPU: {BOLD}{YELLOW}GPU 없음 (CPU 모드로 구동됩니다.){RESET}")
+            print(f"• GPU: {BOLD}{YELLOW}Not detected (CPU mode will be used){RESET}")
         return hw
 
 def detect_system_ram_mb():
@@ -368,7 +381,7 @@ def load_llm_models():
                 "model": entry.display_name,
                 "quant": entry.artifact.quant,
                 "size": f"{parameters:g}B" if isinstance(parameters, (int, float)) else "-",
-                "device": "GPU" if plan.backend_profile != "llamacpp-cpu" else "CPU",
+                "device": entry.device_label,
                 "min_mem_mb": plan.memory_estimate.logical_total_memory_mb,
                 "rec_mem_mb": max(plan.memory_placement.required_vram_per_gpu_mb, default=plan.memory_placement.required_ram_mb),
                 "ram_mb": plan.memory_placement.required_ram_mb,

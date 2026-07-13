@@ -15,6 +15,8 @@ from document_ai.llm_installation_helper.selection import (
     SelectionResult,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def _entry():
     data = {

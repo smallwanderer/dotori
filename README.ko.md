@@ -10,7 +10,7 @@
   <img src="https://github.com/user-attachments/assets/d240cf34-1dfb-462e-8366-3f0d3e4a435f" width="80%" alt="도토리 RAG 작업 공간">
 </p>
 
-영문 문서는 [README.md](README.md)를 참고하세요. 상세 설치 및 운영 절차는 [WALKTHROUGH.md](WALKTHROUGH.md)와 [LLM 설치 서비스 운영자 가이드](docs/llm_installation_docs/user-guide.md)에 있습니다.
+영문 문서는 [README.md](README.md)를 참고하세요. 상세 설치 및 운영 절차는 [WALKTHROUGH.md](WALKTHROUGH.md)에 있습니다.
 
 ## 주요 기능
 
@@ -56,16 +56,16 @@ cd dotori
 python install.py
 ```
 
-설치 프로그램은 `.env.dev`를 만들고, 서버 하드웨어를 탐지한 뒤, 선택한 모드에 필요한 서비스를 빌드하고 RAG 런타임을 설정합니다. 개발 환경 접속 주소는 다음과 같습니다.
+설치 프로그램은 `.env`를 만들고, 서버 하드웨어를 탐지한 뒤, `docker-compose.yml` 기준으로 선택한 모드에 필요한 서비스를 빌드하고 RAG 런타임을 설정합니다. 접속 주소는 다음과 같습니다.
 
 ```text
-http://localhost:8888/
+http://localhost/
 ```
 
 컨테이너 실행 후 관리자 계정을 생성합니다.
 
 ```bash
-docker compose -f docker-compose.dev.yml exec app python manage.py createsuperuser
+docker compose -f docker-compose.yml exec app python manage.py createsuperuser
 ```
 
 다음 실행부터는 `python install.py --run`을 사용하며 Windows에서는 `start.bat`도 사용할 수 있습니다. 로컬 RAG 모델이나 런타임을 명시적으로 변경하려면 다음 명령을 실행합니다.
@@ -74,7 +74,7 @@ docker compose -f docker-compose.dev.yml exec app python manage.py createsuperus
 python install.py --change-llm
 ```
 
-도메인, HTTPS, 운영용 Compose, 환경별 설치 절차는 [WALKTHROUGH.md](WALKTHROUGH.md)를 따르세요.
+도메인, HTTPS, 환경별 설치 절차는 [WALKTHROUGH.md](WALKTHROUGH.md)를 따르세요.
 
 ## 시스템 구조
 
@@ -100,28 +100,23 @@ Django는 웹 애플리케이션, API, 작업 등록을 담당합니다. 파싱,
 ## 자주 사용하는 명령
 
 ```bash
-# 개발 스택 시작 또는 다시 빌드
-docker compose -f docker-compose.dev.yml up --build
+# 설치 스택 시작 또는 다시 빌드
+docker compose -f docker-compose.yml up --build
 
 # 데이터베이스 마이그레이션
-docker compose -f docker-compose.dev.yml exec app python manage.py migrate
-
-# 개발 이미지에서 전체 테스트 실행
-docker compose -f docker-compose.dev.yml exec app python -m pytest
+docker compose -f docker-compose.yml exec app python manage.py migrate
 
 # 특정 서비스 로그 확인
-docker compose -f docker-compose.dev.yml logs -f rag-worker
+docker compose -f docker-compose.yml logs -f rag-worker
 
 # 저장된 LLM 런타임 설정 확인
-docker compose -f docker-compose.dev.yml exec app \
+docker compose -f docker-compose.yml exec app \
   python manage.py inspect_llm_runtime
 ```
 
-모델 카탈로그와 런타임 관리 명령은 [LLM 설치 서비스 운영자 가이드](docs/llm_installation_docs/user-guide.md)를 참고하세요.
-
 ## 데이터와 설정
 
-- `.env.dev`는 개발 스택, `.env`는 운영 지향 스택의 설정 파일입니다.
+- `.env`는 설치 프로그램이 관리하는 스택의 설정 파일이며, `.env.dev`는 개발 전용 실행에만 사용합니다.
 - `data/uploads/`, `data/pgdata/`, `data/logs/`, `data/config/`에는 로컬 영속 데이터가 저장되며 Git에 커밋하면 안 됩니다.
 - `data/config/llm_runtime.json`은 로컬 RAG 설정 과정에서 생성되는 서버 단위 런타임 기준 파일입니다.
 - 기본 임베딩 구성은 1024차원 dense 벡터와 sparse lexical weight를 함께 사용하는 BGE-M3입니다.
@@ -129,13 +124,13 @@ docker compose -f docker-compose.dev.yml exec app \
 
 ## 개발
 
-저장소의 주요 애플리케이션 경계는 `files`, `accounts`, `document_ai`입니다. 무거운 AI 작업은 processing, embedding, query-understanding, search, RAG, 설치·런타임 모듈로 분리되어 있습니다. 운영 지향 애플리케이션 이미지에는 테스트 의존성이 없으므로 테스트는 `docker-compose.dev.yml`에서 실행해야 합니다.
+저장소의 주요 애플리케이션 경계는 `files`, `accounts`, `document_ai`입니다. 무거운 AI 작업은 processing, embedding, query-understanding, search, RAG, 설치·런타임 모듈로 분리되어 있습니다. 운영 지향 애플리케이션 이미지에는 테스트 의존성이 없으므로 기본 Compose 파일의 `test` 프로필을 사용합니다.
 
 변경 사항을 제출하기 전에 관련 모듈의 집중 테스트를 실행하고, 가능하면 전체 테스트도 실행합니다.
 
 ```bash
-docker compose -f docker-compose.dev.yml exec app python manage.py check
-docker compose -f docker-compose.dev.yml exec app python -m pytest
+docker compose --profile test run --rm test python manage.py check
+docker compose --profile test run --rm test python -m pytest
 ```
 
 ## 프로젝트 상태

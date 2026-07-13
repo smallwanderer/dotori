@@ -23,7 +23,6 @@ if not RUNNING_IN_DOCKER:
 collect_ignore_glob = [
     "tests/manual_*.py",
     "tests/verify_*.py",
-    "tests/docling_*.py",
 ]
 
 

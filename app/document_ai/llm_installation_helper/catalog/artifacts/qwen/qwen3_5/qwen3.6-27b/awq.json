@@ -1,0 +1,28 @@
+{
+  "id": "qwen3.6-27b-awq",
+  "model_id": "qwen3.6-27b",
+  "priority": 94,
+  "display_name": "Qwen3.6 27B AWQ",
+  "description": "Pre-quantized AWQ 4-bit model served with vLLM.",
+  "hf": {
+    "repo_id": "cyankiwi/Qwen3.6-27B-AWQ-INT4"
+  },
+  "artifact": {
+    "format": "awq",
+    "quant": "AWQ-INT4",
+    "dtype": "int4",
+    "download_size_mb": 19496,
+    "disk_required_mb": 21500
+  },
+  "backend_profiles": [
+    "vllm-cuda"
+  ],
+  "policy": {
+    "tags": [
+      "awq",
+      "vllm",
+      "gpu",
+      "rag"
+    ]
+  }
+}

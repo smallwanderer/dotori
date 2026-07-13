@@ -284,10 +284,13 @@ def _planning_ram(profile: Any) -> int:
     return min(total, limit) if limit > 0 else total
 
 
-def _resolved_disk_required_mb(entry: Any) -> int:
-    multiplier = 1.10 if entry.artifact.format == "gguf" else 1.50
-    minimum = math.ceil(entry.artifact.download_size_mb * multiplier)
-    return max(int(entry.artifact.disk_required_mb or 0), minimum)
+def _resolved_disk_required_mb(entry: Any) -> int | None:
+    explicit_required = int(entry.artifact.disk_required_mb or 0)
+    if entry.artifact.download_size_mb:
+        return max(explicit_required, math.ceil(entry.artifact.download_size_mb))
+    if explicit_required:
+        return explicit_required
+    return None
 
 
 def convert_policy(priority_preset: str) -> PresetPolicy:
@@ -309,7 +312,7 @@ def convert_policy(priority_preset: str) -> PresetPolicy:
 def select_runtime(entry: Any, profile: Any) -> RuntimeChoice:
     artifact_format = str(entry.artifact.format).lower()
     declared = set(getattr(entry, "backend_profiles", []) or [])
-    if artifact_format in {"awq", "gptq", "safetensors"}:
+    if artifact_format in {"awq", "gptq", "safetensors", "compress-tensors"}:
         if "vllm-cuda" not in declared:
             return RuntimeChoice(
                 runtime="",
@@ -571,8 +574,10 @@ def _pool_fit(
     return "FIT", "All memory pools have safety headroom."
 
 
-def _disk_fit(entry: Any, profile: Any) -> tuple[str, str, int]:
+def _disk_fit(entry: Any, profile: Any) -> tuple[str, str, int | None]:
     required = _resolved_disk_required_mb(entry)
+    if required is None:
+        return "FIT", "Disk requirement is unknown.", None
     available = int(getattr(profile, "disk_free_mb", 0) or 0)
     if required > available:
         return (
@@ -948,7 +953,14 @@ def _plan_llamacpp(
             kv_cache_placement="vram",
         )
         layers = int(placement.gpu_layers or 0)
-    _, reason = _pool_fit(placement, profile, use_planning_capacity=True)
+    memory_status, memory_reason = _pool_fit(
+        placement,
+        profile,
+        use_planning_capacity=True,
+    )
+    disk_status, disk_reason, _ = _disk_fit(entry, profile)
+    status = _combine_status(memory_status, disk_status)
+    reason = f"{memory_reason} {disk_reason}".strip()
     return ServingPlan(
         artifact_id=entry.id,
         runtime="llama.cpp",
@@ -957,7 +969,7 @@ def _plan_llamacpp(
         device="CPU" if backend_profile == "llamacpp-cpu" else "GPU",
         candidate_type="Unavailable",
         offload="none",
-        fit_status="NOFIT",
+        fit_status=status,
         reason=reason,
         priority_preset=preset,
         context_length=4096,

@@ -43,10 +43,15 @@ app/.cache/
 app/.cache/huggingface/
 app/.pytest_cache/
 app/pytest-cache-files-*/
+.coverage
+coverage.xml
+htmlcov/
+.ruff_cache/
+.mypy_cache/
 *.pyc
 __pycache__/
 
-# local scratch / ad-hoc outputs
+# Local scratch / ad-hoc outputs
 response.json
 scratch.py
 app/tmp_*.js
@@ -54,6 +59,7 @@ app/tmp_*.js
 # AI Agent Meta-files
 .codex/
 .agents/
+.claude/
 task.md
 implementation_plan.md
 walkthrough.md
@@ -62,5 +68,10 @@ AGENTS.md
 codex_context_backup.md
 scratchpad.py
 
+
 # Legal
 legal/
+
+# Devs
+dev-docs/
+docker-compose.dev.yml

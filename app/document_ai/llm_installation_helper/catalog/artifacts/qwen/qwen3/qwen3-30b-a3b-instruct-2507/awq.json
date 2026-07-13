@@ -1,0 +1,28 @@
+{
+  "id": "qwen3-30b-a3b-instruct-2507-awq",
+  "model_id": "qwen3-30b-a3b-instruct-2507",
+  "priority": 94,
+  "display_name": "Qwen3 30B-A3B Instruct AWQ",
+  "description": "Pre-quantized AWQ 4-bit model served with vLLM.",
+  "hf": {
+    "repo_id": "cyankiwi/Qwen3-30B-A3B-Instruct-2507-AWQ-4bit"
+  },
+  "artifact": {
+    "format": "awq",
+    "quant": "AWQ-INT4",
+    "dtype": "int4",
+    "download_size_mb": 17256,
+    "disk_required_mb": 19000
+  },
+  "backend_profiles": [
+    "vllm-cuda"
+  ],
+  "policy": {
+    "tags": [
+      "awq",
+      "vllm",
+      "gpu",
+      "rag"
+    ]
+  }
+}

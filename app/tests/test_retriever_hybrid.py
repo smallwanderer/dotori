@@ -233,15 +233,9 @@ def test_retriever_hybrid_reranks_by_sparse_score(monkeypatch):
         "objects",
         FakeDocumentChunkManager([row.chunk for row in rows]),
     )
-    monkeypatch.setattr(
-        retriever_module,
-        "settings",
-        SimpleNamespace(
-            EMBEDDING_HYBRID_DENSE_WEIGHT=0.2,
-            EMBEDDING_HYBRID_SPARSE_WEIGHT=0.8,
-            EMBEDDING_HYBRID_CANDIDATE_MULTIPLIER=10,
-        ),
-    )
+    monkeypatch.setattr(retriever_module.settings, "EMBEDDING_HYBRID_DENSE_WEIGHT", 0.2, raising=False)
+    monkeypatch.setattr(retriever_module.settings, "EMBEDDING_HYBRID_SPARSE_WEIGHT", 0.8, raising=False)
+    monkeypatch.setattr(retriever_module.settings, "EMBEDDING_HYBRID_CANDIDATE_MULTIPLIER", 10, raising=False)
     monkeypatch.setattr(
         VectorRetriever,
         "_get_distance_func",

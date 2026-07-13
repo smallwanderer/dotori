@@ -1,0 +1,36 @@
+{
+    "id": "gemma-4-31b-it-qat-q4_0-gguf",
+    "model_id": "gemma-4-31b-it",
+    "enabled": true,
+    "priority": 80,
+    "display_name": "Gemma 4 31B Instruct",
+    "hf": {
+        "repo_id": "unsloth/gemma-4-31b-it-GGUF"
+    },
+    "artifact": {
+        "format": "gguf",
+        "filename": "gemma-4-31B-it-Q4_0.gguf",
+        "quant": "Q4_0",
+        "download_size_mb": 16536,
+        "disk_required_mb": 16536
+    },
+    "backend_profiles": [
+        "llamacpp-cpu",
+        "llamacpp-gpu-offload"
+    ],
+    "policy": {
+        "visible": true,
+        "allow_auto_select": true,
+        "allow_manual_select": true,
+        "safety": "safe",
+        "tags": [
+            "q4_0",
+            "gguf",
+            "llama.cpp",
+            "cpu",
+            "rag",
+            "ram-offload"
+        ]
+    },
+    "description": ""
+}

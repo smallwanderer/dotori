@@ -780,7 +780,7 @@ def _probe_llamacpp_kv_offload() -> tuple[bool, str]:
     return True, "bundled-image-default"
 
 
-def _probe_docker_services() -> list[dict]:
+def probe_docker_services() -> list[dict]:
     try:
         result = subprocess.run(
             ["docker", "compose", "ps", "--format", "json"],
@@ -902,7 +902,7 @@ def probe_server_runtime() -> ServerRuntimeProfile:
         ),
         docker_available=docker_available,
         docker_compose_available=docker_compose_available,
-        docker_services=_probe_docker_services() if docker_compose_available else [],
+        docker_services=probe_docker_services() if docker_compose_available else [],
         gpu_probe_result=gpu_res,
     )
 

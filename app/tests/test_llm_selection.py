@@ -1,9 +1,13 @@
 from types import SimpleNamespace
 
+import pytest
+
 from document_ai.llm_installation_helper.selection import (
     SelectionCandidate,
     select_catalog_model,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def _candidate(

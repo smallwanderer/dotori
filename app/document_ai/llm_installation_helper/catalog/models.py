@@ -1,8 +1,10 @@
 from typing import Any, Literal
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class HfSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     repo_id: str
     revision: str = "main"
     gated: bool = False
@@ -10,16 +12,20 @@ class HfSpec(BaseModel):
 
 
 class ArtifactSpec(BaseModel):
-    format: Literal["gguf", "safetensors", "awq", "gptq"]
+    model_config = ConfigDict(extra="forbid")
+
+    format: Literal["gguf", "safetensors", "awq", "gptq", "compress-tensors"]
     filename: str | None = None
     quant: str
     dtype: str | None = None
 
-    download_size_mb: int = Field(gt=0)
+    download_size_mb: float | None = Field(default=None, gt=0)
     disk_required_mb: int = 0
 
 
 class ModelMetadataSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     architecture: str | None = None
 
     parameter_count_b: float = Field(gt=0)
@@ -49,6 +55,8 @@ class ModelMetadataSpec(BaseModel):
 
 
 class CapabilitySpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     modalities: list[Literal["text", "vision", "audio", "embedding"]] = Field(
         default_factory=lambda: ["text"]
     )
@@ -56,6 +64,8 @@ class CapabilitySpec(BaseModel):
     languages: list[str] = Field(default_factory=list)
 
 class PolicySpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     visible: bool = True
     allow_auto_select: bool = True
     allow_manual_select: bool = True
@@ -64,6 +74,8 @@ class PolicySpec(BaseModel):
 
 
 class ModelCatalogEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     display_name: str
     description: str = ""
@@ -73,6 +85,8 @@ class ModelCatalogEntry(BaseModel):
 
 
 class ArtifactCatalogEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     model_id: str
     enabled: bool = True
@@ -93,6 +107,7 @@ class ArtifactCatalogEntry(BaseModel):
             "safetensors": {"vllm-cuda"},
             "awq": {"vllm-cuda"},
             "gptq": {"vllm-cuda"},
+            "compress-tensors": {"vllm-cuda"},
         }
         profiles = self.backend_profiles
         if len(profiles) != len(set(profiles)):
@@ -128,6 +143,18 @@ class RAGModelCatalogEntry(BaseModel):
     @property
     def source(self) -> str:
         return "catalog/models+artifacts"
+
+    @property
+    def device_label(self) -> str:
+        """Declared CPU/GPU capability for this artifact, independent of the
+        current machine's hardware (e.g. GGUF artifacts that support both
+        CPU-only and GPU-offload serving report "GPU/CPU")."""
+        profiles = set(self.backend_profiles)
+        has_cpu = "llamacpp-cpu" in profiles
+        has_gpu = bool(profiles & {"llamacpp-gpu-offload", "vllm-cuda"})
+        if has_cpu and has_gpu:
+            return "GPU/CPU"
+        return "GPU" if has_gpu else "CPU"
 
 
 class RAGModelCatalogDocument(BaseModel):

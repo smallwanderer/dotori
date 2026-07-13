@@ -1,0 +1,36 @@
+{
+    "id": "gemma-4-12b-it",
+    "display_name": "Gemma 4 12B Instruct",
+    "license": "gemma",
+    "model_metadata": {
+        "architecture": "gemma4_unified_text",
+        "parameter_count_b": 11.96,
+        "max_context_length": 262144,
+        "hidden_size": 3840,
+        "num_hidden_layers": 48,
+        "num_attention_heads": 16,
+        "num_key_value_heads": 8,
+        "extra": {
+            "metadata_source": "autoconfig:google/gemma-4-12b-it",
+            "root_architecture": "gemma4_unified"
+        }
+    },
+    "capabilities": {
+        "modalities": [
+            "text",
+            "vision",
+            "audio"
+        ],
+        "tasks": [
+            "rag",
+            "chat",
+            "reasoning",
+            "code"
+        ],
+        "languages": [
+            "ko",
+            "en"
+        ]
+    },
+    "description": ""
+}

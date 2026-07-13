@@ -1,0 +1,28 @@
+{
+  "id": "qwen2.5-14b-instruct-q4_k_m",
+  "model_id": "qwen2.5-14b-instruct",
+  "priority": 90,
+  "display_name": "Qwen2.5 14B Instruct Q4_K_M",
+  "description": "GGUF artifact for standalone CPU, GPU full offload, or RAM spill serving.",
+  "hf": {
+    "repo_id": "Qwen/Qwen2.5-14B-Instruct-GGUF"
+  },
+  "artifact": {
+    "format": "gguf",
+    "quant": "Q4_K_M",
+    "download_size_mb": 8571,
+    "disk_required_mb": 9500
+  },
+  "backend_profiles": [
+    "llamacpp-gpu-offload",
+    "llamacpp-cpu"
+  ],
+  "policy": {
+    "tags": [
+      "gguf",
+      "q4",
+      "rag",
+      "ram-offload"
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+{
+    "id": "gemma-4-26b-a4b-it",
+    "display_name": "Gemma 4 26B-A4B Instruct",
+    "license": "gemma",
+    "model_metadata": {
+        "architecture": "gemma4_text",
+        "parameter_count_b": 26.544,
+        "active_parameter_count_b": 4.0,
+        "is_moe": true,
+        "max_context_length": 262144,
+        "hidden_size": 2816,
+        "num_hidden_layers": 30,
+        "num_attention_heads": 16,
+        "num_key_value_heads": 8,
+        "head_dim": 256,
+        "extra": {
+            "metadata_source": "autoconfig:google/gemma-4-26B-A4B-it",
+            "root_architecture": "gemma4",
+            "num_experts": 128,
+            "top_k_experts": 8
+        }
+    },
+    "capabilities": {
+        "modalities": [
+            "text",
+            "vision"
+        ],
+        "tasks": [
+            "rag",
+            "chat",
+            "reasoning",
+            "code"
+        ],
+        "languages": [
+            "ko",
+            "en"
+        ]
+    },
+    "description": ""
+}

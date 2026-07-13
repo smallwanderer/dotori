@@ -1,3 +1,4 @@
+import pytest
 from django.core import mail
 from django.template.loader import render_to_string
 from django.test import TestCase, override_settings
@@ -6,6 +7,8 @@ from django.urls import reverse
 from accounts.forms import UserRegistrationForm
 from accounts.models import User
 from accounts.services import send_account_activation_email
+
+pytestmark = pytest.mark.unit
 
 
 class LegalAgreementTests(TestCase):

@@ -1,0 +1,28 @@
+{
+  "id": "qwen2.5-32b-instruct-awq",
+  "model_id": "qwen2.5-32b-instruct",
+  "priority": 94,
+  "display_name": "Qwen2.5 32B Instruct AWQ",
+  "description": "Pre-quantized AWQ 4-bit model served with vLLM.",
+  "hf": {
+    "repo_id": "Qwen/Qwen2.5-32B-Instruct-AWQ"
+  },
+  "artifact": {
+    "format": "awq",
+    "quant": "AWQ-INT4",
+    "dtype": "int4",
+    "download_size_mb": 18433,
+    "disk_required_mb": 20500
+  },
+  "backend_profiles": [
+    "vllm-cuda"
+  ],
+  "policy": {
+    "tags": [
+      "awq",
+      "vllm",
+      "gpu",
+      "rag"
+    ]
+  }
+}

@@ -18,13 +18,13 @@ from document_ai.llm_installation_helper.planner import (
     _place_cpu,
     _pool_fit,
     _resolve_llamacpp_batch_pair,
+    assess_catalog_entry,
     build_serving_plan,
     estimate_model_memory,
     select_runtime,
 )
 from document_ai.llm_installation_helper.router import (
     LLMRuntimeNotConfigured,
-    ServerRAGTarget,
     get_configured_server_rag_target,
     resolve_server_rag_target,
     target_from_persisted_config,
@@ -76,7 +76,7 @@ def test_catalog_loads_structured_entries():
     catalog = get_rag_model_catalog()
 
     assert {entry.id for entry in catalog} >= {GGUF_MODEL_ID, AWQ_MODEL_ID, BF16_MODEL_ID}
-    assert {entry.model_id for entry in catalog} == {"qwen2.5-7b-instruct"}
+    assert "qwen2.5-7b-instruct" in {entry.model_id for entry in catalog}
 
 
 def test_catalog_rejects_artifact_with_unknown_model_reference():
@@ -373,6 +373,14 @@ def test_disk_headroom_produces_risky_status():
 
     assert plan.fit_status == "RISKY"
     assert "15% headroom" in plan.reason
+
+
+def test_disk_requirement_prefers_catalog_value_over_policy_multiplier():
+    entry = get_catalog_entry(AWQ_MODEL_ID)
+
+    assessment = assess_catalog_entry(entry, _profile(ram_mb=32768, gpu_vram_mb=24000))
+
+    assert assessment.disk_required_mb == entry.artifact.disk_required_mb
 
 
 def test_router_uses_llamacpp_on_cpu_only_host():

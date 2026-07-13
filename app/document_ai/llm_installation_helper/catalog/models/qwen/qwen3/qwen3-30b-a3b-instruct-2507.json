@@ -1,0 +1,26 @@
+{
+  "id": "qwen3-30b-a3b-instruct-2507",
+  "display_name": "Qwen3 30B-A3B Instruct",
+  "description": "Qwen3 30B Mixture of Experts (MoE) model for document RAG and chat.",
+  "license": "apache-2.0",
+  "model_metadata": {
+    "architecture": "qwen3",
+    "parameter_count_b": 30.0,
+    "active_parameter_count_b": 3.0,
+    "is_moe": true,
+    "max_context_length": 262144,
+    "hidden_size": 2048,
+    "num_hidden_layers": 48,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 4,
+    "extra": {
+      "metadata_source": "autoconfig:Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "root_architecture": "qwen3"
+    }
+  },
+  "capabilities": {
+    "modalities": ["text"],
+    "tasks": ["rag", "chat", "summarization"],
+    "languages": ["ko", "en"]
+  }
+}

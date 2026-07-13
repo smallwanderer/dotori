@@ -1,0 +1,35 @@
+{
+    "id": "gemma-4-31b-it",
+    "display_name": "Gemma 4 31B Instruct",
+    "license": "gemma",
+    "model_metadata": {
+        "architecture": "gemma4_text",
+        "parameter_count_b": 32.682,
+        "max_context_length": 262144,
+        "hidden_size": 5376,
+        "num_hidden_layers": 60,
+        "num_attention_heads": 32,
+        "num_key_value_heads": 16,
+        "extra": {
+            "metadata_source": "autoconfig:google/gemma-4-31B-it",
+            "root_architecture": "gemma4"
+        }
+    },
+    "capabilities": {
+        "modalities": [
+            "text",
+            "vision"
+        ],
+        "tasks": [
+            "rag",
+            "chat",
+            "reasoning",
+            "code"
+        ],
+        "languages": [
+            "ko",
+            "en"
+        ]
+    },
+    "description": ""
+}

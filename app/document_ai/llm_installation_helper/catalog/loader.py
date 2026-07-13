@@ -19,7 +19,7 @@ def _load_entries(directory: Path, schema):
     entries = []
     if not directory.is_dir():
         return entries
-    for json_file in sorted(directory.glob("*.json")):
+    for json_file in sorted(directory.rglob("*.json")):
         try:
             with json_file.open("r", encoding="utf-8") as f:
                 payload = json.load(f)

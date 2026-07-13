@@ -37,7 +37,8 @@ def catalog_rows(profile, *, query: str = "") -> list[dict]:
             if placement is not None
             else 0
         )
-        device = "GPU" if assessment.backend_profile != "llamacpp-cpu" else "CPU"
+        is_gpu_backend = assessment.backend_profile != "llamacpp-cpu"
+        device = entry.device_label
         rows.append(
             {
                 "index": index,
@@ -80,7 +81,7 @@ def catalog_rows(profile, *, query: str = "") -> list[dict]:
                 # ── extras ────────────────────────────────────────────────────
                 "priority": entry.priority,
                 "safety": entry.policy.safety,
-                "speed": "fast" if device == "GPU" else "standard",
+                "speed": "fast" if is_gpu_backend else "standard",
                 "size_label": f"{entry.model_metadata.parameter_count_b:g}B" if entry.model_metadata.parameter_count_b else "-",
                 "context_length": assessment.context_length,
                 "concurrency": 1,

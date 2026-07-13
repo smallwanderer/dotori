@@ -10,7 +10,7 @@ Dotori is a self-hosted document workspace for private file management, hybrid s
   <img src="https://github.com/user-attachments/assets/d240cf34-1dfb-462e-8366-3f0d3e4a435f" width="80%" alt="Dotori RAG workspace">
 </p>
 
-한국어 문서는 [README.ko.md](README.ko.md)를 참고하세요. Detailed installation and runtime operations are covered in [WALKTHROUGH.md](WALKTHROUGH.md) and the [LLM operator guide](docs/llm_installation_docs/user-guide.md).
+한국어 문서는 [README.ko.md](README.ko.md)를 참고하세요. Detailed installation and runtime operations are covered in [WALKTHROUGH.md](WALKTHROUGH.md).
 
 ## Highlights
 
@@ -56,16 +56,16 @@ cd dotori
 python install.py
 ```
 
-The installer creates `.env.dev`, detects the host hardware, lets you choose an operating mode, builds the required services, and configures the selected RAG runtime. Open the development service at:
+The installer creates `.env`, detects the host hardware, lets you choose an operating mode, builds the required services with `docker-compose.yml`, and configures the selected RAG runtime. Open the service at:
 
 ```text
-http://localhost:8888/
+http://localhost/
 ```
 
 Create an administrator account after the containers are running:
 
 ```bash
-docker compose -f docker-compose.dev.yml exec app python manage.py createsuperuser
+docker compose -f docker-compose.yml exec app python manage.py createsuperuser
 ```
 
 On later starts, use `python install.py --run` or `start.bat` on Windows. To change the local RAG model or runtime explicitly, run:
@@ -74,7 +74,7 @@ On later starts, use `python install.py --run` or `start.bat` on Windows. To cha
 python install.py --change-llm
 ```
 
-For domain, HTTPS, production Compose, and environment-specific setup, follow [WALKTHROUGH.md](WALKTHROUGH.md).
+For domain, HTTPS, and environment-specific setup, follow [WALKTHROUGH.md](WALKTHROUGH.md).
 
 ## How It Works
 
@@ -100,28 +100,23 @@ Django handles the web application, APIs, and task submission. Parsing, embeddin
 ## Common Commands
 
 ```bash
-# Start or rebuild the development stack
-docker compose -f docker-compose.dev.yml up --build
+# Start or rebuild the installation stack
+docker compose -f docker-compose.yml up --build
 
 # Apply database migrations
-docker compose -f docker-compose.dev.yml exec app python manage.py migrate
-
-# Run the test suite in the development image
-docker compose -f docker-compose.dev.yml exec app python -m pytest
+docker compose -f docker-compose.yml exec app python manage.py migrate
 
 # Follow one service's logs
-docker compose -f docker-compose.dev.yml logs -f rag-worker
+docker compose -f docker-compose.yml logs -f rag-worker
 
 # Inspect the saved LLM runtime configuration
-docker compose -f docker-compose.dev.yml exec app \
+docker compose -f docker-compose.yml exec app \
   python manage.py inspect_llm_runtime
 ```
 
-Model catalog and runtime-management commands are documented in the [LLM operator guide](docs/llm_installation_docs/user-guide.md).
-
 ## Data and Configuration
 
-- `.env.dev` configures the development stack; `.env` configures the production-oriented stack.
+- `.env` configures the installer-managed stack; `.env.dev` is reserved for development-only runs.
 - `data/uploads/`, `data/pgdata/`, `data/logs/`, and `data/config/` contain persistent local state and must not be committed.
 - `data/config/llm_runtime.json` is generated during local RAG setup and is the server-wide runtime source of truth.
 - The default embedding profile uses BGE-M3 with 1024-dimensional dense vectors and sparse lexical weights.
@@ -129,13 +124,13 @@ Model catalog and runtime-management commands are documented in the [LLM operato
 
 ## Development
 
-The repository keeps application ownership in `files`, `accounts`, and `document_ai`. Heavy AI work is separated into processing, embedding, query-understanding, search, RAG, and installation/runtime modules. The production-like application image intentionally excludes test dependencies, so tests should run with `docker-compose.dev.yml`.
+The repository keeps application ownership in `files`, `accounts`, and `document_ai`. Heavy AI work is separated into processing, embedding, query-understanding, search, RAG, and installation/runtime modules. The production-like application image intentionally excludes test dependencies, so tests use the `test` profile in the default Compose file.
 
 Before submitting a change, run focused tests for the affected module and then the full suite when practical:
 
 ```bash
-docker compose -f docker-compose.dev.yml exec app python manage.py check
-docker compose -f docker-compose.dev.yml exec app python -m pytest
+docker compose --profile test run --rm test python manage.py check
+docker compose --profile test run --rm test python -m pytest
 ```
 
 ## Project Status

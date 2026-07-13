@@ -28,7 +28,7 @@ class RAGModelCatalogItemView(BaseModel):
     logical_total_memory_mb: int
     required_ram_mb: int
     required_vram_per_gpu_mb: list[int]
-    disk_required_mb: int
+    disk_required_mb: int | None
 
     capabilities: list[str]
     tags: list[str]
@@ -56,7 +56,7 @@ def build_catalog_item_view(
 
         runtime=assessment.runtime,
         backend=assessment.backend_profile,
-        device="GPU" if assessment.backend_profile != "llamacpp-cpu" else "CPU",
+        device=entry.device_label,
         context_length=assessment.context_length,
         parallel=1,
 
@@ -67,7 +67,7 @@ def build_catalog_item_view(
         logical_total_memory_mb=estimate.logical_total_memory_mb,
         required_ram_mb=placement.required_ram_mb,
         required_vram_per_gpu_mb=list(placement.required_vram_per_gpu_mb),
-        disk_required_mb=entry.artifact.disk_required_mb,
+        disk_required_mb=assessment.disk_required_mb,
 
         capabilities=entry.capabilities.tasks,
         tags=entry.policy.tags,

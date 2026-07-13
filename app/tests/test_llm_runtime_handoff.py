@@ -11,6 +11,8 @@ from document_ai.llm_installation_helper.selection import (
     SelectionResult,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def _selection(*, fit_status="FIT", risky_confirmed=False):
     entry = SimpleNamespace(

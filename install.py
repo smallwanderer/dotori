@@ -6,6 +6,9 @@ import platform
 import shutil
 import re
 import json
+import time
+
+import requests
 
 # CLI Text Styles
 BOLD = "\033[1m"
@@ -14,6 +17,12 @@ YELLOW = "\033[33m"
 RED = "\033[31m"
 BLUE = "\033[34m"
 RESET = "\033[0m"
+
+ENV_FILE = ".env"
+ENV_TEMPLATE_FILE = ".env.example"
+COMPOSE_FILE = "docker-compose.yml"
+COMPOSE_COMMAND = f"docker compose -f {COMPOSE_FILE}"
+APP_URL = "http://localhost/"
 
 # Windows Command Prompt might not support ANSI colors by default
 if platform.system() == "Windows":
@@ -37,7 +46,7 @@ def run_interactive_command(cmd):
     try:
         return subprocess.call(cmd, shell=True) == 0
     except Exception as e:
-        print(f"{RED}[에러] {e}{RESET}")
+        print(f"{RED}[ERROR] {e}{RESET}")
         return False
 
 # Append app directory to path to allow importing llm_installation_helper modules
@@ -50,6 +59,13 @@ from document_ai.llm_installation_helper.installer_adapter import (
     load_llm_models,
     evaluate_install_model_fit,
 )
+from document_ai.llm_installation_helper.config_store import load_llm_runtime_config
+from document_ai.llm_installation_helper.cleanup import (
+    cleanup_stale_runtime,
+    extract_runtime_and_repo,
+    remove_current_llm_runtime,
+)
+from document_ai.llm_installation_helper.runtime_probe import probe_docker_services
 
 def print_install_model_table(models, hardware):
     headers = ["#", "Model", "Quant", "Size", "Device", "Logical", "Pool Req", "RAM Req", "Backend", "Speed", "Safety", "Fit"]
@@ -168,7 +184,7 @@ def handle_llm_catalog_cli(args):
         model_id = args[index + 1] if index + 1 < len(args) else ""
         model = next((item for item in models if item.get("id") == model_id), None)
         if not model:
-            print(f"{RED}[에러] 모델을 찾을 수 없습니다: {model_id}{RESET}")
+            print(f"{RED}[ERROR] Model not found: {model_id}{RESET}")
             return True
         print_llm_model_detail(model, hardware, json_output=json_output)
         return True
@@ -197,14 +213,14 @@ def handle_llm_catalog_cli(args):
     return True
 
 def select_rag_priority():
-    print_header("RAG LLM 운영 우선순위")
-    print(f"{BOLD}[1] 속도 우선{RESET}")
-    print("    - 현재 하드웨어에서 응답 지연이 낮은 모델과 실행값을 우선합니다.")
-    print(f"{BOLD}[2] 균형{RESET}")
-    print("    - 속도, 메모리 여유, 답변 품질을 균형 있게 조정합니다.")
-    print(f"{BOLD}[3] 품질 우선{RESET}")
-    print("    - 하드웨어 안전 범위 안에서 모델 품질과 Context를 우선합니다.")
-    selected = input("선택 (기본값: 2): ").strip()
+    print_header("RAG LLM Priority")
+    print(f"{BOLD}[1] Speed{RESET}")
+    print("    - Prefer models and runtime settings with lower latency on this hardware.")
+    print(f"{BOLD}[2] Balanced{RESET}")
+    print("    - Balance speed, memory headroom, and response quality.")
+    print(f"{BOLD}[3] Quality{RESET}")
+    print("    - Prefer model quality and context length within safe hardware limits.")
+    selected = input("Select an option (default: 2): ").strip()
     return {"1": "speed", "2": "balanced", "3": "quality"}.get(
         selected or "2",
         "balanced",
@@ -224,7 +240,7 @@ def read_env_file(file_path):
 
 def write_env_file(source_path, target_path, updates):
     if not os.path.exists(source_path):
-        print(f"{RED}[에러] {source_path} 템플릿 파일이 존재하지 않습니다.{RESET}")
+        print(f"{RED}[ERROR] Template file not found: {source_path}{RESET}")
         return False
         
     with open(source_path, "r", encoding="utf-8") as f:
@@ -241,13 +257,13 @@ def write_env_file(source_path, target_path, updates):
 
     with open(target_path, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"{GREEN}• {target_path} 설정 업데이트 완료.{RESET}")
+    print(f"{GREEN}• Updated configuration: {target_path}{RESET}")
     return True
 
 def create_windows_launcher():
     launcher_path = "start.bat"
     code = """@echo off
-title Dotori Dev Launcher
+title Dotori Launcher
 cd /d "%~dp0"
 
 where python >nul 2>nul
@@ -257,38 +273,146 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
+:menu
+cls
+echo ============================================================
+echo   Dotori Launcher
+echo ============================================================
+echo   [1] Install / Setup Wizard   (first run or reconfigure)
+echo   [2] Start Dotori             (use saved settings)
+echo   [3] Change LLM Model
+echo   [4] View Available LLM Models
+echo   [5] Stop Dotori Services
+echo   [6] Remove LLM Runtime
+echo   [7] Show Server Status
+echo   [8] Exit
+echo ============================================================
+set "choice="
+set /p choice="Select an option (1-8): "
+
+if "%choice%"=="1" goto install
+if "%choice%"=="2" goto run
+if "%choice%"=="3" goto change_llm
+if "%choice%"=="4" goto list_models
+if "%choice%"=="5" goto stop
+if "%choice%"=="6" goto remove_llm
+if "%choice%"=="7" goto status
+if "%choice%"=="8" exit /b
+echo.
+echo [ERROR] Invalid option: %choice%
+pause
+goto menu
+
+:install
+python install.py
+if %errorlevel% neq 0 (
+    echo [ERROR] Installation failed.
+)
+pause
+goto menu
+
+:run
 python install.py --run
 if %errorlevel% neq 0 (
-    echo [ERROR] Failed to run launcher.
-    pause
-    exit /b
+    echo [ERROR] Failed to start Dotori.
 )
+pause
+goto menu
+
+:change_llm
+python install.py --change-llm
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to change the LLM model.
+)
+pause
+goto menu
+
+:list_models
+python install.py --list-llm-models
+pause
+goto menu
+
+:stop
+docker compose -f docker-compose.yml down
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to stop Dotori services. Is Docker Desktop running?
+)
+pause
+goto menu
+
+:remove_llm
+python install.py --remove-llm
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to remove the LLM runtime.
+)
+pause
+goto menu
+
+:status
+python install.py --status
+pause
+goto menu
 """
     with open(launcher_path, "w", encoding="utf-8") as f:
         f.write(code)
-    print(f"{GREEN}• Windows 더블클릭 실행기({launcher_path}) 생성 완료.{RESET}")
+    print(f"{GREEN}• Created Windows launcher: {launcher_path}{RESET}")
 
-def initialize_llm_runtime_config(mode, priority_mode="balanced", cluster_mode=False):
+def initialize_llm_runtime_config(mode, priority_mode="balanced", cluster_mode=False, keep_weights=False):
     if mode != "1":
-        print(f"{YELLOW}• Full 로컬 AI RAG 모드가 아니므로 LLM runtime 자동 감지를 건너뜁니다.{RESET}")
+        print(f"{YELLOW}• Skipping LLM runtime detection because Full Local AI RAG mode is not selected.{RESET}")
         return
 
-    print_header("🧭 LLM Runtime Wizard 설정")
+    previous_payload = load_llm_runtime_config()
+
+    print_header("🧭 LLM Runtime Setup")
     cmd = (
-        "docker compose -f docker-compose.dev.yml exec app "
+        f"{COMPOSE_COMMAND} exec app "
         "python manage.py detect_llm_runtime --interactive"
     )
     if cluster_mode:
         cmd += " --cluster-mode"
-    print(f"실행 명령어: {BOLD}{cmd}{RESET}\n")
+    print(f"Command: {BOLD}{cmd}{RESET}\n")
     if run_interactive_command(cmd):
         if activate_selected_rag_runtime():
-            print(f"{GREEN}• LLM runtime 설정 및 서비스 전환 완료!{RESET}")
+            print(f"{GREEN}• LLM runtime configuration and service switch completed.{RESET}")
+            new_info = extract_runtime_and_repo(load_llm_runtime_config())
+            if new_info:
+                print_header("🧹 Cleaning Up Previous Runtime")
+                messages = cleanup_stale_runtime(
+                    previous_payload,
+                    *new_info,
+                    remove_weights=not keep_weights,
+                )
+                if messages:
+                    for message in messages:
+                        print(f"{GREEN}• {message}{RESET}")
+                else:
+                    print(f"{YELLOW}• Nothing to clean up.{RESET}")
             return
-        print(f"{YELLOW}• runtime 설정은 저장됐지만 선택된 서비스 기동에 실패했습니다.{RESET}")
+        print(f"{YELLOW}• Runtime configuration was saved, but the selected service could not be started.{RESET}")
         return
 
-    print(f"{YELLOW}• LLM runtime 설정에 실패했습니다. 서비스는 내장 catalog fallback으로 계속 동작합니다.{RESET}")
+    print(f"{YELLOW}• LLM runtime setup failed. The service will continue with the built-in catalog fallback.{RESET}")
+
+
+def remove_llm_runtime_cli(assume_yes=False):
+    print_header("🗑  Remove LLM Runtime")
+    if not assume_yes:
+        confirm = input(
+            f"{YELLOW}This will stop and remove the runtime container and permanently delete "
+            f"its cached model weights. Continue? (y/N): {RESET}"
+        ).strip().lower()
+        if confirm not in ("y", "yes"):
+            print(f"{YELLOW}• Cancelled.{RESET}")
+            return
+    try:
+        result = remove_current_llm_runtime()
+    except Exception as exc:
+        print(f"{RED}[ERROR] LLM runtime removal failed: {exc}{RESET}")
+        sys.exit(1)
+    for message in result["messages"]:
+        print(f"{GREEN}• {message}{RESET}")
+    print(f"{GREEN}• LLM runtime removal complete.{RESET}")
 
 
 def selected_rag_runtime_service():
@@ -302,42 +426,153 @@ def selected_rag_runtime_service():
     return "vllm-rag" if runtime == "vllm" else "llama-rag"
 
 
+STATUS_SERVICES = ["db", "redis", "app", "nginx", "embedding-worker", "search-worker", "rag-worker"]
+# Fixed by docker-compose.yml's nginx service; not env-configurable today.
+STATUS_PUBLISHED_PORTS = {"http": 80, "https": 443}
+
+
+def _probe_external_app_url():
+    started = time.monotonic()
+    try:
+        response = requests.get(APP_URL, timeout=3, allow_redirects=True)
+        return {
+            "ok": response.ok,
+            "status_code": response.status_code,
+            "message": "ok" if response.ok else response.reason,
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+        }
+    except requests.RequestException as exc:
+        return {
+            "ok": False,
+            "message": str(exc)[:200],
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+        }
+
+
+def _print_server_status_report(report):
+    connection = report["connection"]
+    print_header("1. Connection")
+    print(f"domain: {connection.get('domain') or '-'}")
+    print(f"published_ports: {connection['published_ports']}")
+    print("docker_services:")
+    for service, state in connection["docker_services"].items():
+        color = GREEN if state.get("state") == "running" else RED
+        print(f"  {service}: {color}{state.get('state', 'unknown')}{RESET} ({state.get('status', '-')})")
+    probe = connection["external_probe"]
+    probe_color = GREEN if probe.get("ok") else YELLOW
+    print(f"external_probe: {probe_color}{probe.get('message', '-')}{RESET} ({probe.get('elapsed_ms', 0)}ms)")
+
+    if not report["container_reachable"]:
+        print(f"\n{YELLOW}[WARN] Could not reach the app container to collect feature status. "
+              f"Is 'app' running?{RESET}")
+        return
+
+    features = report["features"]
+    print_header("2. Feature Status")
+    file_io = features["file_io"]
+    print(f"file_io: enabled={file_io['enabled']}")
+    if file_io.get("pipeline_check"):
+        check = file_io["pipeline_check"]
+        check_color = GREEN if check["ok"] else RED
+        print(f"  pipeline_check: {check_color}{check['ok']}{RESET} ({check['message']}, {check['elapsed_ms']}ms)")
+    embedding = features["embedding"]
+    print(f"embedding: enabled={embedding['enabled']}")
+    rag = features["rag"]
+    print(f"rag: enabled={rag['enabled']} configured={rag.get('configured')}")
+
+    print_header("3. Feature Detail")
+    print(f"embedding: model={embedding['model']} backend={embedding['backend']} "
+          f"dimension={embedding['dimension']} sparse_enabled={embedding['sparse_enabled']}")
+    if rag.get("configured"):
+        print(f"rag: model={rag['model']} runtime={rag['runtime']} base_url={rag['base_url']} "
+              f"priority_preset={rag['priority_preset']}")
+        health = rag.get("health_status")
+        if health:
+            health_color = GREEN if health["ok"] else RED
+            print(f"  health_status: {health_color}{health['ok']}{RESET} ({health['message']})")
+    else:
+        print(f"rag: {rag.get('message')}")
+
+
+def handle_server_status_cli(json_output=False, skip_file_io=False):
+    print_header("Server Status")
+
+    docker_services = probe_docker_services()
+    relevant_service_names = set(STATUS_SERVICES) | {selected_rag_runtime_service()}
+    docker_status = {
+        entry["service"]: {"state": entry["state"], "status": entry["status"]}
+        for entry in docker_services
+        if entry.get("service") in relevant_service_names
+    }
+
+    env_settings = read_env_file(ENV_FILE) if os.path.exists(ENV_FILE) else {}
+    domain = env_settings.get("NGINX_SERVER_NAME", "")
+
+    cmd = f"{COMPOSE_COMMAND} exec -T app python manage.py server_status --json-output"
+    if skip_file_io:
+        cmd += " --skip-file-io"
+    ok, stdout, _stderr = run_command(cmd)
+    container_report = None
+    if ok:
+        try:
+            container_report = json.loads(stdout)
+        except json.JSONDecodeError:
+            container_report = None
+
+    report = {
+        "connection": {
+            "domain": domain,
+            "published_ports": STATUS_PUBLISHED_PORTS,
+            "docker_services": docker_status,
+            "external_probe": _probe_external_app_url(),
+            "container": (container_report or {}).get("connection"),
+        },
+        "features": (container_report or {}).get("features"),
+        "container_reachable": container_report is not None,
+    }
+
+    if json_output:
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+    _print_server_status_report(report)
+
+
 def activate_selected_rag_runtime():
     runtime_service = selected_rag_runtime_service()
     inactive_service = "llama-rag" if runtime_service == "vllm-rag" else "vllm-rag"
-    compose = ["docker", "compose", "-f", "docker-compose.dev.yml"]
-    start_cmd = [*compose, "up", "--build", "-d", runtime_service]
-    print(f"선택된 runtime 기동: {BOLD}{' '.join(start_cmd)}{RESET}")
+    compose = ["docker", "compose", "-f", COMPOSE_FILE]
+    start_cmd = [*compose, "up", "--build", "--quiet-build", "--quiet-pull", "-d", runtime_service]
+    print(f"Starting selected runtime: {BOLD}{' '.join(start_cmd)}{RESET}")
     result = subprocess.run(start_cmd, check=False)
     if result.returncode != 0:
         return False
-    subprocess.run([*compose, "stop", inactive_service], check=False)
+    # Force a restart so a container that was already running picks up the
+    # freshly written args file (a no-op `up -d` won't reload it).
+    subprocess.run([*compose, "restart", runtime_service], check=False)
+    subprocess.run([*compose, "rm", "-f", "-s", inactive_service], check=False)
     subprocess.run([*compose, "restart", "rag-worker"], check=False)
     return True
 
-def run_services(mode, query_parser_choice, initialize_llm=False, rag_priority="balanced"):
-    print_header("🚀 3. Dotori Docker 컨테이너 구동")
-    
+def run_services(mode, initialize_llm=False, rag_priority="balanced"):
+    print_header("🚀 3. Start Dotori Docker Containers")
+
     # Base services that always run
     services = ["db", "redis", "app", "nginx"]
-    
+
     if mode == "1":
         # Full AI Mode
-        services += ["embedding-worker", "search-worker", "query-worker", "rag-worker"]
+        services += ["embedding-worker", "search-worker", "rag-worker"]
         if not initialize_llm:
             services.append(selected_rag_runtime_service())
-        if query_parser_choice == "1":
-            services += ["llama-query-parser"]
-        elif query_parser_choice == "2":
-            services += ["vllm-query-parser"]
     elif mode == "2":
         # Search AI Mode
         services += ["embedding-worker", "search-worker"]
 
-    cmd = f"docker compose -f docker-compose.dev.yml up --build -d " + " ".join(services)
-    print(f"구동 명령어: {BOLD}{cmd}{RESET}\n")
-    
-    print("컨테이너 빌드 및 백그라운드 실행을 시작합니다. 이 작업은 다소 시간이 걸릴 수 있습니다...")
+    cmd = f"{COMPOSE_COMMAND} up --build --quiet-build --quiet-pull -d " + " ".join(services)
+    print(f"Command: {BOLD}{cmd}{RESET}\n")
+
+    print("Building and starting containers in the background. This may take a while...")
+    print(f"{YELLOW}(pip/apt install output is condensed; full logs are shown automatically if a build fails){RESET}")
     # run in real time
     process = subprocess.Popen(cmd, shell=True)
     process.communicate()
@@ -345,38 +580,48 @@ def run_services(mode, query_parser_choice, initialize_llm=False, rag_priority="
     if process.returncode == 0:
         if initialize_llm:
             initialize_llm_runtime_config(mode, priority_mode=rag_priority)
-        print_header("🎉 구동 완료!")
-        print(f"• {BOLD}웹 애플리케이션 접속 주소:{RESET} {GREEN}http://localhost:8888/{RESET}")
-        print(f"• {BOLD}종료하시려면:{RESET} {YELLOW}docker compose -f docker-compose.dev.yml down{RESET} 을 실행하세요.")
+        print_header("🎉 Startup Complete")
+        print(f"• {BOLD}Web application:{RESET} {GREEN}{APP_URL}{RESET}")
+        print(f"• {BOLD}To stop the services, run:{RESET} {YELLOW}{COMPOSE_COMMAND} down{RESET}")
     else:
-        print(f"\n{RED}[에러] Docker 서비스 구동 실패. Docker 데스크톱이 켜져 있는지 확인해 주세요.{RESET}")
+        print(f"\n{RED}[ERROR] Failed to start Docker services. Verify that Docker Desktop is running.{RESET}")
 
 def main():
     has_run_flag = "--run" in sys.argv
     if "--change-llm" in sys.argv:
-        initialize_llm_runtime_config("1", cluster_mode="--cluster-mode" in sys.argv)
+        initialize_llm_runtime_config(
+            "1",
+            cluster_mode="--cluster-mode" in sys.argv,
+            keep_weights="--keep-weights" in sys.argv,
+        )
+        return
+    if "--remove-llm" in sys.argv:
+        remove_llm_runtime_cli(assume_yes="--yes" in sys.argv)
         return
     if any(option in sys.argv for option in ("--list-llm-models", "--search-llm", "--show-llm")):
         handle_llm_catalog_cli(sys.argv[1:])
         return
-    
-    if not os.path.exists(".env.dev"):
-        if os.path.exists(".env.dev.example"):
-            shutil.copy(".env.dev.example", ".env.dev")
-        elif os.path.exists(".env.example"):
-            shutil.copy(".env.example", ".env.dev")
+    if "--status" in sys.argv:
+        handle_server_status_cli(
+            json_output="--json-output" in sys.argv,
+            skip_file_io="--skip-file-io" in sys.argv,
+        )
+        return
+
+    if not os.path.exists(ENV_FILE):
+        if os.path.exists(ENV_TEMPLATE_FILE):
+            shutil.copy(ENV_TEMPLATE_FILE, ENV_FILE)
         else:
             # Create a blank one if nothing exists
-            with open(".env.dev", "w", encoding="utf-8") as f:
+            with open(ENV_FILE, "w", encoding="utf-8") as f:
                 f.write("# Generated by install.py\n")
 
     # If --run flag is passed, we check if setup is already complete and skip wizard
     if has_run_flag:
-        env_settings = read_env_file(".env.dev")
+        env_settings = read_env_file(ENV_FILE)
         # Determine mode from env variables
         query_llm_enabled = env_settings.get("QUERY_LLM_ENABLED", "1")
-        query_parser_url = env_settings.get("QUERY_PARSER_BASE_URL", "")
-        
+
         # Infer mode
         if query_llm_enabled == "0":
             # Check if embedding is enabled (we assume yes if we ran it, or we look at worker status)
@@ -384,41 +629,39 @@ def main():
             mode = "2" if env_settings.get("EMBEDDING_MODEL") else "3"
         else:
             mode = "1"
-            
-        parser_choice = "1" if "llama-query-parser" in query_parser_url else "2"
-        run_services(mode, parser_choice)
+
+        run_services(mode)
         return
 
     # Run Wizard
-    hw = detect_hardware()
+    detect_hardware()
 
-    print_header("⚙️  2. 서비스 작동 모드 선택 (Operation Mode)")
-    print(f"{BOLD}[1] Full 로컬 AI RAG 모드 (전체 활성화){RESET}")
-    print("    - 로컬 LLM 답변 생성 + 로컬 AI 쿼리 분석 + 로컬 임베딩 모두 구동")
+    print_header("⚙️  2. Select Operation Mode")
+    print(f"{BOLD}[1] Full Local AI RAG Mode{RESET}")
+    print("    - Run local LLM answer generation, query analysis, and embeddings.")
     print()
-    print(f"{BOLD}[2] Hybrid/Search AI 모드 (임베딩 및 의미론적 검색만 활성화){RESET}")
-    print("    - 로컬 임베딩 및 하이브리드 검색만 사용 (답변 생성 LLM 미구동)")
+    print(f"{BOLD}[2] Hybrid/Search AI Mode{RESET}")
+    print("    - Run local embeddings and hybrid search without an answer-generation LLM.")
     print()
-    print(f"{BOLD}[3] 기본적인 모드{RESET}")
-    print("    - 파일 입출력 기능만 사용 (AI 기능 미구동)")
+    print(f"{BOLD}[3] Basic Mode{RESET}")
+    print("    - Run file input and output features without AI services.")
     print("-" * 60)
     
-    mode = input("선택 (기본값: 2): ").strip()
+    mode = input("Select an option (default: 2): ").strip()
     if not mode:
         mode = "2"
 
     updates = {}
     embedding_choice = "1"
-    query_parser_choice = "3"
     rag_priority = "balanced"
 
     if mode in ("1", "2"):
         # Embedding Model Selection
         print("\n" + "-" * 60)
-        print(f"{BOLD}임베딩 모델을 선택해 주세요:{RESET}")
-        print("1) BAAI/bge-m3 (기본값: 고품질 하이브리드 검색, 리소스 중간)")
-        print("2) intfloat/multilingual-e5-small (빠르고 리소스 초경량, CPU 추천)")
-        embedding_choice = input("선택 (기본값: 1): ").strip()
+        print(f"{BOLD}Select an embedding model:{RESET}")
+        print("1) BAAI/bge-m3 (default: high-quality hybrid search, moderate resources)")
+        print("2) intfloat/multilingual-e5-small (fast and lightweight, recommended for CPU)")
+        embedding_choice = input("Select an option (default: 1): ").strip()
         if not embedding_choice:
             embedding_choice = "1"
 
@@ -435,58 +678,37 @@ def main():
 
     if mode == "1":
         # Full RAG options
-        print("\n" + "-" * 60)
-        print(f"{BOLD}쿼리 파서(Query Parser) LLM 백엔드를 선택해 주세요:{RESET}")
-        if hw["gpu_detected"]:
-            print(f"1) llama-query-parser (llama.cpp - GGUF 모델 구동 / CPU 스레드 최적)")
-            print(f"2) vllm-query-parser (vLLM - {GREEN}NVIDIA GPU 가속 추천{RESET})")
-            query_parser_choice = input("선택 (기본값: 2): ").strip()
-            if not query_parser_choice:
-                query_parser_choice = "2"
-        else:
-            print(f"1) llama-query-parser (llama.cpp - GGUF 모델 구동 / {GREEN}CPU 추천{RESET})")
-            print("2) vllm-query-parser (vLLM - GPU 필요하므로 비권장)")
-            query_parser_choice = input("선택 (기본값: 1): ").strip()
-            if not query_parser_choice:
-                query_parser_choice = "1"
-
         updates["QUERY_LLM_ENABLED"] = "1"
         updates["QUERY_PIPELINE_ENABLED"] = "1"
-        
-        if query_parser_choice == "1":
-            updates["QUERY_PARSER_BASE_URL"] = "http://llama-query-parser:8080"
-        else:
-            updates["QUERY_PARSER_BASE_URL"] = "http://vllm-query-parser:8080"
 
         rag_priority = select_rag_priority()
-            
+
     else:
         # Disable Query LLM & Pipeline for lower modes
         updates["QUERY_LLM_ENABLED"] = "0"
         updates["QUERY_PIPELINE_ENABLED"] = "0"
 
-    # Write configs to .env.dev
-    write_env_file(".env.dev", ".env.dev", updates)
+    # Write configs to the installation environment file.
+    write_env_file(ENV_FILE, ENV_FILE, updates)
     
     # Auto-generate Windows bat launcher
     create_windows_launcher()
 
     # Launch confirmation
     print("\n" + "-" * 60)
-    launch = input("지금 Dotori Docker 서비스를 바로 가동하시겠습니까? (Y/n): ").strip().lower()
+    launch = input("Start the Dotori Docker services now? (Y/n): ").strip().lower()
     if launch in ("", "y", "yes"):
         run_services(
             mode,
-            query_parser_choice,
             initialize_llm=True,
             rag_priority=rag_priority,
         )
     else:
-        print(f"\n{YELLOW}• 세팅 완료! 다음에 서비스를 켤 때는 start.bat 또는 python install.py --run 을 실행해 주세요.{RESET}")
+        print(f"\n{YELLOW}• Setup complete. To start the services later, run python install.py --run.{RESET}")
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print(f"\n{YELLOW}사용자 요청으로 세팅이 중단되었습니다.{RESET}")
+        print(f"\n{YELLOW}Setup cancelled by the user.{RESET}")
         sys.exit(0)

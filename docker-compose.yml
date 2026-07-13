@@ -62,6 +62,22 @@ services:
       retries: 5
       start_period: 60s
 
+  test:
+    profiles: ["test"]
+    build:
+      context: ./app
+      args:
+        INSTALL_AI_DEPS: "1"
+        INSTALL_DEV_DEPS: "1"
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["python", "-m", "pytest"]
+
   embedding-worker:
     build:
       context: ./app
@@ -99,25 +115,6 @@ services:
       redis:
         condition: service_healthy
     command: [ "bash", "-lc", "celery -A config worker -l info -Q search --concurrency=$${SEARCH_WORKER_CONCURRENCY:-1} --prefetch-multiplier=1" ]
-
-  query-worker:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "0"
-    container_name: query-worker
-    restart: always
-    env_file:
-      - .env
-    volumes:
-      - ./data/uploads:/data/uploads
-      - ./data/logs:/data/logs
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: [ "bash", "-lc", "celery -A config worker -l info -Q query --concurrency=$${QUERY_WORKER_CONCURRENCY:-1} --prefetch-multiplier=1" ]
 
   rag-worker:
     build:
@@ -228,26 +225,3 @@ services:
       timeout: 5s
       retries: 12
       start_period: 180s
-
-  vllm-query-parser:
-    build:
-      context: ./vllm-query
-      dockerfile: Dockerfile
-    container_name: vllm-query-parser
-    restart: always
-    expose:
-      - "8080"
-    env_file:
-      - .env
-    volumes:
-      - ./vllm-query/data/cache:/root/.cache
-    entrypoint: [ "bash", "-lc" ]
-    command:
-      - >
-        python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8080 --model "$${QUERY_PARSER_MODEL:-meta-llama/Llama-3.2-3B-Instruct}" --served-model-name "$${QUERY_PARSER_SERVED_MODEL_NAME:-meta-llama/Llama-3.2-3B-Instruct}" --max-model-len "$${QUERY_PARSER_MAX_MODEL_LEN:-4096}" --dtype "$${QUERY_PARSER_DTYPE:-bfloat16}"
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 120s

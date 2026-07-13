@@ -12,19 +12,19 @@ def print_model_table(rows, stdout) -> None:
     for row in rows:
         values = [
             str(row["index"]),
-            row["model"],
-            row["quant"],
-            row["size"],
-            row["device"],
-            row["min_mem"],
-            row["rec_mem"],
-            row["ram"],
-            row["backend"],
-            row["speed"],
-            row["safety"],
-            row["fit_status"],
+            row["model"] or "-",
+            row["quant"] or "-",
+            row["size"] or "-",
+            row["device"] or "-",
+            row["min_mem"] or "-",
+            row["rec_mem"] or "-",
+            row["ram"] or "-",
+            row["backend"] or "-",
+            row["speed"] or "-",
+            row["safety"] or "-",
+            row["fit_status"] or "-",
         ]
-        stdout.write(" ".join(value[:width].ljust(width) for value, width in zip(values, widths)).rstrip())
+        stdout.write(" ".join(str(value)[:width].ljust(width) for value, width in zip(values, widths)).rstrip())
 
 
 def model_detail_dict(row: dict) -> dict:
@@ -53,7 +53,7 @@ def model_detail_dict(row: dict) -> dict:
         "logical_total_memory_mb": row["logical_total_memory_mb"],
         "required_ram_mb": row["required_ram_mb"],
         "required_vram_per_gpu_mb": row["required_vram_per_gpu_mb"],
-        "serving_profile": row["serving_profile"],
+        "serving_profile": row.get("serving_profile"),
         "description": row["description"],
         "notes": row["notes"],
     }
