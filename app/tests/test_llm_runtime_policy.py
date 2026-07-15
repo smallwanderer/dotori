@@ -2,15 +2,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from document_ai.llm_installation_helper.planner import (
+from llm_installation.planner import (
     RuntimeConfigUnresolvable,
     assess_catalog_entry,
     build_serving_plan,
 )
-from document_ai.llm_installation_helper.runtime_handoff import (
+from llm_installation.runtime_handoff import (
     build_runtime_policy_input,
 )
-from document_ai.llm_installation_helper.selection import (
+from llm_installation.selection import (
     SelectionCandidate,
     SelectionResult,
 )

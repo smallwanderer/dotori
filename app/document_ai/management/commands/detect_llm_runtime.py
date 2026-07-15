@@ -1,47 +1,43 @@
 from __future__ import annotations
 
-import os
-import sys
-import time
-import subprocess
+import json
 from dataclasses import replace
 from django.core.management.base import BaseCommand, CommandError
 
-from document_ai.llm_installation_helper.catalog import (
+from document_ai.services.rag_runtime_config import (
+    ServerRAGTarget,
+    clear_server_rag_target_cache,
+    get_llm_runtime_config_path,
+)
+from llm_installation.catalog import (
     catalog_rows,
     evaluate_catalog_fit,
     get_catalog_entry,
     get_rag_model_catalog,
 )
-from document_ai.llm_installation_helper.cli import (
+from llm_installation.cli import (
     json_output,
     model_detail_dict,
     print_model_table,
 )
-from document_ai.llm_installation_helper.config_store import get_llm_runtime_config_path, write_llm_runtime_config
-from document_ai.llm_installation_helper.planner import (
+from llm_installation.config_store import write_llm_runtime_config, write_runtime_generation
+from llm_installation.planner import (
     PRIORITY_PRESETS,
     assess_catalog_entry,
     build_serving_plan,
     convert_policy,
 )
-from document_ai.llm_installation_helper.router import (
-    clear_server_rag_target_cache,
-    resolve_server_rag_target,
-    ServerRAGTarget,
-)
-from document_ai.llm_installation_helper.selection import (
+from llm_installation.router import resolve_server_rag_target
+from llm_installation.runtime_lifecycle import make_generation_id
+from llm_installation.selection import (
     SelectionCandidate,
     select_catalog_model,
 )
-from document_ai.llm_installation_helper.runtime_handoff import (
+from llm_installation.runtime_handoff import (
     build_runtime_policy_input,
 )
-from document_ai.llm_installation_helper.runtime_probe import (
+from llm_installation.runtime_probe import (
     probe_server_runtime,
-    check_endpoint_health,
-    check_openai_compatible_endpoint,
-    smoke_test_chat_completion,
 )
 
 
@@ -279,96 +275,38 @@ class Command(BaseCommand):
                 runtime_policy_input=runtime_policy_input.as_dict(),
             )
 
-            # Persist to json
-            config_path = write_llm_runtime_config(
+            # Stage a candidate generation only -- this command never touches
+            # Docker (the app container has no Docker CLI/socket). The host
+            # installer reads pending_generation.json, builds a RuntimeSpec,
+            # and validates+activates it via RuntimeLifecycleManager.apply().
+            generation_id = make_generation_id(runtime_policy_input.integrity_sha256)
+            generation_dir = write_runtime_generation(
+                scope="production",
                 target=target,
                 profile=profile,
                 catalog=catalog,
+                generation_id=generation_id,
             )
-            clear_server_rag_target_cache()
-            self.stdout.write(self.style.SUCCESS(f"\nSaved LLM runtime config: {config_path}"))
-
-            if not profile.docker_compose_available:
-                self.stdout.write(
-                    self.style.WARNING(
-                        "Runtime config saved. Host installer will start the selected service."
-                    )
+            pending_path = generation_dir.parent.parent / "pending_generation.json"
+            pending_path.write_text(
+                json.dumps(
+                    {
+                        "generation_id": generation_id,
+                        "runtime": target.runtime,
+                        "model_id": target.model,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            self.stdout.write(
+                self.style.SUCCESS(f"\nSaved candidate runtime generation: {generation_dir}")
+            )
+            self.stdout.write(
+                self.style.WARNING(
+                    "Host installer will build, validate, and activate the selected runtime container."
                 )
-                return
-
-            # Step 11: Container Restart & Health Check
-            self.stdout.write(self.style.MIGRATE_HEADING("\n=== 4. Post-Deployment Container Restart & Verification ==="))
-            
-            restarted = False
-            compose_prefix = None
-            # Try dev compose first
-            runtime_service = "vllm-rag" if target.runtime == "vllm" else "llama-rag"
-            inactive_service = "llama-rag" if runtime_service == "vllm-rag" else "vllm-rag"
-            cmd_dev = ["docker", "compose", "-f", "docker-compose.dev.yml", "up", "-d", runtime_service]
-            self.stdout.write(f"Running: {' '.join(cmd_dev)}")
-            try:
-                res = subprocess.run(cmd_dev, check=False, capture_output=True, text=True)
-                if res.returncode == 0:
-                    restarted = True
-                    compose_prefix = cmd_dev[:-3]
-                    self.stdout.write(self.style.SUCCESS(f"{runtime_service} container started."))
-            except Exception:
-                pass
-            
-            if not restarted:
-                cmd_prod = ["docker", "compose", "up", "-d", runtime_service]
-                self.stdout.write(f"Running: {' '.join(cmd_prod)}")
-                try:
-                    res = subprocess.run(cmd_prod, check=False, capture_output=True, text=True)
-                    if res.returncode == 0:
-                        restarted = True
-                        compose_prefix = cmd_prod[:-3]
-                        self.stdout.write(self.style.SUCCESS(f"{runtime_service} container started."))
-                except Exception:
-                    pass
-
-            if not restarted:
-                self.stdout.write(self.style.WARNING(f"Could not automatically restart {runtime_service}."))
-            elif compose_prefix:
-                subprocess.run(
-                    [*compose_prefix, "stop", inactive_service],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                )
-                subprocess.run(
-                    [*compose_prefix, "restart", "rag-worker"],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                )
-
-            # Health Check and Smoke Test
-            self.stdout.write(f"Waiting for endpoint {target.base_url} to be ready (up to 30s)...")
-            time.sleep(5)
-            
-            success = False
-            for attempt in range(1, 11):
-                self.stdout.write(f"Attempt {attempt}/10...")
-                health = check_endpoint_health(target.base_url)
-                if health.ok:
-                    self.stdout.write(self.style.SUCCESS(f"Endpoint health: OK ({health.message})"))
-                    self.stdout.write("Running chat completion smoke test...")
-                    smoke = smoke_test_chat_completion(target.base_url, target.model)
-                    if smoke.ok:
-                        self.stdout.write(self.style.SUCCESS(f"Smoke test: OK ({smoke.message})"))
-                        success = True
-                        break
-                    else:
-                        self.stdout.write(self.style.WARNING(f"Smoke test failed: {smoke.message}. Retrying..."))
-                else:
-                    self.stdout.write(f"Endpoint not ready: {health.message}")
-                time.sleep(3)
-
-            if success:
-                self.stdout.write(self.style.SUCCESS("\nInteractive wizard deployment successfully completed!"))
-            else:
-                self.stdout.write(self.style.ERROR("\nDeployment verification failed. The serving engine might still be starting or misconfigured. Check docker logs."))
+            )
             return
 
         if options["list_models"] or options["search"]:

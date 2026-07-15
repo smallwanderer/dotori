@@ -1,29 +1,30 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any
 
-from document_ai.llm_installation_helper.catalog import (
+from document_ai.services.rag_runtime_config import (
+    LLMRuntimeNotConfigured,
+    ServerRAGTarget,
+)
+from llm_installation.catalog import (
     RAGModelCatalogEntry,
     evaluate_catalog_fit,
     get_rag_model_catalog,
 )
-from document_ai.llm_installation_helper.config_store import load_llm_runtime_config
-from document_ai.llm_installation_helper.planner import (
+from llm_installation.planner import (
     CatalogAssessment,
     assess_catalog_entry,
     build_serving_plan,
 )
-from document_ai.llm_installation_helper.selection import (
+from llm_installation.selection import (
     SelectionCandidate,
     select_catalog_model,
 )
-from document_ai.llm_installation_helper.runtime_handoff import (
+from llm_installation.runtime_handoff import (
     build_runtime_policy_input,
 )
-from document_ai.llm_installation_helper.runtime_probe import (
+from llm_installation.runtime_probe import (
     EndpointStatus,
     ServerRuntimeProfile,
     SmokeTestStatus,
@@ -32,36 +33,6 @@ from document_ai.llm_installation_helper.runtime_probe import (
     probe_server_runtime,
     smoke_test_chat_completion,
 )
-
-
-@dataclass(frozen=True)
-class ServerRAGTarget:
-    endpoint_name: str
-    base_url: str
-    model: str
-    runtime: str
-    reason: str
-    fallback_used: bool = False
-    endpoint_status: EndpointStatus | None = None
-    health_status: EndpointStatus | None = None
-    smoke_status: SmokeTestStatus | None = None
-    diagnostics: dict[str, Any] | None = None
-    priority_preset: str = "balanced"
-    selection_mode: str = "automatic"
-    selection_reason_code: str = ""
-    runtime_policy_input: dict[str, Any] | None = None
-    serving_profile: dict[str, Any] | None = None
-
-    def as_snapshot(self) -> dict:
-        return {
-            "llm_endpoint_name": self.endpoint_name,
-            "llm_base_url": self.base_url,
-            "llm_model": self.model,
-        }
-
-
-class LLMRuntimeNotConfigured(RuntimeError):
-    """Raised when request-time code cannot load an installed runtime config."""
 
 
 def _runtime_rejection_reason(entry: RAGModelCatalogEntry, profile: ServerRuntimeProfile) -> str:
@@ -142,50 +113,6 @@ def _diagnostics(profile: ServerRuntimeProfile, candidates: list[dict[str, Any]]
         },
         "candidates": candidates,
     }
-
-
-def target_from_persisted_config() -> ServerRAGTarget | None:
-    config = load_llm_runtime_config()
-    target = config.get("target") if isinstance(config, dict) else None
-    if not isinstance(target, dict):
-        return None
-
-    base_url = (target.get("base_url") or "").strip().rstrip("/")
-    model = (target.get("model") or "").strip()
-    if not base_url or not model:
-        return None
-    if base_url.endswith("/v1"):
-        base_url = base_url[:-3].rstrip("/")
-
-    return ServerRAGTarget(
-        endpoint_name=target.get("endpoint_name") or "Server configured",
-        base_url=base_url,
-        model=model,
-        runtime=target.get("runtime") or "unknown",
-        reason=target.get("reason") or "Loaded from persisted LLM runtime config.",
-        fallback_used=bool(target.get("fallback_used", False)),
-        diagnostics=config.get("diagnostics") if isinstance(config.get("diagnostics"), dict) else None,
-        priority_preset=target.get("priority_preset") or "balanced",
-        selection_mode=target.get("selection_mode") or "automatic",
-        selection_reason_code=target.get("selection_reason_code") or "",
-        runtime_policy_input=(
-            target.get("runtime_policy_input")
-            if isinstance(target.get("runtime_policy_input"), dict)
-            else None
-        ),
-        serving_profile=target.get("serving_profile") if isinstance(target.get("serving_profile"), dict) else None,
-    )
-
-
-def get_configured_server_rag_target() -> ServerRAGTarget:
-    target = target_from_persisted_config()
-    if target:
-        return target
-    raise LLMRuntimeNotConfigured(
-        "No valid persisted LLM runtime config was found. Run "
-        "`python manage.py detect_llm_runtime --write` during installation "
-        "or after an operator-triggered runtime change."
-    )
 
 
 def resolve_server_rag_target(
@@ -332,12 +259,3 @@ def resolve_server_rag_target(
     raise LLMRuntimeNotConfigured(
         "Selected runtime failed validation: " + "; ".join(failed_statuses)
     )
-
-
-@lru_cache(maxsize=1)
-def get_cached_server_rag_target() -> ServerRAGTarget:
-    return get_configured_server_rag_target()
-
-
-def clear_server_rag_target_cache() -> None:
-    get_cached_server_rag_target.cache_clear()

@@ -4,9 +4,10 @@
 1. Check your server's domain & port status.
 
 2. makesure .env file is created and filled with proper values. 
-- NGINX_SERVER_NAME: example.com
-- LETSENCRYPT_DOMAIN: example.com
-- LETSENCRYPT_EMAIL: your_email.com
+- DOTORI_EXTERNAL_DOMAIN: example.com
+- DOTORI_CERTIFICATE_EMAIL: your_email.com
+
+Set these values in data/config/network_access/provider.env, not in the base .env file.
 
 3. Initialize scripts are located in scripts/ folder. Run the following commands:
 - chmod +x scripts/init_production_env.sh

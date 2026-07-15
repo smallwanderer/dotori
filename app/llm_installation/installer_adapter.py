@@ -121,8 +121,7 @@ def _fallback_detect_hardware():
 def _fallback_load_llm_models():
     catalog_dir = os.path.join(
         "app",
-        "document_ai",
-        "llm_installation_helper",
+        "llm_installation",
         "catalog",
     )
     model_dir = os.path.join(catalog_dir, "models")
@@ -290,7 +289,7 @@ def _fallback_evaluate_install_model_fit(model, hardware):
 def detect_hardware():
     print_header("Hardware Detection")
     try:
-        from document_ai.llm_installation_helper.runtime_probe import probe_server_runtime
+        from llm_installation.runtime_probe import probe_server_runtime
         profile = probe_server_runtime()
         
         print(f"• OS: {BOLD}{profile.platform}{RESET}")
@@ -357,16 +356,16 @@ def detect_hardware():
 
 def detect_system_ram_mb():
     try:
-        from document_ai.llm_installation_helper.runtime_probe import probe_server_runtime
+        from llm_installation.runtime_probe import probe_server_runtime
         return probe_server_runtime().ram_mb
     except Exception:
         return _fallback_detect_system_ram_mb()
 
 def load_llm_models():
     try:
-        from document_ai.llm_installation_helper.catalog import get_rag_model_catalog
-        from document_ai.llm_installation_helper.planner import assess_catalog_entry
-        from document_ai.llm_installation_helper.runtime_probe import probe_server_runtime
+        from llm_installation.catalog import get_rag_model_catalog
+        from llm_installation.planner import assess_catalog_entry
+        from llm_installation.runtime_probe import probe_server_runtime
         catalog = get_rag_model_catalog()
         profile = probe_server_runtime()
         models = []
@@ -402,8 +401,8 @@ def load_llm_models():
 
 def evaluate_install_model_fit(model, hardware):
     try:
-        from document_ai.llm_installation_helper.planner import assess_catalog_entry
-        from document_ai.llm_installation_helper.runtime_probe import ServerRuntimeProfile
+        from llm_installation.planner import assess_catalog_entry
+        from llm_installation.runtime_probe import ServerRuntimeProfile
         
         profile = ServerRuntimeProfile(
             cpu_count=os.cpu_count() or 1,
@@ -419,7 +418,7 @@ def evaluate_install_model_fit(model, hardware):
         
         entry = model.get("_entry")
         if not entry:
-            from document_ai.llm_installation_helper.catalog import get_catalog_entry
+            from llm_installation.catalog import get_catalog_entry
             entry = get_catalog_entry(model.get("id"))
             
         if not entry:

@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
 from typing import Any, Literal
 
-from document_ai.llm_installation_helper.runtime_handoff import (
+from llm_installation.runtime_handoff import (
     RuntimePolicyInput,
 )
 

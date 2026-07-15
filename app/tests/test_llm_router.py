@@ -3,18 +3,23 @@ from math import ceil
 
 import pytest
 
-from document_ai.llm_installation_helper.catalog import (
+from document_ai.services.rag_runtime_config import (
+    LLMRuntimeNotConfigured,
+    get_configured_server_rag_target,
+    target_from_persisted_config,
+)
+from llm_installation.catalog import (
     catalog_rows,
     get_catalog_entry,
     get_rag_model_catalog,
 )
-from document_ai.llm_installation_helper.catalog.loader import _resolve_candidates
-from document_ai.llm_installation_helper.catalog.models import (
+from llm_installation.catalog.loader import _resolve_candidates
+from llm_installation.catalog.models import (
     ArtifactCatalogEntry,
     ModelCatalogEntry,
 )
-from document_ai.llm_installation_helper.config_store import write_llm_runtime_config
-from document_ai.llm_installation_helper.planner import (
+from llm_installation.config_store import write_llm_runtime_config
+from llm_installation.planner import (
     _place_cpu,
     _pool_fit,
     _resolve_llamacpp_batch_pair,
@@ -23,13 +28,8 @@ from document_ai.llm_installation_helper.planner import (
     estimate_model_memory,
     select_runtime,
 )
-from document_ai.llm_installation_helper.router import (
-    LLMRuntimeNotConfigured,
-    get_configured_server_rag_target,
-    resolve_server_rag_target,
-    target_from_persisted_config,
-)
-from document_ai.llm_installation_helper.runtime_probe import (
+from llm_installation.router import resolve_server_rag_target
+from llm_installation.runtime_probe import (
     EndpointStatus,
     ServerRuntimeProfile,
     SmokeTestStatus,
@@ -415,11 +415,11 @@ def test_router_does_not_reselect_after_endpoint_failure(monkeypatch):
         return EndpointStatus(base_url=base_url, ok=True, check_name="models", message="ok")
 
     monkeypatch.setattr(
-        "document_ai.llm_installation_helper.router.check_endpoint_health",
+        "llm_installation.router.check_endpoint_health",
         lambda base_url: EndpointStatus(base_url=base_url, ok=True, check_name="health", message="ok"),
     )
     monkeypatch.setattr(
-        "document_ai.llm_installation_helper.router.check_openai_compatible_endpoint",
+        "llm_installation.router.check_openai_compatible_endpoint",
         fake_check,
     )
 
@@ -439,7 +439,7 @@ def test_router_does_not_reselect_after_smoke_failure(monkeypatch):
         return SmokeTestStatus(base_url=base_url, model=model, ok=True, message="ok")
 
     monkeypatch.setattr(
-        "document_ai.llm_installation_helper.router.smoke_test_chat_completion",
+        "llm_installation.router.smoke_test_chat_completion",
         fake_smoke,
     )
 
@@ -493,7 +493,7 @@ def test_router_loads_persisted_config_without_live_probe(monkeypatch, tmp_path)
     )
     monkeypatch.setenv("LLM_RUNTIME_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(
-        "document_ai.llm_installation_helper.router.probe_server_runtime",
+        "llm_installation.router.probe_server_runtime",
         lambda: pytest.fail("normal routing must not probe hardware"),
     )
 
@@ -508,7 +508,7 @@ def test_router_loads_persisted_config_without_live_probe(monkeypatch, tmp_path)
 def test_configured_router_rejects_missing_persisted_config(monkeypatch, tmp_path):
     monkeypatch.setenv("LLM_RUNTIME_CONFIG_PATH", str(tmp_path / "missing.json"))
     monkeypatch.setattr(
-        "document_ai.llm_installation_helper.router.build_serving_plan",
+        "llm_installation.router.build_serving_plan",
         lambda *args, **kwargs: pytest.fail("request-time code must not run planner"),
     )
 

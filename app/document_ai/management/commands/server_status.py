@@ -12,9 +12,9 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management.base import BaseCommand
 from django.db import connection
 
-from document_ai.llm_installation_helper.cli import json_output
-from document_ai.llm_installation_helper.router import target_from_persisted_config
-from document_ai.llm_installation_helper.runtime_probe import (
+from document_ai.services.rag_runtime_config import target_from_persisted_config
+from llm_installation.cli import json_output
+from llm_installation.runtime_probe import (
     check_endpoint_health,
     check_openai_compatible_endpoint,
 )

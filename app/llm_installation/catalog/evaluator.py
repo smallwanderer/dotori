@@ -2,8 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from document_ai.llm_installation_helper.catalog.models import RAGModelCatalogEntry
-from document_ai.llm_installation_helper.runtime_probe import ServerRuntimeProfile
+from llm_installation.catalog.models import RAGModelCatalogEntry
+from llm_installation.runtime_probe import ServerRuntimeProfile
 
 
 HardwareProfile = ServerRuntimeProfile
@@ -92,7 +92,7 @@ def evaluate_catalog_fit(
     entry: RAGModelCatalogEntry,
     profile: HardwareProfile,
 ) -> FitEvaluation:
-    from document_ai.llm_installation_helper.planner import (
+    from llm_installation.planner import (
         DISK_HEADROOM_MULTIPLIER,
         HEADROOM_MULTIPLIER,
         _gpu_free_list,

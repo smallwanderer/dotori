@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from document_ai.llm_installation_helper.selection import (
+from llm_installation.selection import (
     SelectionCandidate,
     select_catalog_model,
 )

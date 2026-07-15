@@ -1,9 +1,9 @@
 from pydantic import BaseModel
 
-from document_ai.llm_installation_helper.catalog.evaluator import FitEvaluation, HardwareProfile, evaluate_catalog_fit
-from document_ai.llm_installation_helper.catalog.loader import get_rag_model_catalog
-from document_ai.llm_installation_helper.catalog.models import RAGModelCatalogEntry
-from document_ai.llm_installation_helper.planner import assess_catalog_entry
+from llm_installation.catalog.evaluator import FitEvaluation, HardwareProfile, evaluate_catalog_fit
+from llm_installation.catalog.loader import get_rag_model_catalog
+from llm_installation.catalog.models import RAGModelCatalogEntry
+from llm_installation.planner import assess_catalog_entry
 
 
 class RAGModelCatalogItemView(BaseModel):

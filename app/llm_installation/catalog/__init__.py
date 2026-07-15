@@ -1,14 +1,14 @@
-from document_ai.llm_installation_helper.catalog.evaluator import (
+from llm_installation.catalog.evaluator import (
     FitEvaluation,
     evaluate_catalog_fit as _evaluate_catalog_fit,
 )
-from document_ai.llm_installation_helper.catalog.loader import (
+from llm_installation.catalog.loader import (
     get_catalog_entry,
     get_rag_model_catalog,
     search_rag_model_catalog,
 )
-from document_ai.llm_installation_helper.catalog.models import RAGModelCatalogEntry
-from document_ai.llm_installation_helper.planner import assess_catalog_entry
+from llm_installation.catalog.models import RAGModelCatalogEntry
+from llm_installation.planner import assess_catalog_entry
 
 
 def _mb_label(value: int) -> str:

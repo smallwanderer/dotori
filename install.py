@@ -22,7 +22,7 @@ ENV_FILE = ".env"
 ENV_TEMPLATE_FILE = ".env.example"
 COMPOSE_FILE = "docker-compose.yml"
 COMPOSE_COMMAND = f"docker compose -f {COMPOSE_FILE}"
-APP_URL = "http://localhost/"
+APP_URL = "http://127.0.0.1:8000/"
 
 # Windows Command Prompt might not support ANSI colors by default
 if platform.system() == "Windows":
@@ -49,23 +49,36 @@ def run_interactive_command(cmd):
         print(f"{RED}[ERROR] {e}{RESET}")
         return False
 
-# Append app directory to path to allow importing llm_installation_helper modules
+# Append app directory to path to allow importing llm_installation/document_ai modules
 sys.path.append(os.path.join(os.path.dirname(__file__), "app"))
 
-from document_ai.llm_installation_helper.installer_adapter import (
+from document_ai.services.rag_runtime_config import load_llm_runtime_config
+from llm_installation.installer_adapter import (
     detect_hardware,
     detect_system_ram_mb,
     format_mb,
     load_llm_models,
     evaluate_install_model_fit,
 )
-from document_ai.llm_installation_helper.config_store import load_llm_runtime_config
-from document_ai.llm_installation_helper.cleanup import (
+from llm_installation.cleanup import (
     cleanup_stale_runtime,
     extract_runtime_and_repo,
     remove_current_llm_runtime,
 )
-from document_ai.llm_installation_helper.runtime_probe import probe_docker_services
+from llm_installation.runtime_lifecycle import (
+    SCOPE_CONFIG,
+    RuntimeLifecycleManager,
+    build_runtime_spec,
+)
+from llm_installation.runtime_probe import probe_docker_services
+from installation.network_access import (
+    ConfigurationError as NetworkConfigurationError,
+    connect as connect_external_access,
+    create_configuration_files,
+    disconnect as disconnect_external_access,
+    status as external_access_status,
+)
+from installation.network_access.files import configuration_directory, read_env_file as read_network_env_file
 
 def print_install_model_table(models, hardware):
     headers = ["#", "Model", "Quant", "Size", "Device", "Logical", "Pool Req", "RAM Req", "Backend", "Speed", "Safety", "Fit"]
@@ -262,107 +275,93 @@ def write_env_file(source_path, target_path, updates):
 
 def create_windows_launcher():
     launcher_path = "start.bat"
-    code = """@echo off
-title Dotori Launcher
-cd /d "%~dp0"
+    if os.path.exists(launcher_path):
+        print(f"{GREEN}• Windows launcher is ready: {launcher_path}{RESET}")
+    else:
+        print(f"{YELLOW}• Windows launcher is missing: {launcher_path}{RESET}")
 
-where python >nul 2>nul
-if %errorlevel% neq 0 (
-    echo [ERROR] Python is not installed or not in PATH.
-    pause
-    exit /b
-)
 
-:menu
-cls
-echo ============================================================
-echo   Dotori Launcher
-echo ============================================================
-echo   [1] Install / Setup Wizard   (first run or reconfigure)
-echo   [2] Start Dotori             (use saved settings)
-echo   [3] Change LLM Model
-echo   [4] View Available LLM Models
-echo   [5] Stop Dotori Services
-echo   [6] Remove LLM Runtime
-echo   [7] Show Server Status
-echo   [8] Exit
-echo ============================================================
-set "choice="
-set /p choice="Select an option (1-8): "
+def handle_network_access_cli(args):
+    try:
+        if "--network-access-create" in args:
+            result = create_configuration_files()
+            print_header("External Access Configuration")
+            for path in result["created"]:
+                print(f"{GREEN}• Created: {path}{RESET}")
+            for path in result["preserved"]:
+                print(f"{YELLOW}• Preserved existing file: {path}{RESET}")
+            print("Edit these files before choosing Connect external access module.")
+            return True
+        if "--network-access-open" in args:
+            config_path = configuration_directory()
+            if not config_path.exists():
+                create_configuration_files()
+            if platform.system() == "Windows":
+                os.startfile(config_path)  # type: ignore[attr-defined]
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", str(config_path)])
+            else:
+                subprocess.Popen(["xdg-open", str(config_path)])
+            return True
+        if "--network-access-connect" in args:
+            connect_external_access()
+            print(f"{GREEN}• External access module connected.{RESET}")
+            return True
+        if "--network-access-disconnect" in args:
+            disconnect_external_access()
+            print(f"{GREEN}• External access module disconnected. Local access remains available at {APP_URL}{RESET}")
+            return True
+        if "--network-access-status" in args:
+            report = external_access_status()
+            if "--json-output" in args:
+                print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print_header("External Access Status")
+                print(f"mode: {report['mode']}")
+                print(f"docker_available: {report['available']}")
+                print(f"configured: {report['configured']}")
+                print(f"nginx_running: {report['running']}")
+                print(f"configuration: {report['configuration_directory']}")
+            return True
+    except (NetworkConfigurationError, RuntimeError, OSError) as exc:
+        print(f"{RED}[ERROR] {exc}{RESET}")
+        return False
+    return None
 
-if "%choice%"=="1" goto install
-if "%choice%"=="2" goto run
-if "%choice%"=="3" goto change_llm
-if "%choice%"=="4" goto list_models
-if "%choice%"=="5" goto stop
-if "%choice%"=="6" goto remove_llm
-if "%choice%"=="7" goto status
-if "%choice%"=="8" exit /b
-echo.
-echo [ERROR] Invalid option: %choice%
-pause
-goto menu
+def _read_pending_generation(scope="production"):
+    """Read the candidate (runtime, model_id, generation_id) that
+    detect_llm_runtime --interactive just staged for this scope, without
+    touching the active config."""
+    pending_path = os.path.join("data", "config", "runtime_scopes", scope, "pending_generation.json")
+    try:
+        with open(pending_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload["runtime"], payload["model_id"], payload["generation_id"]
+    except (OSError, json.JSONDecodeError, KeyError):
+        return None
 
-:install
-python install.py
-if %errorlevel% neq 0 (
-    echo [ERROR] Installation failed.
-)
-pause
-goto menu
 
-:run
-python install.py --run
-if %errorlevel% neq 0 (
-    echo [ERROR] Failed to start Dotori.
-)
-pause
-goto menu
+def _active_runtime_info(scope="production"):
+    """Read (runtime, model_id, generation_id) from the scope's already-active
+    persisted config, or None if nothing is configured yet."""
+    payload = load_llm_runtime_config(scope=scope)
+    target = payload.get("target") if isinstance(payload, dict) else None
+    if not isinstance(target, dict):
+        return None
+    runtime = target.get("runtime")
+    model_id = target.get("model")
+    generation_id = target.get("generation_id")
+    if not runtime or not model_id or not generation_id:
+        return None
+    return runtime, model_id, generation_id
 
-:change_llm
-python install.py --change-llm
-if %errorlevel% neq 0 (
-    echo [ERROR] Failed to change the LLM model.
-)
-pause
-goto menu
 
-:list_models
-python install.py --list-llm-models
-pause
-goto menu
-
-:stop
-docker compose -f docker-compose.yml down
-if %errorlevel% neq 0 (
-    echo [ERROR] Failed to stop Dotori services. Is Docker Desktop running?
-)
-pause
-goto menu
-
-:remove_llm
-python install.py --remove-llm
-if %errorlevel% neq 0 (
-    echo [ERROR] Failed to remove the LLM runtime.
-)
-pause
-goto menu
-
-:status
-python install.py --status
-pause
-goto menu
-"""
-    with open(launcher_path, "w", encoding="utf-8") as f:
-        f.write(code)
-    print(f"{GREEN}• Created Windows launcher: {launcher_path}{RESET}")
-
-def initialize_llm_runtime_config(mode, priority_mode="balanced", cluster_mode=False, keep_weights=False):
+def initialize_llm_runtime_config(mode, priority_mode="balanced", cluster_mode=False, keep_weights=False, scope="production"):
     if mode != "1":
         print(f"{YELLOW}• Skipping LLM runtime detection because Full Local AI RAG mode is not selected.{RESET}")
         return
 
-    previous_payload = load_llm_runtime_config()
+    previous_payload = load_llm_runtime_config(scope=scope)
 
     print_header("🧭 LLM Runtime Setup")
     cmd = (
@@ -372,27 +371,41 @@ def initialize_llm_runtime_config(mode, priority_mode="balanced", cluster_mode=F
     if cluster_mode:
         cmd += " --cluster-mode"
     print(f"Command: {BOLD}{cmd}{RESET}\n")
-    if run_interactive_command(cmd):
-        if activate_selected_rag_runtime():
-            print(f"{GREEN}• LLM runtime configuration and service switch completed.{RESET}")
-            new_info = extract_runtime_and_repo(load_llm_runtime_config())
-            if new_info:
-                print_header("🧹 Cleaning Up Previous Runtime")
-                messages = cleanup_stale_runtime(
-                    previous_payload,
-                    *new_info,
-                    remove_weights=not keep_weights,
-                )
-                if messages:
-                    for message in messages:
-                        print(f"{GREEN}• {message}{RESET}")
-                else:
-                    print(f"{YELLOW}• Nothing to clean up.{RESET}")
-            return
-        print(f"{YELLOW}• Runtime configuration was saved, but the selected service could not be started.{RESET}")
+    if not run_interactive_command(cmd):
+        print(f"{YELLOW}• LLM runtime setup failed. The service will continue with the built-in catalog fallback.{RESET}")
         return
 
-    print(f"{YELLOW}• LLM runtime setup failed. The service will continue with the built-in catalog fallback.{RESET}")
+    pending = _read_pending_generation(scope)
+    if pending is None:
+        print(f"{YELLOW}• No candidate runtime generation was produced; nothing to activate.{RESET}")
+        return
+
+    runtime, model_id, generation_id = pending
+    spec = build_runtime_spec(scope, runtime, model_id, generation_id)
+    result = RuntimeLifecycleManager().apply(spec)
+    for message in result.messages:
+        color = GREEN if result.ok else (YELLOW if result.rolled_back else RED)
+        print(f"{color}• {message}{RESET}")
+
+    if not result.ok:
+        print(f"{RED}• Runtime activation failed{' (rolled back to the previous runtime)' if result.rolled_back else ''}.{RESET}")
+        return
+
+    print(f"{GREEN}• LLM runtime configuration and service switch completed.{RESET}")
+    new_info = extract_runtime_and_repo(load_llm_runtime_config(scope=scope))
+    if new_info:
+        print_header("🧹 Cleaning Up Previous Runtime")
+        messages = cleanup_stale_runtime(
+            previous_payload,
+            *new_info,
+            scope=scope,
+            remove_weights=not keep_weights,
+        )
+        if messages:
+            for message in messages:
+                print(f"{GREEN}• {message}{RESET}")
+        else:
+            print(f"{YELLOW}• Nothing to clean up.{RESET}")
 
 
 def remove_llm_runtime_cli(assume_yes=False):
@@ -415,20 +428,8 @@ def remove_llm_runtime_cli(assume_yes=False):
     print(f"{GREEN}• LLM runtime removal complete.{RESET}")
 
 
-def selected_rag_runtime_service():
-    config_path = os.path.join("data", "config", "llm_runtime.json")
-    try:
-        with open(config_path, "r", encoding="utf-8") as config_file:
-            payload = json.load(config_file)
-        runtime = str((payload.get("target") or {}).get("runtime") or "").lower()
-    except (OSError, json.JSONDecodeError, AttributeError):
-        runtime = ""
-    return "vllm-rag" if runtime == "vllm" else "llama-rag"
-
-
 STATUS_SERVICES = ["db", "redis", "app", "nginx", "embedding-worker", "search-worker", "rag-worker"]
-# Fixed by docker-compose.yml's nginx service; not env-configurable today.
-STATUS_PUBLISHED_PORTS = {"http": 80, "https": 443}
+STATUS_PUBLISHED_PORTS = {"local_http": 8000, "external_http": 80, "external_https": 443}
 
 
 def _probe_external_app_url():
@@ -494,19 +495,27 @@ def _print_server_status_report(report):
         print(f"rag: {rag.get('message')}")
 
 
-def handle_server_status_cli(json_output=False, skip_file_io=False):
+def handle_server_status_cli(json_output=False, skip_file_io=False, scope="production"):
     print_header("Server Status")
 
     docker_services = probe_docker_services()
-    relevant_service_names = set(STATUS_SERVICES) | {selected_rag_runtime_service()}
     docker_status = {
         entry["service"]: {"state": entry["state"], "status": entry["status"]}
         for entry in docker_services
-        if entry.get("service") in relevant_service_names
+        if entry.get("service") in set(STATUS_SERVICES)
+    }
+    # The RAG runtime container isn't part of the Compose project (see
+    # runtime_lifecycle.py), so it doesn't show up in probe_docker_services();
+    # check it directly instead.
+    rag_status = RuntimeLifecycleManager().status(scope)
+    docker_status[rag_status["container_name"]] = {
+        "state": "running" if rag_status["running"] else "not running",
+        "status": rag_status.get("health") or "-",
     }
 
-    env_settings = read_env_file(ENV_FILE) if os.path.exists(ENV_FILE) else {}
-    domain = env_settings.get("NGINX_SERVER_NAME", "")
+    provider_env = configuration_directory() / "provider.env"
+    network_settings = read_network_env_file(provider_env)
+    domain = network_settings.get("DOTORI_EXTERNAL_DOMAIN", "")
 
     cmd = f"{COMPOSE_COMMAND} exec -T app python manage.py server_status --json-output"
     if skip_file_io:
@@ -537,36 +546,27 @@ def handle_server_status_cli(json_output=False, skip_file_io=False):
     _print_server_status_report(report)
 
 
-def activate_selected_rag_runtime():
-    runtime_service = selected_rag_runtime_service()
-    inactive_service = "llama-rag" if runtime_service == "vllm-rag" else "vllm-rag"
-    compose = ["docker", "compose", "-f", COMPOSE_FILE]
-    start_cmd = [*compose, "up", "--build", "--quiet-build", "--quiet-pull", "-d", runtime_service]
-    print(f"Starting selected runtime: {BOLD}{' '.join(start_cmd)}{RESET}")
-    result = subprocess.run(start_cmd, check=False)
-    if result.returncode != 0:
-        return False
-    # Force a restart so a container that was already running picks up the
-    # freshly written args file (a no-op `up -d` won't reload it).
-    subprocess.run([*compose, "restart", runtime_service], check=False)
-    subprocess.run([*compose, "rm", "-f", "-s", inactive_service], check=False)
-    subprocess.run([*compose, "restart", "rag-worker"], check=False)
-    return True
-
 def run_services(mode, initialize_llm=False, rag_priority="balanced"):
     print_header("🚀 3. Start Dotori Docker Containers")
 
-    # Base services that always run
-    services = ["db", "redis", "app", "nginx"]
+    # A normal start always restores local-only access. External access is
+    # enabled only through the explicit network access action.
+    run_command(f"{COMPOSE_COMMAND} --profile direct-https stop nginx")
 
+    # Base services that always run
+    services = ["db", "redis", "app"]
+
+    want_rag = False
     if mode == "1":
         # Full AI Mode
         services += ["embedding-worker", "search-worker", "rag-worker"]
-        if not initialize_llm:
-            services.append(selected_rag_runtime_service())
+        want_rag = not initialize_llm
     elif mode == "2":
         # Search AI Mode
         services += ["embedding-worker", "search-worker"]
+
+    manager = RuntimeLifecycleManager()
+    manager.ensure_network("production")
 
     cmd = f"{COMPOSE_COMMAND} up --build --quiet-build --quiet-pull -d " + " ".join(services)
     print(f"Command: {BOLD}{cmd}{RESET}\n")
@@ -576,18 +576,69 @@ def run_services(mode, initialize_llm=False, rag_priority="balanced"):
     # run in real time
     process = subprocess.Popen(cmd, shell=True)
     process.communicate()
-    
+
     if process.returncode == 0:
         if initialize_llm:
             initialize_llm_runtime_config(mode, priority_mode=rag_priority)
+        elif want_rag:
+            # Ensure the already-configured runtime is running (or start it
+            # for the first time); anything else gets torn down inside apply().
+            info = _active_runtime_info("production")
+            if info:
+                runtime, model_id, generation_id = info
+                spec = build_runtime_spec("production", runtime, model_id, generation_id)
+                manager.apply(spec)
+            else:
+                print(f"{YELLOW}• No LLM runtime is configured yet; run --change-llm to select one.{RESET}")
+        else:
+            manager.stop("production")
         print_header("🎉 Startup Complete")
         print(f"• {BOLD}Web application:{RESET} {GREEN}{APP_URL}{RESET}")
         print(f"• {BOLD}To stop the services, run:{RESET} {YELLOW}{COMPOSE_COMMAND} down{RESET}")
     else:
         print(f"\n{RED}[ERROR] Failed to start Docker services. Verify that Docker Desktop is running.{RESET}")
 
+
+def _scope_arg(args, default="production"):
+    if "--scope" not in args:
+        return default
+    index = args.index("--scope")
+    value = args[index + 1] if index + 1 < len(args) else default
+    if value not in SCOPE_CONFIG:
+        print(f"{RED}[ERROR] Unknown scope: {value}. Expected one of: {', '.join(SCOPE_CONFIG)}{RESET}")
+        sys.exit(1)
+    return value
+
+
+def handle_stop_cli(scope="production"):
+    print_header(f"Stop Dotori Services ({scope})")
+    scope_cfg = SCOPE_CONFIG[scope]
+    compose_command = f"docker compose -f {scope_cfg.compose_file}"
+
+    run_command(f"{compose_command} stop rag-worker")
+    RuntimeLifecycleManager().stop(scope, remove_container=True)
+    ok, _stdout, stderr = run_command(f"{compose_command} down")
+
+    inspect_ok, count_out, _ = run_command(
+        f'docker network inspect {scope_cfg.network_name} --format "{{{{len .Containers}}}}"'
+    )
+    if inspect_ok and count_out.strip() == "0":
+        run_command(f"docker network rm {scope_cfg.network_name}")
+
+    if ok:
+        print(f"{GREEN}• Dotori services stopped.{RESET}")
+    else:
+        print(f"{RED}[ERROR] Failed to stop Dotori services: {stderr or 'is Docker Desktop running?'}{RESET}")
+    return ok
+
+
 def main():
     has_run_flag = "--run" in sys.argv
+    network_result = handle_network_access_cli(sys.argv[1:])
+    if network_result is not None:
+        if not network_result:
+            sys.exit(1)
+        return
     if "--change-llm" in sys.argv:
         initialize_llm_runtime_config(
             "1",
@@ -598,6 +649,9 @@ def main():
     if "--remove-llm" in sys.argv:
         remove_llm_runtime_cli(assume_yes="--yes" in sys.argv)
         return
+    if "--stop" in sys.argv:
+        ok = handle_stop_cli(_scope_arg(sys.argv))
+        sys.exit(0 if ok else 1)
     if any(option in sys.argv for option in ("--list-llm-models", "--search-llm", "--show-llm")):
         handle_llm_catalog_cli(sys.argv[1:])
         return
@@ -605,6 +659,7 @@ def main():
         handle_server_status_cli(
             json_output="--json-output" in sys.argv,
             skip_file_io="--skip-file-io" in sys.argv,
+            scope=_scope_arg(sys.argv),
         )
         return
 

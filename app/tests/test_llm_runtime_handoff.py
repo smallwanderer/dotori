@@ -2,11 +2,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from document_ai.llm_installation_helper.runtime_handoff import (
+from llm_installation.runtime_handoff import (
     RuntimeHandoffError,
     build_runtime_policy_input,
 )
-from document_ai.llm_installation_helper.selection import (
+from llm_installation.selection import (
     SelectionCandidate,
     SelectionResult,
 )

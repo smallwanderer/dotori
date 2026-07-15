@@ -13,10 +13,10 @@ from document_ai.management.commands.server_status import (
     _rag_status,
     check_file_io_pipeline,
 )
-from document_ai.llm_installation_helper.catalog import get_catalog_entry
-from document_ai.llm_installation_helper.config_store import write_llm_runtime_config
-from document_ai.llm_installation_helper.runtime_probe import ServerRuntimeProfile
-from document_ai.llm_installation_helper.router import resolve_server_rag_target
+from llm_installation.catalog import get_catalog_entry
+from llm_installation.config_store import write_llm_runtime_config
+from llm_installation.runtime_probe import ServerRuntimeProfile
+from llm_installation.router import resolve_server_rag_target
 from files.models import Node
 from files.services import storage as storage_service
 

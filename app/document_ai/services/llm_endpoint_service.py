@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from django.utils import timezone
 
-from document_ai.llm_installation_helper.router import get_cached_server_rag_target
+from document_ai.services.rag_runtime_config import get_cached_server_rag_target
 from document_ai.models import LLMEndpoint, UserLLMPreference
 
 

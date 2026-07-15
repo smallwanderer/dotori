@@ -8,7 +8,7 @@
 
 | 목적 | Compose 파일 | 접속 주소 |
 | --- | --- | --- |
-| 서버/운영에 가까운 실행 | `docker-compose.yml` | `http://localhost/` 또는 서버 도메인 |
+| 서버/운영에 가까운 실행 | `docker-compose.yml` | `http://127.0.0.1:8000/` 또는 선택적으로 연결한 서버 도메인 |
 | 개발 전용 실행 | `docker-compose.dev.yml` | `http://localhost:8888/` |
 
 설치 프로그램과 일반 실행은 기본 `docker-compose.yml`을 사용합니다. `docker-compose.dev.yml`은 테스트와 개발용으로만 사용합니다.
@@ -49,15 +49,15 @@ cp .env.example .env
 반드시 확인할 값:
 
 ```env
-DJANGO_SECRET_KEY=change-me
-DJANGO_ALLOWED_HOSTS=your-domain.example.com,server-ip
-DJANGO_CSRF_TRUSTED_ORIGINS=https://your-domain.example.com,http://server-ip
+DOTORI_DJANGO_SECRET_KEY=change-me
+DOTORI_DJANGO_ALLOWED_HOSTS=your-domain.example.com,server-ip
+DOTORI_DJANGO_CSRF_TRUSTED_ORIGINS=https://your-domain.example.com,http://server-ip
 POSTGRES_USER=change-me
 POSTGRES_PASSWORD=change-me
 HF_TOKEN=hf_your_token_here
 ```
 
-도메인 없이 IP로만 테스트한다면 `DJANGO_ALLOWED_HOSTS`에 서버 IP를 넣습니다.
+도메인 없이 IP로만 테스트한다면 `DOTORI_DJANGO_ALLOWED_HOSTS`에 서버 IP를 넣습니다.
 
 ### 3.2 실행
 
@@ -162,10 +162,10 @@ cp .env.example .env.dev
 
 ```env
 DJANGO_DEBUG=1
-DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
-DJANGO_CSRF_TRUSTED_ORIGINS=http://localhost:8888,http://127.0.0.1:8888
 HF_TOKEN=hf_your_token_here
 ```
+
+개발용 호스트와 CSRF 기본값은 `docker-compose.dev.yml`이 로컬 접속 범위로 적용합니다. `.env.dev`에는 Nginx, 도메인 또는 외부 연결 보안 변수를 추가하지 않습니다.
 
 ### 4.3 개발 stack 실행
 
@@ -234,10 +234,9 @@ docker compose logs -f nginx
 ```bash
 docker compose -f docker-compose.dev.yml ps
 docker compose -f docker-compose.dev.yml logs -f app
-docker compose -f docker-compose.dev.yml logs -f nginx
 ```
 
-대부분은 `app` 컨테이너가 아직 시작 중이거나 migration/env 설정 오류가 있는 경우입니다.
+기본 개발 실행은 Nginx를 사용하지 않습니다. 대부분은 `app` 컨테이너가 아직 시작 중이거나 migration/env 설정 오류가 있는 경우입니다.
 
 ### 5.2 RAG 답변이 생성되지 않음
 

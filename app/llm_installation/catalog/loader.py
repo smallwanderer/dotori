@@ -2,7 +2,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from document_ai.llm_installation_helper.catalog.models import (
+from llm_installation.catalog.models import (
     ArtifactCatalogEntry,
     ModelCatalogEntry,
     RAGModelCatalogDocument,

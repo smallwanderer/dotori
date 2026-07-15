@@ -4,15 +4,16 @@ from dataclasses import replace
 
 from django.core.management.base import BaseCommand, CommandError
 
-from document_ai.llm_installation_helper.catalog import get_rag_model_catalog
-from document_ai.llm_installation_helper.config_store import get_llm_runtime_config_path, load_llm_runtime_config
-from document_ai.llm_installation_helper.planner import PRIORITY_PRESETS, assess_catalog_entry
-from document_ai.llm_installation_helper.router import (
+from document_ai.services.rag_runtime_config import (
     LLMRuntimeNotConfigured,
     get_configured_server_rag_target,
-    resolve_server_rag_target,
+    get_llm_runtime_config_path,
+    load_llm_runtime_config,
 )
-from document_ai.llm_installation_helper.runtime_probe import probe_server_runtime
+from llm_installation.catalog import get_rag_model_catalog
+from llm_installation.planner import PRIORITY_PRESETS, assess_catalog_entry
+from llm_installation.router import resolve_server_rag_target
+from llm_installation.runtime_probe import probe_server_runtime
 
 
 class Command(BaseCommand):

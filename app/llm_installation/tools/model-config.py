@@ -62,7 +62,7 @@ class MetadataResolutionError(Exception):
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+    return Path(__file__).resolve().parents[3]
 
 
 def _strip_env_value(value: str) -> str:

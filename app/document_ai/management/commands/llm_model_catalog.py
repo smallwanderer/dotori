@@ -4,9 +4,9 @@ from dataclasses import replace
 
 from django.core.management.base import BaseCommand, CommandError
 
-from document_ai.llm_installation_helper.catalog import catalog_rows, get_catalog_entry
-from document_ai.llm_installation_helper.cli import json_output, model_detail_dict, print_model_table
-from document_ai.llm_installation_helper.runtime_probe import probe_server_runtime
+from llm_installation.catalog import catalog_rows, get_catalog_entry
+from llm_installation.cli import json_output, model_detail_dict, print_model_table
+from llm_installation.runtime_probe import probe_server_runtime
 
 
 class Command(BaseCommand):

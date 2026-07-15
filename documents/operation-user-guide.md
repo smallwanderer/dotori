@@ -72,9 +72,9 @@ Django `app`은 요청 수신과 작업 등록에만 집중하므로, 워커 수
 
 | 모드 | 활성 서비스 | 비고 |
 |------|------------|------|
-| **Full 로컬 AI RAG** | Nginx, app, db, redis, embedding-worker, search-worker, query-worker, rag-worker, recovery-worker, llama-rag 또는 vllm-rag | LLM 답변 생성 포함 전체 기능 |
-| **Hybrid/Search AI** | Nginx, app, db, redis, embedding-worker, search-worker, recovery-worker | LLM 없이 파싱·임베딩·하이브리드 검색만 동작 |
-| **기본 모드** | Nginx, app, db, redis | 파일 관리만 사용 |
+| **Full 로컬 AI RAG** | app, db, redis, embedding-worker, search-worker, query-worker, rag-worker, recovery-worker, llama-rag 또는 vllm-rag | LLM 답변 생성 포함 전체 기능 |
+| **Hybrid/Search AI** | app, db, redis, embedding-worker, search-worker, recovery-worker | LLM 없이 파싱·임베딩·하이브리드 검색만 동작 |
+| **기본 모드** | app, db, redis | 파일 관리만 사용 |
 
 현재 설치된 모드는 `.env`의 설정값과 실행 중인 컨테이너 목록으로 확인할 수 있습니다.
 
@@ -86,7 +86,7 @@ docker compose ps
 
 | 컴포넌트 | 역할 |
 |----------|------|
-| **Nginx** | 리버스 프록시. 외부 HTTP/HTTPS 요청을 `app`으로 전달하고 정적 파일·업로드를 직접 서빙합니다. |
+| **Nginx** | 선택형 외부 HTTPS 리버스 프록시. `direct-https` profile을 연결한 경우에만 실행됩니다. |
 | **recovery-worker** (Celery Beat) | 주기적으로 stale 상태의 파싱·임베딩 작업을 재큐잉합니다. |
 
 

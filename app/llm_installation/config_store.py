@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from document_ai.llm_installation_helper.runtime_probe import ServerRuntimeProfile
+from document_ai.services.rag_runtime_config import get_llm_runtime_config_path
+from llm_installation.runtime_probe import ServerRuntimeProfile
 
 
 CONFIG_VERSION = 7
@@ -30,7 +30,7 @@ def _selected_entry_snapshot(target) -> dict[str, Any] | None:
     return entry if isinstance(entry, dict) else None
 
 
-def _write_llama_runtime_args(config_path: Path, *, target, profile) -> Path | None:
+def _build_llama_runtime_args(*, target, profile) -> list[str] | None:
     if target.runtime != "llama.cpp" or not target.serving_profile:
         return None
     entry = _selected_entry_snapshot(target)
@@ -81,13 +81,10 @@ def _write_llama_runtime_args(config_path: Path, *, target, profile) -> Path | N
     )
     if plan.get("kv_cache_placement") == "ram" and plan.get("gpu_layers", 0):
         args.append("--no-kv-offload")
-
-    args_path = config_path.with_name("llama_rag.args")
-    args_path.write_text("\n".join(args) + "\n", encoding="utf-8")
-    return args_path
+    return args
 
 
-def _write_vllm_runtime_args(config_path: Path, *, target) -> Path | None:
+def _build_vllm_runtime_args(*, target) -> list[str] | None:
     if target.runtime != "vllm" or not target.serving_profile:
         return None
     entry = _selected_entry_snapshot(target)
@@ -110,45 +107,21 @@ def _write_vllm_runtime_args(config_path: Path, *, target) -> Path | None:
     ]
     if artifact.get("format") in {"awq", "gptq"}:
         args.extend(["--quantization", artifact["format"]])
-    args_path = config_path.with_name("vllm_rag.args")
-    args_path.write_text("\n".join(args) + "\n", encoding="utf-8")
-    return args_path
+    return args
 
 
-def get_llm_runtime_config_path() -> Path:
-    configured_path = os.getenv("LLM_RUNTIME_CONFIG_PATH", "").strip()
-    if configured_path:
-        return Path(configured_path)
-    repo_root = Path(__file__).resolve().parents[3]
-    return repo_root / "data" / "config" / "llm_runtime.json"
+def _build_runtime_args(*, target, profile: ServerRuntimeProfile) -> list[str] | None:
+    if target.runtime == "llama.cpp":
+        return _build_llama_runtime_args(target=target, profile=profile)
+    if target.runtime == "vllm":
+        return _build_vllm_runtime_args(target=target)
+    return None
 
 
-def load_llm_runtime_config(path: Path | None = None) -> dict[str, Any]:
-    config_path = path or get_llm_runtime_config_path()
-    if not config_path.exists():
-        return {}
-
-    try:
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-    if not isinstance(payload, dict):
-        return {}
-    return payload
-
-
-def write_llm_runtime_config(
-    *,
-    target,
-    profile: ServerRuntimeProfile,
-    catalog: list,
-    path: Path | None = None,
-) -> Path:
-    config_path = path or get_llm_runtime_config_path()
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    payload = {
+def _build_runtime_payload(
+    *, target, profile: ServerRuntimeProfile, catalog: list, generation_id: str = ""
+) -> dict[str, Any]:
+    return {
         "version": CONFIG_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "target": {
@@ -156,6 +129,7 @@ def write_llm_runtime_config(
             "base_url": target.base_url,
             "model": target.model,
             "runtime": target.runtime,
+            "generation_id": generation_id,
             "reason": target.reason,
             "fallback_used": target.fallback_used,
             "priority_preset": target.priority_preset,
@@ -177,14 +151,85 @@ def write_llm_runtime_config(
         "catalog": [_serialize_catalog_entry(entry) for entry in catalog],
         "diagnostics": target.diagnostics or {},
     }
+
+
+def write_runtime_generation(
+    *,
+    scope: str,
+    target,
+    profile: ServerRuntimeProfile,
+    catalog: list,
+    generation_id: str,
+    repo_root: Path | None = None,
+) -> Path:
+    """Stage a candidate runtime config + args file under
+    data/config/runtime_scopes/<scope>/generations/<generation_id>/ without
+    touching the active llm_runtime.json pointer. The active pointer is only
+    updated by commit_active_runtime_config, after health validation."""
+    active_path = get_llm_runtime_config_path(scope, repo_root=repo_root)
+    generation_dir = active_path.parent / "generations" / generation_id
+    generation_dir.mkdir(parents=True, exist_ok=True)
+
+    payload = _build_runtime_payload(
+        target=target, profile=profile, catalog=catalog, generation_id=generation_id
+    )
+    (generation_dir / "runtime.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    args = _build_runtime_args(target=target, profile=profile)
+    if args is not None:
+        (generation_dir / "runtime.args").write_text(
+            "\n".join(args) + "\n", encoding="utf-8"
+        )
+
+    return generation_dir
+
+
+def commit_active_runtime_config(
+    scope: str, generation_id: str, repo_root: Path | None = None
+) -> Path:
+    """Atomically point <scope>/llm_runtime.json at an already-validated
+    generation's runtime.json (temp-file write + os.replace)."""
+    active_path = get_llm_runtime_config_path(scope, repo_root=repo_root)
+    generation_dir = active_path.parent / "generations" / generation_id
+    payload_text = (generation_dir / "runtime.json").read_text(encoding="utf-8")
+
+    active_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = active_path.with_suffix(".json.tmp")
+    tmp_path.write_text(payload_text, encoding="utf-8")
+    tmp_path.replace(active_path)
+    return active_path
+
+
+def write_llm_runtime_config(
+    *,
+    target,
+    profile: ServerRuntimeProfile,
+    catalog: list,
+    path: Path | None = None,
+) -> Path:
+    """Write and immediately activate a runtime config at an explicit flat
+    path, with no generation staging or health-gated commit. This is the
+    direct-write path used by `detect_llm_runtime --write` (headless,
+    operator-managed containers) and by tests that need a fixture at a known
+    path; the interactive installation flow uses write_runtime_generation +
+    commit_active_runtime_config instead, so a failed candidate never
+    clobbers the active config."""
+    config_path = path or get_llm_runtime_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = _build_runtime_payload(target=target, profile=profile, catalog=catalog)
     config_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    _write_llama_runtime_args(
-        config_path,
-        target=target,
-        profile=profile,
-    )
-    _write_vllm_runtime_args(config_path, target=target)
+
+    args = _build_runtime_args(target=target, profile=profile)
+    if args is not None:
+        args_filename = "llama_rag.args" if target.runtime == "llama.cpp" else "vllm_rag.args"
+        config_path.with_name(args_filename).write_text(
+            "\n".join(args) + "\n", encoding="utf-8"
+        )
     return config_path

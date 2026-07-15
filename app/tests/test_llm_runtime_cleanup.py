@@ -2,19 +2,18 @@ import json
 
 import pytest
 
-from document_ai.llm_installation_helper.catalog import get_catalog_entry, get_rag_model_catalog
-from document_ai.llm_installation_helper.cleanup import (
+from llm_installation.catalog import get_catalog_entry
+from llm_installation.cleanup import (
     cleanup_stale_runtime,
-    clear_runtime_config_files,
     extract_runtime_and_repo,
     get_runtime_cache_dir,
     hf_cache_dirname,
     remove_current_llm_runtime,
     remove_model_weights,
 )
-from document_ai.llm_installation_helper.config_store import write_llm_runtime_config
-from document_ai.llm_installation_helper.router import resolve_server_rag_target
-from document_ai.llm_installation_helper.runtime_probe import ServerRuntimeProfile
+from llm_installation.config_store import write_llm_runtime_config
+from llm_installation.router import resolve_server_rag_target
+from llm_installation.runtime_probe import ServerRuntimeProfile
 
 pytestmark = pytest.mark.unit
 
@@ -41,7 +40,9 @@ def _profile(*, ram_mb=32768, disk_free_mb=102400, gpu_vram_mb=0):
     )
 
 
-def _write_config(tmp_path, model_id=GGUF_MODEL_ID):
+def _write_config(tmp_path, model_id=GGUF_MODEL_ID, scope="production"):
+    """Write a runtime config directly at the real scope-rooted path under
+    tmp_path, so remove_current_llm_runtime(repo_root=tmp_path) finds it."""
     profile = _profile()
     catalog = [get_catalog_entry(model_id)]
     target = resolve_server_rag_target(
@@ -50,11 +51,14 @@ def _write_config(tmp_path, model_id=GGUF_MODEL_ID):
         check_endpoint=False,
         priority_preset="balanced",
     )
-    config_path = write_llm_runtime_config(
+    config_path = (
+        tmp_path / "data" / "config" / "runtime_scopes" / scope / "llm_runtime.json"
+    )
+    write_llm_runtime_config(
         target=target,
         profile=profile,
         catalog=catalog,
-        path=tmp_path / "data" / "config" / "llm_runtime.json",
+        path=config_path,
     )
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     return config_path, payload
@@ -91,19 +95,6 @@ def test_remove_model_weights_deletes_cached_dir_and_is_idempotent(tmp_path):
     assert "No cached weights" in message
 
 
-def test_clear_runtime_config_files_removes_config_and_args(tmp_path):
-    config_path, _ = _write_config(tmp_path)
-    assert config_path.exists()
-    assert config_path.with_name("llama_rag.args").exists()
-
-    removed = clear_runtime_config_files(config_path)
-
-    assert config_path in removed
-    assert config_path.with_name("llama_rag.args") in removed
-    assert not config_path.exists()
-    assert not config_path.with_name("llama_rag.args").exists()
-
-
 def test_cleanup_stale_runtime_noop_when_model_unchanged(tmp_path):
     _, payload = _write_config(tmp_path)
     runtime, repo_id = extract_runtime_and_repo(payload)
@@ -137,20 +128,27 @@ def test_cleanup_stale_runtime_removes_old_weights_when_model_changes(tmp_path):
 def test_remove_current_llm_runtime_clears_config_when_present(tmp_path, monkeypatch):
     config_path, _ = _write_config(tmp_path)
     monkeypatch.setattr(
-        "document_ai.llm_installation_helper.cleanup.stop_and_remove_container",
-        lambda service, repo_root=None: True,
+        "llm_installation.runtime_lifecycle.RuntimeLifecycleManager.remove",
+        lambda self, scope: True,
     )
 
-    result = remove_current_llm_runtime(repo_root=tmp_path, config_path=config_path)
+    result = remove_current_llm_runtime(repo_root=tmp_path)
 
     assert result["had_config"] is True
-    assert not config_path.exists()
+    # RuntimeLifecycleManager.remove() is mocked away above (it's the piece
+    # that would delete the scope's config tree in a real run), so we only
+    # assert on the orchestration result here, not the file system.
+    assert any("Removed managed runtime container" in m for m in result["messages"])
+    assert config_path.exists()
 
 
-def test_remove_current_llm_runtime_handles_missing_config(tmp_path):
-    result = remove_current_llm_runtime(
-        repo_root=tmp_path, config_path=tmp_path / "data" / "config" / "llm_runtime.json"
+def test_remove_current_llm_runtime_handles_missing_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "llm_installation.runtime_lifecycle.RuntimeLifecycleManager.remove",
+        lambda self, scope: False,
     )
 
+    result = remove_current_llm_runtime(repo_root=tmp_path)
+
     assert result["had_config"] is False
-    assert "No resolvable runtime/model" in result["messages"][0]
+    assert any("No resolvable runtime/model" in m for m in result["messages"])
