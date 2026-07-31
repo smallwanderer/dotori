@@ -787,16 +787,18 @@ def probe_docker_services() -> list[dict]:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
         return []
 
-    if result.returncode != 0 or not result.stdout.strip():
+    raw_output = (result.stdout or "").strip()
+    if result.returncode != 0 or not raw_output:
         return []
 
     services = []
-    raw_output = result.stdout.strip()
     try:
         parsed = json.loads(raw_output)
         if isinstance(parsed, list):

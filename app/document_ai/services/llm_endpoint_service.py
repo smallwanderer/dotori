@@ -229,7 +229,7 @@ def resolve_rag_llm_request_config(rag_job) -> RAGLLMRequestConfig:
     base_url = _normalize_llm_base_url(
         rag_job.llm_base_url
         or server_base_url
-        or os.getenv("RAG_LLM_URL", "http://llama-rag:8080")
+        or os.getenv("RAG_LLM_URL", "http://rag-runtime:8080")
     )
     model = (
         rag_job.llm_model

@@ -11,6 +11,7 @@
         "num_hidden_layers": 64,
         "num_attention_heads": 32,
         "num_key_value_heads": 16,
+        "head_dim": 256,
         "extra": {
             "metadata_source": "autoconfig:google/gemma-3-27b-it",
             "root_architecture": "gemma3"

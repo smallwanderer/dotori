@@ -8,6 +8,7 @@ from document_ai.services.rag_runtime_config import (
 from llm_installation.catalog import get_catalog_entry
 from llm_installation.config_store import (
     commit_active_runtime_config,
+    stage_legacy_runtime_generation,
     write_runtime_generation,
 )
 from llm_installation.router import resolve_server_rag_target
@@ -100,6 +101,105 @@ def test_commit_overwrites_previous_active_config(tmp_path):
 
     payload = json.loads(active_path.read_text(encoding="utf-8"))
     assert payload["target"]["generation_id"] == "gen-b"
+
+
+def test_stage_legacy_runtime_generation_for_managed_start(tmp_path):
+    legacy_dir = tmp_path / "data" / "config"
+    legacy_dir.mkdir(parents=True)
+    legacy_path = legacy_dir / "llm_runtime.json"
+    legacy_path.write_text(
+        json.dumps(
+            {
+                "version": 7,
+                "target": {
+                    "runtime": "llama.cpp",
+                    "model": GGUF_MODEL_ID,
+                    "base_url": "http://llama-rag:8080",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (legacy_dir / "llama_rag.args").write_text(
+        "--hf-repo test/model\n", encoding="utf-8"
+    )
+
+    migrated = stage_legacy_runtime_generation("production", repo_root=tmp_path)
+
+    assert migrated is not None
+    runtime, model_id, generation_id = migrated
+    assert (runtime, model_id) == ("llama.cpp", GGUF_MODEL_ID)
+    generation_dir = (
+        tmp_path
+        / "data"
+        / "config"
+        / "runtime_scopes"
+        / "production"
+        / "generations"
+        / generation_id
+    )
+    payload = json.loads(
+        (generation_dir / "runtime.json").read_text(encoding="utf-8")
+    )
+    assert payload["target"]["generation_id"] == generation_id
+    assert payload["target"]["base_url"] == "http://rag-runtime:8080"
+    assert (generation_dir / "runtime.args").read_text(encoding="utf-8") == (
+        "--hf-repo test/model\n"
+    )
+    assert b"\r\n" not in (generation_dir / "runtime.args").read_bytes()
+    assert not (
+        tmp_path
+        / "data"
+        / "config"
+        / "runtime_scopes"
+        / "production"
+        / "llm_runtime.json"
+    ).exists()
+
+
+def test_stage_legacy_repairs_scoped_pointer_with_missing_generation(tmp_path):
+    legacy_dir = tmp_path / "data" / "config"
+    scoped_dir = legacy_dir / "runtime_scopes" / "production"
+    scoped_dir.mkdir(parents=True)
+    legacy_payload = {
+        "version": 7,
+        "target": {
+            "runtime": "llama.cpp",
+            "model": GGUF_MODEL_ID,
+            "base_url": "http://llama-rag:8080",
+        },
+    }
+    (legacy_dir / "llm_runtime.json").write_text(
+        json.dumps(legacy_payload), encoding="utf-8"
+    )
+    (legacy_dir / "llama_rag.args").write_text(
+        "--hf-repo test/model\n", encoding="utf-8"
+    )
+    (scoped_dir / "llm_runtime.json").write_text(
+        json.dumps(
+            {
+                **legacy_payload,
+                "target": {
+                    **legacy_payload["target"],
+                    "generation_id": "missing-generation",
+                    "base_url": "http://rag-runtime:8080",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    migrated = stage_legacy_runtime_generation("production", repo_root=tmp_path)
+
+    assert migrated is not None
+    runtime, model_id, generation_id = migrated
+    assert (runtime, model_id) == ("llama.cpp", GGUF_MODEL_ID)
+    generation_dir = scoped_dir / "generations" / generation_id
+    assert (generation_dir / "runtime.json").is_file()
+    assert (generation_dir / "runtime.args").is_file()
+    assert json.loads((scoped_dir / "llm_runtime.json").read_text())["target"][
+        "generation_id"
+    ] == "missing-generation"
 
 
 def test_get_llm_runtime_config_path_precedence(tmp_path, monkeypatch):

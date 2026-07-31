@@ -3,14 +3,30 @@ from __future__ import annotations
 import json
 
 
-def print_model_table(rows, stdout) -> None:
-    headers = ["#", "Model", "Quant", "Size", "Device", "Logical", "Pool Req", "RAM Req", "Backend", "Speed", "Safety", "Fit"]
-    widths = [3, 24, 9, 6, 7, 9, 9, 7, 10, 8, 8, 7]
+def render_table(headers, widths, rows, stdout, row_styles=None) -> None:
+    """Compact single-line-per-row table: one header line, one separator
+    line, then one line per row. `row_styles`, if given, is a list (parallel
+    to `rows`) of per-column style callables (or None per cell); cells are
+    padded first and styled after, so ANSI color codes never throw off
+    column alignment."""
     line = " ".join(header.ljust(width) for header, width in zip(headers, widths))
     stdout.write(line.rstrip())
     stdout.write("-" * len(line.rstrip()))
-    for row in rows:
-        values = [
+    for row_index, row in enumerate(rows):
+        styles = row_styles[row_index] if row_styles else None
+        cells = []
+        for col_index, (value, width) in enumerate(zip(row, widths)):
+            padded = str(value)[:width].ljust(width)
+            style = styles[col_index] if styles else None
+            cells.append(style(padded) if style else padded)
+        stdout.write(" ".join(cells).rstrip())
+
+
+def print_model_table(rows, stdout) -> None:
+    headers = ["#", "Model", "Quant", "Size", "Device", "Logical", "Pool Req", "RAM Req", "Backend", "Speed", "Safety", "Fit"]
+    widths = [3, 24, 9, 6, 7, 9, 9, 7, 10, 8, 8, 7]
+    table_rows = [
+        [
             str(row["index"]),
             row["model"] or "-",
             row["quant"] or "-",
@@ -24,7 +40,9 @@ def print_model_table(rows, stdout) -> None:
             row["safety"] or "-",
             row["fit_status"] or "-",
         ]
-        stdout.write(" ".join(str(value)[:width].ljust(width) for value, width in zip(values, widths)).rstrip())
+        for row in rows
+    ]
+    render_table(headers, widths, table_rows, stdout)
 
 
 def model_detail_dict(row: dict) -> dict:

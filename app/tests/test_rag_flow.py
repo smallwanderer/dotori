@@ -118,6 +118,32 @@ class RAGFlowTests(TestCase):
         self.assertEqual(rag_job.stage, RAGStage.SEARCHING)
         apply_async.assert_called_once_with(args=[search_job.id], queue="search")
 
+    def test_rag_request_returns_503_when_server_runtime_failed_with_oom(self):
+        runtime_status = {
+            "status": "unavailable",
+            "reason_code": "LLM_UNAVAILABLE_OOM",
+            "retryable": True,
+        }
+        with patch(
+            "document_ai.search.views.server_rag_runtime_availability",
+            return_value=(False, runtime_status),
+        ), patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
+            response = self.client.post(
+                "/api/document-ai/v1/rag/",
+                data={"question": "문서 내용을 요약해줘", "language": "ko"},
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "LLM_RUNTIME_UNAVAILABLE")
+        self.assertEqual(payload["reason"], "LLM_UNAVAILABLE_OOM")
+        self.assertTrue(payload["search_available"])
+        self.assertEqual(payload["recovery_command"], "python3 install.py --retry-llm")
+        self.assertEqual(SearchJob.objects.count(), 0)
+        self.assertEqual(RAGJob.objects.count(), 0)
+        apply_async.assert_not_called()
+
     def test_rag_request_does_not_call_query_parser_even_when_frontend_mode_is_llm(self):
         with patch.dict("os.environ", {"QUERY_FRONTEND_MODE": "llm"}), patch(
             "document_ai.tasks.parse_user_query"
@@ -358,6 +384,40 @@ class RAGFlowTests(TestCase):
         self.assertEqual(rag_job.stage, RAGStage.GENERATING)
         self.assertIn("답변", rag_job.stage_message)
         apply_async.assert_called_once_with(args=[rag_job.id], queue="rag")
+
+    def test_search_completion_fails_server_rag_job_when_runtime_became_unavailable(self):
+        search_job = SearchJob.objects.create(
+            owner=self.user,
+            query="대책 요약",
+            top_k=3,
+        )
+        rag_job = RAGJob.objects.create(
+            owner=self.user,
+            search_job=search_job,
+            question="대책 요약",
+            top_k=3,
+            stage=RAGStage.SEARCHING,
+        )
+        fake_retriever = SimpleNamespace(retrieve=lambda **kwargs: _search_results())
+        with patch(
+            "document_ai.search.retriever.VectorRetriever",
+            return_value=fake_retriever,
+        ), patch(
+            "document_ai.services.rag_runtime_config.server_rag_runtime_availability",
+            return_value=(
+                False,
+                {"status": "unavailable", "reason_code": "LLM_UNAVAILABLE_OOM"},
+            ),
+        ), patch("document_ai.tasks.generate_rag_response.apply_async") as apply_async:
+            result = perform_vector_search(search_job.id)
+
+        rag_job.refresh_from_db()
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["queued_rag_jobs"], 0)
+        self.assertEqual(rag_job.status, AIStatus.FAILED)
+        self.assertEqual(rag_job.stage, RAGStage.FAILED)
+        self.assertEqual(rag_job.error_message, "LLM_UNAVAILABLE_OOM")
+        apply_async.assert_not_called()
 
     def test_generate_rag_response_uses_search_evidence_and_stores_citations(self):
         search_job = SearchJob.objects.create(

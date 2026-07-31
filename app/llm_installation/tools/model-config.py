@@ -34,6 +34,7 @@ SPEC_FIELDS = (
     "num_hidden_layers",
     "num_attention_heads",
     "num_key_value_heads",
+    "head_dim",
     "max_context_length",
 )
 CORE_SPEC_FIELDS = (
@@ -44,6 +45,17 @@ CORE_SPEC_FIELDS = (
     "max_context_length",
 )
 
+# Architectures whose head_dim is NOT hidden_size // num_attention_heads.
+# Maps architecture name substring (lowercased) -> canonical head_dim.
+# Used as the first fallback when head_dim cannot be read from the config.
+_KNOWN_HEAD_DIM: dict[str, int] = {
+    "gemma3": 256,
+    "gemma4": 256,
+    "qwen3": 128,
+    "qwen3_5": 128,
+    "qwen3_moe": 128,
+}
+
 
 @dataclasses.dataclass
 class ModelSpec:
@@ -53,6 +65,7 @@ class ModelSpec:
     num_hidden_layers: Optional[int] = None
     num_attention_heads: Optional[int] = None
     num_key_value_heads: Optional[int] = None
+    head_dim: Optional[int] = None
     max_context_length: Optional[int] = None
     source: Optional[str] = None  # "autoconfig:<repo>" | "gguf_header:<repo>/<file>"
 
@@ -121,6 +134,11 @@ def _extract_from_config(config, source_tag: str) -> ModelSpec:
         None,
     )
 
+    # head_dim: read explicitly from text_config first.
+    # Some architectures (Gemma 3/4, Qwen3/3.5) declare it separately from
+    # hidden_size / num_attention_heads, so we must not synthesize it here.
+    head_dim: Optional[int] = getattr(tc, "head_dim", None)
+
     return ModelSpec(
         architecture=getattr(config, "model_type", None),
         text_architecture=getattr(tc, "model_type", None),
@@ -128,6 +146,7 @@ def _extract_from_config(config, source_tag: str) -> ModelSpec:
         num_hidden_layers=getattr(tc, "num_hidden_layers", None),
         num_attention_heads=getattr(tc, "num_attention_heads", None),
         num_key_value_heads=getattr(tc, "num_key_value_heads", None),
+        head_dim=head_dim,
         max_context_length=max_context_length,
         source=source_tag,
     )
@@ -211,6 +230,10 @@ def try_gguf_header(repo_id: str, filename: str, token: Optional[str]) -> Option
                 return None
             return get_field(f"{arch_str}.{suffix}")
 
+        # GGUF stores head_dim as attention.key_length (bytes per key head).
+        raw_key_length = arch_field("attention.key_length")
+        head_dim_gguf: Optional[int] = int(raw_key_length) if raw_key_length is not None else None
+
         spec = ModelSpec(
             architecture=arch_str,
             text_architecture=arch_str,
@@ -218,6 +241,7 @@ def try_gguf_header(repo_id: str, filename: str, token: Optional[str]) -> Option
             num_hidden_layers=arch_field("block_count"),
             num_attention_heads=arch_field("attention.head_count"),
             num_key_value_heads=arch_field("attention.head_count_kv"),
+            head_dim=head_dim_gguf,
             max_context_length=arch_field("context_length"),
             source=f"gguf_header:{repo_id}/{filename}",
         )
@@ -339,12 +363,59 @@ def _blank_unknown(value):
     return value
 
 
+def resolve_head_dim(
+    spec: ModelSpec,
+) -> tuple[Optional[int], str]:
+    """Resolve head_dim with a two-level fallback and return (value, method_tag).
+
+    Priority:
+      1. Explicit value from config/GGUF header  -> most accurate.
+      2. Architecture known-defaults table        -> empirically verified.
+      3. hidden_size // num_attention_heads       -> last resort; may be wrong
+                                                    for modern non-standard
+                                                    architectures. Emits a
+                                                    warning in the extra field.
+    """
+    # Level 1: already resolved from source.
+    if spec.head_dim is not None:
+        return spec.head_dim, "explicit"
+
+    # Level 2: architecture known-defaults.
+    arch = (spec.text_architecture or spec.architecture or "").lower()
+    for key, default_dim in _KNOWN_HEAD_DIM.items():
+        if key in arch:
+            return default_dim, f"known_default:{key}"
+
+    # Level 3: standard formula — only reliable for classic architectures
+    # where hidden_size == num_attention_heads * head_dim strictly holds.
+    if spec.hidden_size and spec.num_attention_heads:
+        derived = spec.hidden_size // spec.num_attention_heads
+        return derived, "derived:hidden_size//num_attention_heads"
+
+    return None, "unknown"
+
+
 def build_model_metadata_payload(
     spec: ModelSpec,
     *,
     total_params: Optional[int] = None,
 ) -> dict:
     """Return only fetched metadata fields; do not synthesize missing values."""
+    head_dim_value, head_dim_method = resolve_head_dim(spec)
+
+    extra: dict = {
+        "metadata_source": spec.source,
+        "root_architecture": spec.architecture,
+    }
+    if head_dim_method not in {"explicit"}:
+        # Record how head_dim was derived so catalog reviewers can spot-check.
+        extra["head_dim_resolution"] = head_dim_method
+    if head_dim_method.startswith("derived:"):
+        extra["head_dim_warning"] = (
+            "head_dim was calculated as hidden_size // num_attention_heads. "
+            "Verify against the official config.json for this architecture."
+        )
+
     payload = {
         "architecture": spec.text_architecture or spec.architecture,
         "parameter_count_b": round(total_params / 1_000_000_000, 3)
@@ -355,10 +426,8 @@ def build_model_metadata_payload(
         "num_hidden_layers": spec.num_hidden_layers,
         "num_attention_heads": spec.num_attention_heads,
         "num_key_value_heads": spec.num_key_value_heads,
-        "extra": {
-            "metadata_source": spec.source,
-            "root_architecture": spec.architecture,
-        },
+        "head_dim": head_dim_value,
+        "extra": extra,
     }
     return _without_none(payload)
 
@@ -432,6 +501,7 @@ def build_catalog_draft(
                     "num_hidden_layers": model_metadata.get("num_hidden_layers"),
                     "num_attention_heads": model_metadata.get("num_attention_heads"),
                     "num_key_value_heads": model_metadata.get("num_key_value_heads"),
+                    "head_dim": model_metadata.get("head_dim"),
                     "extra": model_metadata.get("extra", {}),
                 },
                 "capabilities": {

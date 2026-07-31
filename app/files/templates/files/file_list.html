@@ -1275,7 +1275,11 @@
   let searchMode = 'normal';
   let selectedUids = new Set();
   const currentFolderUid = '{{ current_folder_uid|default:"" }}';
-  const STATUS_ICON_BASE = '{% static "assets/status" %}';
+  const STATUS_ICON_URLS = {
+    uploaded: '{% static "assets/status/uploaded.svg" %}',
+    parsed: '{% static "assets/status/parsed.svg" %}',
+    embedded: '{% static "assets/status/embedded.svg" %}',
+  };
 
   // Load file_list i18n namespace from external JSON
   if (window.DotoriI18n) {
@@ -1484,21 +1488,28 @@
       });
   }
 
-  const ICON_BASE = '{% static "assets/icons" %}';
+  const FILE_ICON_URLS = {
+    doc: '{% static "assets/icons/doc.svg" %}',
+    fileP: '{% static "assets/icons/file-p.svg" %}',
+    folder: '{% static "assets/icons/folder.svg" %}',
+    hwp: '{% static "assets/icons/hwp.svg" %}',
+    image: '{% static "assets/icons/image.svg" %}',
+    other: '{% static "assets/icons/other.svg" %}',
+  };
 
   function getFileIconSrc(name, mime) {
-    if (!name) return `${ICON_BASE}/other.svg`;
+    if (!name) return FILE_ICON_URLS.other;
     const extMatch = name.match(/\.([^\.]+)$/);
-    if (!extMatch) return `${ICON_BASE}/other.svg`;
+    if (!extMatch) return FILE_ICON_URLS.other;
     const ext = extMatch[1].toLowerCase();
-    if (['pdf'].includes(ext)) return `${ICON_BASE}/file-p.svg`;
-    if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(ext) || (mime && mime.includes('image'))) return `${ICON_BASE}/image.svg`;
-    if (['hwp', 'hwpx'].includes(ext)) return `${ICON_BASE}/hwp.svg`;
-    if (['doc', 'docx', 'txt', 'csv'].includes(ext)) return `${ICON_BASE}/doc.svg`;
-    return `${ICON_BASE}/other.svg`;
+    if (['pdf'].includes(ext)) return FILE_ICON_URLS.fileP;
+    if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(ext) || (mime && mime.includes('image'))) return FILE_ICON_URLS.image;
+    if (['hwp', 'hwpx'].includes(ext)) return FILE_ICON_URLS.hwp;
+    if (['doc', 'docx', 'txt', 'csv'].includes(ext)) return FILE_ICON_URLS.doc;
+    return FILE_ICON_URLS.other;
   }
 
-  function getFolderIconSrc() { return `${ICON_BASE}/folder.svg`; }
+  function getFolderIconSrc() { return FILE_ICON_URLS.folder; }
 
   function getFileIconType(name, mime) {
     if (!name) return 'other';
@@ -1764,7 +1775,7 @@
     const badges = [
       `
         <span class="status-badge uploaded" title="업로드 완료" aria-label="업로드 완료">
-          <img src="${STATUS_ICON_BASE}/uploaded.svg" alt="">
+          <img src="${STATUS_ICON_URLS.uploaded}" alt="">
         </span>
       `,
     ];
@@ -1779,7 +1790,7 @@
     if (parseCompleted) {
       badges.push(`
         <span class="status-badge parsed" title="파싱 완료" aria-label="파싱 완료">
-          <img src="${STATUS_ICON_BASE}/parsed.svg" alt="">
+          <img src="${STATUS_ICON_URLS.parsed}" alt="">
         </span>
       `);
     }
@@ -1787,7 +1798,7 @@
     if (embeddingCompleted) {
       badges.push(`
         <span class="status-badge embedded" title="임베딩 완료" aria-label="임베딩 완료">
-          <img src="${STATUS_ICON_BASE}/embedded.svg" alt="">
+          <img src="${STATUS_ICON_URLS.embedded}" alt="">
         </span>
       `);
     }

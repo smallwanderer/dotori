@@ -887,7 +887,7 @@ def _plan_llamacpp(
                             artifact_id=entry.id,
                             runtime="llama.cpp",
                             backend_profile=backend_profile,
-                            base_url="http://llama-rag:8080",
+                            base_url="http://rag-runtime:8080",
                             device=(
                                 "CPU"
                                 if backend_profile == "llamacpp-cpu"
@@ -965,7 +965,7 @@ def _plan_llamacpp(
         artifact_id=entry.id,
         runtime="llama.cpp",
         backend_profile=backend_profile,
-        base_url="http://llama-rag:8080",
+        base_url="http://rag-runtime:8080",
         device="CPU" if backend_profile == "llamacpp-cpu" else "GPU",
         candidate_type="Unavailable",
         offload="none",
@@ -1040,7 +1040,7 @@ def _plan_vllm(
         artifact_id=entry.id,
         runtime="vllm",
         backend_profile="vllm-cuda",
-        base_url="http://vllm-rag:8080",
+        base_url="http://rag-runtime:8080",
         device="GPU",
         candidate_type="GPU vLLM",
         offload="full",

@@ -38,6 +38,54 @@ def load_llm_runtime_config(
     return payload
 
 
+def get_llm_runtime_status_path(
+    scope: str | None = None, *, repo_root: Path | None = None
+) -> Path:
+    configured_path = os.getenv("LLM_RUNTIME_STATUS_PATH", "").strip()
+    if configured_path:
+        return Path(configured_path)
+    configured_runtime = os.getenv("LLM_RUNTIME_CONFIG_PATH", "").strip()
+    if configured_runtime:
+        return Path(configured_runtime).with_name("runtime_status.json")
+    resolved_scope = scope or os.getenv("RUNTIME_SCOPE", "production")
+    root = repo_root or Path(__file__).resolve().parents[3]
+    return (
+        root
+        / "data"
+        / "config"
+        / "runtime_scopes"
+        / resolved_scope
+        / "runtime_status.json"
+    )
+
+
+def load_llm_runtime_status(
+    path: Path | None = None,
+    scope: str | None = None,
+    *,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
+    status_path = path or get_llm_runtime_status_path(scope, repo_root=repo_root)
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def server_rag_runtime_availability() -> tuple[bool, dict[str, Any]]:
+    """Return persisted local-runtime readiness without doing network I/O.
+
+    Missing status is accepted for compatibility with installs created before
+    runtime status persistence was introduced. Once a status file exists,
+    only a validated healthy runtime may receive new server-local RAG work.
+    """
+    runtime_status = load_llm_runtime_status()
+    if not runtime_status:
+        return True, {}
+    return runtime_status.get("status") == "healthy", runtime_status
+
+
 @dataclass(frozen=True)
 class ServerRAGTarget:
     endpoint_name: str

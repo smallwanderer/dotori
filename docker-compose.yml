@@ -1,15 +1,23 @@
 name: dotori
 
+x-dotori-app: &dotori-app
+  image: dotori-app:local
+  build:
+    context: ./app
+    args:
+      INSTALL_AI_DEPS: "1"
+      INSTALL_DEV_DEPS: "0"
+
 services:
   db:
     image: pgvector/pgvector:pg16
     command: [ "postgres", "-c", "shared_preload_libraries=pg_stat_statements", "-c", "compute_query_id=on" ]
     container_name: db
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - ./data/pgdata:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
     expose:
       - "5432"
@@ -23,7 +31,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: redis
-    restart: always
+    restart: unless-stopped
     expose:
       - "6379"
     healthcheck:
@@ -33,12 +41,9 @@ services:
       retries: 10
 
   app:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "0"
+    <<: *dotori-app
     container_name: app
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
     environment:
@@ -77,6 +82,7 @@ services:
 
   test:
     profiles: [ "test" ]
+    image: dotori-app-test:local
     build:
       context: ./app
       args:
@@ -94,17 +100,15 @@ services:
     command: [ "python", "-m", "pytest" ]
 
   embedding-worker:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "1"
+    <<: *dotori-app
     container_name: embedding-worker
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/logs:/data/logs
+      - huggingface-cache:/app/.cache/huggingface
     depends_on:
       db:
         condition: service_healthy
@@ -113,17 +117,15 @@ services:
     command: [ "bash", "-lc", "celery -A config worker -l info -Q parse,embed --concurrency=$${DOCUMENT_AI_WORKER_CONCURRENCY:-1} --prefetch-multiplier=1" ]
 
   search-worker:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "1"
+    <<: *dotori-app
     container_name: search-worker
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/logs:/data/logs
+      - huggingface-cache:/app/.cache/huggingface
     depends_on:
       db:
         condition: service_healthy
@@ -132,12 +134,12 @@ services:
     command: [ "bash", "-lc", "celery -A config worker -l info -Q search --concurrency=$${SEARCH_WORKER_CONCURRENCY:-1} --prefetch-multiplier=1" ]
 
   rag-worker:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "0"
+    <<: *dotori-app
+    profiles: [ "managed-rag" ]
     container_name: rag-worker
-    restart: always
+    # The external runtime lifecycle starts this worker only after the
+    # selected runtime validates. Do not auto-start it on Docker daemon boot.
+    restart: on-failure:5
     env_file:
       - .env
     environment:
@@ -157,12 +159,9 @@ services:
     command: [ "bash", "-lc", "celery -A config worker -l info -Q rag --concurrency=$${RAG_WORKER_CONCURRENCY:-1} --prefetch-multiplier=1" ]
 
   recovery-worker:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "0"
+    <<: *dotori-app
     container_name: recovery-worker
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
@@ -178,7 +177,7 @@ services:
   nginx:
     image: nginx:stable
     container_name: nginx
-    restart: always
+    restart: unless-stopped
     profiles: [ "direct-https" ]
     environment:
       DOTORI_EXTERNAL_DOMAIN: ${DOTORI_EXTERNAL_DOMAIN:-}
@@ -198,16 +197,21 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-
   # The RAG runtime container (llama.cpp or vLLM, whichever is selected) is
   # intentionally NOT defined here. It's a single, scope-scoped container
-  # ("dotori-rag-runtime") managed directly by
+  # ("dotori-llm") managed directly by
   # app/llm_installation/runtime_lifecycle.py (plain docker build/run/stop/rm),
   # reachable from app/rag-worker at http://rag-runtime:8080 over the
-  # external "rag-runtime" network below. See
+  # named "rag-runtime" network below. See
   # dev-docs/agent/rag_runtime_container_lifecycle.md.
 
 networks:
   rag-runtime:
     name: dotori-runtime
-    external: true
+    driver: bridge
+
+volumes:
+  postgres-data:
+    name: dotori-postgres-data
+  huggingface-cache:
+    name: dotori-huggingface-cache

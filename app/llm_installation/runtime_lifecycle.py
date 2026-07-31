@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -12,14 +15,17 @@ RUNTIME_IMAGE = {
 }
 
 RUNTIME_BUILD_CONTEXT = {
-    "llama.cpp": "llama-rag",
-    "vllm": "vllm-rag",
+    "llama.cpp": "llm-runtime",
+    "vllm": "llm-runtime",
 }
 
-RUNTIME_ARGS_ENV = {
-    "llama.cpp": "LLAMA_RAG_ARGS_FILE",
-    "vllm": "VLLM_RAG_ARGS_FILE",
+RUNTIME_DOCKERFILE = {
+    "llama.cpp": "llama.Dockerfile",
+    "vllm": "vllm.Dockerfile",
 }
+
+RUNTIME_ARGS_ENV = "RAG_RUNTIME_ARGS_FILE"
+HUGGINGFACE_CACHE_VOLUME = "dotori-huggingface-cache"
 
 NETWORK_ALIAS = "rag-runtime"
 
@@ -32,7 +38,12 @@ LABEL_IMAGE_REVISION = "com.dotori.image-revision"
 COMPONENT_VALUE = "rag-runtime"
 
 HEALTH_POLL_INTERVAL_S = 2
-HEALTH_TIMEOUT_S = {"llama.cpp": 180, "vllm": 240}
+HEALTH_TIMEOUT_S = {"llama.cpp": 900, "vllm": 1200}
+RUNTIME_STATUS_FILENAME = "runtime_status.json"
+
+LLM_UNAVAILABLE_OOM = "LLM_UNAVAILABLE_OOM"
+LLM_UNAVAILABLE_TIMEOUT = "LLM_UNAVAILABLE_TIMEOUT"
+LLM_UNAVAILABLE_START_FAILED = "LLM_UNAVAILABLE_START_FAILED"
 
 
 @dataclass(frozen=True)
@@ -48,7 +59,7 @@ SCOPE_CONFIG = {
         compose_file="docker-compose.yml",
         env_file=".env",
         network_name="dotori-runtime",
-        container_name="dotori-rag-runtime",
+        container_name="dotori-llm",
     ),
     "development": ScopeConfig(
         compose_file="docker-compose.dev.yml",
@@ -78,6 +89,7 @@ class RuntimeSpec:
 class ApplyResult:
     ok: bool
     rolled_back: bool = False
+    failure_code: str | None = None
     messages: list[str] = field(default_factory=list)
 
 
@@ -87,6 +99,9 @@ class ContainerState:
     owned: bool = False
     running: bool = False
     health: str | None = None
+    oom_killed: bool = False
+    exit_code: int | None = None
+    restart_count: int = 0
     labels: dict[str, str] = field(default_factory=dict)
 
 
@@ -96,6 +111,22 @@ def get_repo_root() -> Path:
 
 def make_generation_id(integrity_sha256: str) -> str:
     return f"{int(time.time())}-{integrity_sha256[:12]}"
+
+
+def runtime_status_path(scope: str, *, repo_root: Path | None = None) -> Path:
+    if scope not in SCOPE_CONFIG:
+        raise ValueError(f"Unknown scope: {scope}")
+    root = repo_root or get_repo_root()
+    return root / "data" / "config" / "runtime_scopes" / scope / RUNTIME_STATUS_FILENAME
+
+
+def load_runtime_status(scope: str, *, repo_root: Path | None = None) -> dict:
+    path = runtime_status_path(scope, repo_root=repo_root)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def build_runtime_spec(
@@ -133,7 +164,15 @@ def build_runtime_spec(
 
 def _default_runner(args: list[str], **kwargs) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(args, capture_output=True, text=True, check=False, **kwargs)
+        return subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            **kwargs,
+        )
     except OSError as exc:
         return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr=str(exc))
 
@@ -177,7 +216,8 @@ class RuntimeLifecycleManager:
         result = self._docker(
             "inspect",
             "-f",
-            "{{.State.Running}}|{{.State.Health.Status}}",
+            "{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}|"
+            "{{.State.OOMKilled}}|{{.State.ExitCode}}|{{.RestartCount}}",
             container_name,
         )
         if result.returncode != 0:
@@ -192,8 +232,24 @@ class RuntimeLifecycleManager:
         parts = result.stdout.strip().split("|")
         running = parts[0] == "true" if parts else False
         health = parts[1] if len(parts) > 1 and parts[1] else None
+        oom_killed = len(parts) > 2 and parts[2] == "true"
+        try:
+            exit_code = int(parts[3]) if len(parts) > 3 and parts[3] else None
+        except ValueError:
+            exit_code = None
+        try:
+            restart_count = int(parts[4]) if len(parts) > 4 and parts[4] else 0
+        except ValueError:
+            restart_count = 0
         return ContainerState(
-            exists=True, owned=owned, running=running, health=health, labels=labels
+            exists=True,
+            owned=owned,
+            running=running,
+            health=health,
+            oom_killed=oom_killed,
+            exit_code=exit_code,
+            restart_count=restart_count,
+            labels=labels,
         )
 
     def _container_labels(self, container_name: str) -> dict[str, str]:
@@ -211,9 +267,86 @@ class RuntimeLifecycleManager:
 
     # -- build/run --------------------------------------------------------
 
+    def _write_runtime_status(
+        self,
+        spec: RuntimeSpec,
+        status: str,
+        *,
+        reason_code: str = "",
+        message: str = "",
+        retryable: bool = False,
+    ) -> None:
+        path = runtime_status_path(spec.scope, repo_root=self.repo_root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": 1,
+            "scope": spec.scope,
+            "status": status,
+            "reason_code": reason_code,
+            "message": message,
+            "retryable": retryable,
+            "runtime": spec.runtime,
+            "model": spec.model_id,
+            "generation_id": spec.generation_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+
+    def _restore_runtime_status(self, scope: str, payload: dict) -> None:
+        path = runtime_status_path(scope, repo_root=self.repo_root)
+        if not payload:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+
+    @staticmethod
+    def _failure_details(state: ContainerState, *, timed_out: bool) -> tuple[str, str]:
+        if state.oom_killed or state.exit_code == 137:
+            return (
+                LLM_UNAVAILABLE_OOM,
+                "The local LLM was disabled after Docker reported an out-of-memory exit.",
+            )
+        if timed_out:
+            return (
+                LLM_UNAVAILABLE_TIMEOUT,
+                "The local LLM did not become healthy before the startup timeout.",
+            )
+        return (
+            LLM_UNAVAILABLE_START_FAILED,
+            "The local LLM exited or failed endpoint validation during startup.",
+        )
+
+    def _promote_restart_policy(self, container_name: str) -> bool:
+        return self._docker(
+            "update", "--restart", "unless-stopped", container_name
+        ).returncode == 0
+
     def build(self, spec: RuntimeSpec) -> tuple[bool, str | None]:
         build_context = self.repo_root / RUNTIME_BUILD_CONTEXT[spec.runtime]
-        result = self._docker("build", "-q", "-t", spec.image, str(build_context))
+        dockerfile = build_context / RUNTIME_DOCKERFILE[spec.runtime]
+        result = self._docker(
+            "build",
+            "-q",
+            "-t",
+            spec.image,
+            "-f",
+            str(dockerfile),
+            str(build_context),
+        )
         if result.returncode != 0:
             return False, None
         revision = result.stdout.strip() or None
@@ -222,22 +355,27 @@ class RuntimeLifecycleManager:
             revision = id_result.stdout.strip() if id_result.returncode == 0 else None
         return True, revision
 
+    def _image_revision(self, image: str) -> str | None:
+        result = self._docker("inspect", "-f", "{{.Id}}", image)
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
+
     def _run_candidate(self, spec: RuntimeSpec, image_revision: str | None) -> bool:
         self._docker("rm", "-f", spec.container_name)
-
-        cache_dir = self.repo_root / "data" / "cache" / "huggingface"
-        cache_dir.mkdir(parents=True, exist_ok=True)
 
         run_args = [
             "run", "-d",
             "--name", spec.container_name,
             "--network", spec.network_name,
             "--network-alias", spec.network_alias,
-            "--restart", "unless-stopped",
+            # A candidate gets one attempt. Automatic restart is enabled only
+            # after health and endpoint validation succeed.
+            "--restart", "no",
             "--env-file", str(self.repo_root / SCOPE_CONFIG[spec.scope].env_file),
-            "-v", f"{cache_dir}:/root/.cache/huggingface",
+            "-v", f"{HUGGINGFACE_CACHE_VOLUME}:/root/.cache/huggingface",
             "-v", f"{spec.args_file}:/runtime/runtime.args:ro",
-            "-e", f"{RUNTIME_ARGS_ENV[spec.runtime]}=/runtime/runtime.args",
+            "-e", f"{RUNTIME_ARGS_ENV}=/runtime/runtime.args",
             "--label", f"{LABEL_MANAGED}=true",
             "--label", f"{LABEL_COMPONENT}={COMPONENT_VALUE}",
             "--label", f"{LABEL_SCOPE}={spec.scope}",
@@ -257,7 +395,7 @@ class RuntimeLifecycleManager:
                 "--health-interval", "10s",
                 "--health-timeout", "5s",
                 "--health-retries", "12",
-                "--health-start-period", "180s",
+                "--health-start-period", "1200s",
             ]
         else:
             run_args += [
@@ -265,27 +403,39 @@ class RuntimeLifecycleManager:
                 "--health-interval", "10s",
                 "--health-timeout", "5s",
                 "--health-retries", "12",
-                "--health-start-period", "120s",
+                "--health-start-period", "900s",
             ]
         run_args.append(spec.image)
 
         result = self._docker(*run_args)
+        if result.returncode == 0:
+            self._write_runtime_status(
+                spec,
+                "starting",
+                message="The local LLM candidate is loading and being validated.",
+            )
         return result.returncode == 0
 
     def _wait_healthy(self, spec: RuntimeSpec) -> bool:
         timeout = HEALTH_TIMEOUT_S.get(spec.runtime, 180)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            result = self._docker(
-                "inspect", "-f", "{{.State.Health.Status}}", spec.container_name
-            )
-            status = result.stdout.strip() if result.returncode == 0 else ""
-            if status == "healthy":
+            state = self.inspect(spec.scope)
+            if not state.exists or not state.running:
+                return False
+            if state.health == "healthy":
                 return True
-            if status == "unhealthy":
+            if state.health == "unhealthy":
                 return False
             time.sleep(HEALTH_POLL_INTERVAL_S)
         return False
+
+    def _runtime_logs(self, container_name: str) -> str:
+        result = self._docker("logs", "--tail", "100", container_name)
+        output = "\n".join(
+            part.strip() for part in (result.stdout, result.stderr) if part and part.strip()
+        )
+        return output[-4000:]
 
     def _verify_endpoints(self, spec: RuntimeSpec) -> tuple[bool, str]:
         health = self._docker(
@@ -303,11 +453,184 @@ class RuntimeLifecycleManager:
 
     # -- lifecycle --------------------------------------------------------
 
+    def resume(self, spec: RuntimeSpec) -> ApplyResult:
+        """Start the active runtime without building or replacing its image.
+
+        This is the ordinary stop/start path. It may restart an owned
+        container for the same generation, or recreate that container from an
+        already-built image after a full shutdown. Runtime changes remain the
+        responsibility of apply().
+        """
+        if not spec.args_file.is_file():
+            return ApplyResult(ok=False, messages=[f"Missing args file: {spec.args_file}"])
+        if not self.ensure_network(spec.scope):
+            return ApplyResult(ok=False, messages=["Failed to prepare runtime network."])
+
+        self._compose(spec.scope, "stop", "rag-worker")
+
+        current = self.inspect(spec.scope)
+        if current.exists:
+            if not current.owned:
+                return ApplyResult(
+                    ok=False,
+                    messages=[
+                        f"A container named '{spec.container_name}' exists but isn't "
+                        "managed by Dotori (label mismatch); refusing to touch it."
+                    ],
+                )
+            if (
+                current.labels.get(LABEL_RUNTIME) != spec.runtime
+                or current.labels.get(LABEL_GENERATION) != spec.generation_id
+            ):
+                return ApplyResult(
+                    ok=False,
+                    messages=[
+                        "The existing runtime container does not match the active "
+                        "generation; use Rebuild & Restart or Change LLM Model."
+                    ],
+                )
+            if self._docker(
+                "update", "--restart", "no", spec.container_name
+            ).returncode != 0:
+                message = "Failed to disable automatic restart for the LLM candidate."
+                self._write_runtime_status(
+                    spec,
+                    "unavailable",
+                    reason_code=LLM_UNAVAILABLE_START_FAILED,
+                    message=message,
+                    retryable=True,
+                )
+                return ApplyResult(
+                    ok=False,
+                    failure_code=LLM_UNAVAILABLE_START_FAILED,
+                    messages=[message],
+                )
+            if not current.running:
+                started = self._docker("start", spec.container_name).returncode == 0
+                if not started:
+                    message = "Failed to start the existing local LLM container."
+                    self._write_runtime_status(
+                        spec,
+                        "unavailable",
+                        reason_code=LLM_UNAVAILABLE_START_FAILED,
+                        message=message,
+                        retryable=True,
+                    )
+                    return ApplyResult(
+                        ok=False,
+                        failure_code=LLM_UNAVAILABLE_START_FAILED,
+                        messages=[message],
+                    )
+        else:
+            revision = self._image_revision(spec.image)
+            if revision is None:
+                message = (
+                    f"Runtime image '{spec.image}' is not available; use "
+                    "Rebuild & Restart or Change LLM Model."
+                )
+                self._write_runtime_status(
+                    spec,
+                    "unavailable",
+                    reason_code=LLM_UNAVAILABLE_START_FAILED,
+                    message=message,
+                    retryable=True,
+                )
+                return ApplyResult(
+                    ok=False,
+                    failure_code=LLM_UNAVAILABLE_START_FAILED,
+                    messages=[message],
+                )
+            if not self._run_candidate(spec, revision):
+                message = "Failed to recreate the local LLM container from the existing image."
+                self._write_runtime_status(
+                    spec,
+                    "unavailable",
+                    reason_code=LLM_UNAVAILABLE_START_FAILED,
+                    message=message,
+                    retryable=True,
+                )
+                return ApplyResult(
+                    ok=False,
+                    failure_code=LLM_UNAVAILABLE_START_FAILED,
+                    messages=[message],
+                )
+
+        healthy = self._wait_healthy(spec)
+        if not healthy:
+            failed_state = self.inspect(spec.scope)
+            failure_code, failure_message = self._failure_details(
+                failed_state,
+                timed_out=failed_state.exists and failed_state.running,
+            )
+            runtime_logs = self._runtime_logs(spec.container_name)
+            self._write_runtime_status(
+                spec,
+                "unavailable",
+                reason_code=failure_code,
+                message=failure_message,
+                retryable=True,
+            )
+            if failed_state.exists and failed_state.owned:
+                self._docker("rm", "-f", spec.container_name)
+            messages = [failure_message]
+            if runtime_logs:
+                messages.append(f"Runtime logs:\n{runtime_logs}")
+            return ApplyResult(
+                ok=False,
+                failure_code=failure_code,
+                messages=messages,
+            )
+        verified, verify_message = self._verify_endpoints(spec)
+        if not verified:
+            failure_code = LLM_UNAVAILABLE_START_FAILED
+            message = f"Runtime endpoint validation failed: {verify_message}"
+            self._write_runtime_status(
+                spec,
+                "unavailable",
+                reason_code=failure_code,
+                message=message,
+                retryable=True,
+            )
+            self._docker("rm", "-f", spec.container_name)
+            return ApplyResult(
+                ok=False,
+                failure_code=failure_code,
+                messages=[message],
+            )
+        if not self._promote_restart_policy(spec.container_name):
+            failure_code = LLM_UNAVAILABLE_START_FAILED
+            message = "The LLM validated, but its steady-state restart policy could not be enabled."
+            self._write_runtime_status(
+                spec,
+                "unavailable",
+                reason_code=failure_code,
+                message=message,
+                retryable=True,
+            )
+            self._docker("rm", "-f", spec.container_name)
+            return ApplyResult(
+                ok=False,
+                failure_code=failure_code,
+                messages=[message],
+            )
+        self._write_runtime_status(
+            spec,
+            "healthy",
+            message="The local LLM passed health and endpoint validation.",
+        )
+        return ApplyResult(
+            ok=True,
+            messages=[
+                f"Runtime '{spec.runtime}' resumed without rebuilding "
+                f"(generation {spec.generation_id})."
+            ],
+        )
+
     def apply(self, spec: RuntimeSpec) -> ApplyResult:
         from llm_installation.config_store import commit_active_runtime_config
 
         messages: list[str] = []
-        if not spec.args_file.exists():
+        if not spec.args_file.is_file():
             return ApplyResult(ok=False, messages=[f"Missing args file: {spec.args_file}"])
 
         self.ensure_network(spec.scope)
@@ -319,6 +642,9 @@ class RuntimeLifecycleManager:
         self._compose(spec.scope, "stop", "rag-worker")
 
         current = self.inspect(spec.scope)
+        previous_runtime_status = load_runtime_status(
+            spec.scope, repo_root=self.repo_root
+        )
         if current.exists and not current.owned:
             return ApplyResult(
                 ok=False,
@@ -344,17 +670,36 @@ class RuntimeLifecycleManager:
         verified, verify_message = (False, "container failed to start") if not started else (
             self._verify_endpoints(spec) if healthy else (False, "health check timed out")
         )
+        promoted = verified and self._promote_restart_policy(spec.container_name)
+        if verified and not promoted:
+            verified = False
+            verify_message = "failed to enable the steady-state restart policy"
 
         if started and healthy and verified:
             commit_active_runtime_config(spec.scope, spec.generation_id, repo_root=self.repo_root)
             if has_previous:
                 self._docker("rm", "-f", previous_name)
             self._compose(spec.scope, "start", "rag-worker")
+            self._write_runtime_status(
+                spec,
+                "healthy",
+                message="The local LLM passed health and endpoint validation.",
+            )
             messages.append(f"Runtime '{spec.runtime}' active (generation {spec.generation_id}).")
             return ApplyResult(ok=True, messages=messages)
 
         # Rollback.
+        failed_state = self.inspect(spec.scope)
+        if failed_state.exists and not failed_state.running:
+            verify_message = "container exited before becoming healthy"
+        failure_code, failure_message = self._failure_details(
+            failed_state,
+            timed_out=started and not healthy and failed_state.exists and failed_state.running,
+        )
         messages.append(f"Candidate failed validation: {verify_message}")
+        runtime_logs = self._runtime_logs(spec.container_name)
+        if runtime_logs:
+            messages.append(f"Runtime logs:\n{runtime_logs}")
         self._docker("rm", "-f", spec.container_name)
         rolled_back = False
         if has_previous:
@@ -366,12 +711,25 @@ class RuntimeLifecycleManager:
                 if rolled_back
                 else "Could not restart previous runtime container; manual recovery needed."
             )
-        self._compose(spec.scope, "start", "rag-worker")
-        messages.append(
-            f"Diagnostics: docker logs {spec.container_name} --tail 100; "
-            f"generation at {spec.args_file.parent}"
+        if rolled_back:
+            self._compose(spec.scope, "start", "rag-worker")
+            self._restore_runtime_status(spec.scope, previous_runtime_status)
+        else:
+            self._write_runtime_status(
+                spec,
+                "unavailable",
+                reason_code=failure_code,
+                message=failure_message,
+                retryable=True,
+            )
+            messages.append(failure_message)
+        messages.append(f"Generation retained at {spec.args_file.parent}")
+        return ApplyResult(
+            ok=False,
+            rolled_back=rolled_back,
+            failure_code=None if rolled_back else failure_code,
+            messages=messages,
         )
-        return ApplyResult(ok=False, rolled_back=rolled_back, messages=messages)
 
     def stop(self, scope: str, remove_container: bool = True) -> bool:
         state = self.inspect(scope)
@@ -408,6 +766,10 @@ class RuntimeLifecycleManager:
             "owned": state.owned,
             "running": state.running,
             "health": state.health,
+            "oom_killed": state.oom_killed,
+            "exit_code": state.exit_code,
+            "restart_count": state.restart_count,
             "runtime": state.labels.get(LABEL_RUNTIME),
             "generation": state.labels.get(LABEL_GENERATION),
+            "runtime_status": load_runtime_status(scope, repo_root=self.repo_root),
         }

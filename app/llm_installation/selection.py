@@ -64,7 +64,7 @@ def _precision_rank(entry: Any) -> int:
     return 0
 
 
-def _estimated_decode_tps(assessment: Any) -> float | None:
+def estimated_decode_tps(assessment: Any) -> float | None:
     direct = getattr(assessment, "estimated_decode_tps", None)
     if direct is not None:
         return float(direct)
@@ -93,7 +93,7 @@ def _known_number(value: float | int | None) -> tuple[int, float]:
 
 def _ranking_key(candidate: SelectionCandidate, preset: PriorityPreset) -> tuple:
     entry = candidate.entry
-    tps = _known_number(_estimated_decode_tps(candidate.assessment))
+    tps = _known_number(estimated_decode_tps(candidate.assessment))
     headroom = _known_number(_resource_headroom_ratio(candidate.fit_evaluation))
     parameters = float(entry.model_metadata.parameter_count_b)
     precision = _precision_rank(entry)
@@ -114,6 +114,26 @@ def _rank(
     # Stable sort preserves artifact ID ascending as the final tie-break.
     ranked = sorted(candidates, key=lambda item: item.entry.id)
     return sorted(ranked, key=lambda item: _ranking_key(item, preset), reverse=True)
+
+
+def rank_manual_candidates(
+    candidates: list[SelectionCandidate],
+    priority_preset: PriorityPreset,
+) -> tuple[list[SelectionCandidate], list[SelectionCandidate]]:
+    """Split candidates into the same FIT/RISKY-ranked-first, non-selectable-last
+    order that manual selection enforces, so display order and eligibility can
+    never drift out of sync with `select_catalog_model`."""
+    fit_candidates = []
+    risky_candidates = []
+    non_selectable = []
+    for candidate in candidates:
+        fit_status = candidate.fit_evaluation.fit_status
+        if candidate.fit_evaluation.eligibility.manual_selectable and fit_status in {"FIT", "RISKY"}:
+            (fit_candidates if fit_status == "FIT" else risky_candidates).append(candidate)
+        else:
+            non_selectable.append(candidate)
+    ranked = _rank(fit_candidates, priority_preset) + _rank(risky_candidates, priority_preset)
+    return ranked, non_selectable
 
 
 def select_catalog_model(
@@ -149,10 +169,7 @@ def select_catalog_model(
     ]
 
     if selection_mode == "manual":
-        ranked = _rank(fit_candidates, priority_preset) + _rank(
-            risky_candidates,
-            priority_preset,
-        )
+        ranked, _ = rank_manual_candidates(candidates, priority_preset)
         if not selected_artifact_id:
             return SelectionResult(
                 selection_status="MANUAL_SELECTION_REQUIRED",

@@ -9,12 +9,6 @@
     <title>{% block title %}도토리 문서{% endblock %}</title>
     <link rel="icon" href="{% static 'assets/brand/dotori-mark.svg' %}" type="image/svg+xml">
 
-    <!-- Google Fonts: Pretendard 계열 대체 (Noto Sans KR + DM Sans) -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link
-        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&display=swap"
-        rel="stylesheet">
-
     <style>
         *,
         *::before,
@@ -25,7 +19,8 @@
         }
 
         :root {
-            --font: 'DM Sans', 'Noto Sans KR', sans-serif;
+            --font: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
             --bg: #FBF7F1;
             --surface: #FFFDFC;
             --surface-warm: #F6EBDD;

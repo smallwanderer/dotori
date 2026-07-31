@@ -12,7 +12,7 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "scope,container_name,network_name",
     [
-        ("production", "dotori-rag-runtime", "dotori-runtime"),
+        ("production", "dotori-llm", "dotori-runtime"),
         ("development", "dotori-dev-rag-runtime", "dotori-dev-runtime"),
     ],
 )

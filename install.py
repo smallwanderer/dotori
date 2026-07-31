@@ -10,6 +10,19 @@ import time
 
 import requests
 
+
+def configure_console_output():
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
+configure_console_output()
+
 # CLI Text Styles
 BOLD = "\033[1m"
 GREEN = "\033[32m"
@@ -36,9 +49,19 @@ def print_header(title):
 def run_command(cmd, shell=True, capture_output=True):
     try:
         result = subprocess.run(
-            cmd, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            cmd,
+            shell=shell,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
-        return result.returncode == 0, result.stdout.strip(), result.stderr.strip()
+        return (
+            result.returncode == 0,
+            (result.stdout or "").strip(),
+            (result.stderr or "").strip(),
+        )
     except Exception as e:
         return False, "", str(e)
 
@@ -55,10 +78,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "app"))
 from document_ai.services.rag_runtime_config import load_llm_runtime_config
 from llm_installation.installer_adapter import (
     detect_hardware,
-    detect_system_ram_mb,
-    format_mb,
-    load_llm_models,
-    evaluate_install_model_fit,
 )
 from llm_installation.cleanup import (
     cleanup_stale_runtime,
@@ -70,6 +89,7 @@ from llm_installation.runtime_lifecycle import (
     RuntimeLifecycleManager,
     build_runtime_spec,
 )
+from llm_installation.config_store import stage_legacy_runtime_generation
 from llm_installation.runtime_probe import probe_docker_services
 from installation.network_access import (
     ConfigurationError as NetworkConfigurationError,
@@ -79,151 +99,13 @@ from installation.network_access import (
     status as external_access_status,
 )
 from installation.network_access.files import configuration_directory, read_env_file as read_network_env_file
-
-def print_install_model_table(models, hardware):
-    headers = ["#", "Model", "Quant", "Size", "Device", "Logical", "Pool Req", "RAM Req", "Backend", "Speed", "Safety", "Fit"]
-    widths = [3, 24, 9, 6, 7, 9, 9, 7, 10, 8, 8, 7]
-    line = " ".join(header.ljust(width) for header, width in zip(headers, widths))
-    print(line.rstrip())
-    print("-" * len(line.rstrip()))
-    for index, model in enumerate(models, start=1):
-        values = [
-            str(index),
-            str(model.get("model", model.get("id", ""))),
-            str(model.get("quant", "")),
-            str(model.get("size", "")),
-            str(model.get("device", "")),
-            format_mb(int(model.get("min_mem_mb") or 0)),
-            format_mb(int(model.get("rec_mem_mb") or 0)),
-            format_mb(int(model.get("ram_mb") or 0)),
-            str(model.get("backend", "")),
-            str(model.get("speed", "")),
-            str(model.get("safety", "safe")),
-            evaluate_install_model_fit(model, hardware),
-        ]
-        print(" ".join(value[:width].ljust(width) for value, width in zip(values, widths)).rstrip())
-
-def filter_llm_models(models, query):
-    normalized = (query or "").strip().lower()
-    if not normalized:
-        return models
-    return [
-        model
-        for model in models
-        if normalized in str(model.get("id", "")).lower()
-        or normalized in str(model.get("model", "")).lower()
-        or normalized in str(model.get("quant", "")).lower()
-        or normalized in str(model.get("device", "")).lower()
-        or normalized in str(model.get("backend", "")).lower()
-    ]
-
-def install_model_row(model, hardware, index):
-    return {
-        "index": index,
-        "id": model.get("id"),
-        "model": model.get("model"),
-        "quant": model.get("quant"),
-        "size": model.get("size"),
-        "device": model.get("device"),
-        "min_mem": format_mb(int(model.get("min_mem_mb") or 0)),
-        "rec_mem": format_mb(int(model.get("rec_mem_mb") or 0)),
-        "ram": format_mb(int(model.get("ram_mb") or 0)),
-        "backend": model.get("backend"),
-        "speed": model.get("speed"),
-        "fit": evaluate_install_model_fit(model, hardware),
-    }
-
-def print_llm_model_detail(model, hardware, json_output=False):
-    detail = {
-        "id": model.get("id"),
-        "model": model.get("model"),
-        "quant": model.get("quant"),
-        "size": model.get("size"),
-        "device": model.get("device"),
-        "min_mem": format_mb(int(model.get("min_mem_mb") or 0)),
-        "rec_mem": format_mb(int(model.get("rec_mem_mb") or 0)),
-        "ram": format_mb(int(model.get("ram_mb") or 0)),
-        "backend": model.get("backend"),
-        "speed": model.get("speed"),
-        "fit": evaluate_install_model_fit(model, hardware),
-        "safety": model.get("safety"),
-        "description": model.get("description"),
-        "notes": model.get("notes"),
-    }
-    if json_output:
-        print(json.dumps(detail, ensure_ascii=False, indent=2, sort_keys=True))
-        return
-    for key, value in detail.items():
-        print(f"{key}: {value}")
-
-def handle_llm_catalog_cli(args):
-    json_output = "--json-output" in args
-    models = sorted(load_llm_models(), key=lambda item: int(item.get("priority") or 0), reverse=True)
-    hardware = {
-        "ram_mb": detect_system_ram_mb(),
-        "gpu_detected": False,
-        "gpu_count": 0,
-        "gpu_name": "None",
-        "gpu_names": [],
-        "gpu_vram_mb": 0,
-        "gpu_vram_list": [],
-    }
-    nvidia_ok, nvidia_out, _ = run_command("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits")
-    if nvidia_ok and nvidia_out:
-        gpu_names = []
-        gpu_vram_list = []
-        for line in nvidia_out.strip().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            gpu_parts = [part.strip() for part in line.split(",")]
-            if gpu_parts:
-                gpu_names.append(gpu_parts[0])
-                try:
-                    vram = int(gpu_parts[1]) if len(gpu_parts) > 1 else 0
-                except ValueError:
-                    vram = 0
-                gpu_vram_list.append(vram)
-        hardware["gpu_count"] = len(gpu_names)
-        if hardware["gpu_count"] > 0:
-            hardware["gpu_detected"] = True
-            hardware["gpu_name"] = gpu_names[0]
-            hardware["gpu_names"] = gpu_names
-            hardware["gpu_vram_list"] = gpu_vram_list
-            hardware["gpu_vram_mb"] = sum(gpu_vram_list)
-
-    if "--show-llm" in args:
-        index = args.index("--show-llm")
-        model_id = args[index + 1] if index + 1 < len(args) else ""
-        model = next((item for item in models if item.get("id") == model_id), None)
-        if not model:
-            print(f"{RED}[ERROR] Model not found: {model_id}{RESET}")
-            return True
-        print_llm_model_detail(model, hardware, json_output=json_output)
-        return True
-
-    query = ""
-    if "--search-llm" in args:
-        index = args.index("--search-llm")
-        query = args[index + 1] if index + 1 < len(args) else ""
-    rows = filter_llm_models(models, query)
-    if json_output:
-        print(
-            json.dumps(
-                {
-                    "models": [
-                        install_model_row(model, hardware, index)
-                        for index, model in enumerate(rows, start=1)
-                    ]
-                },
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-        )
-    else:
-        print_install_model_table(rows, hardware)
-    return True
+from installation.deployment import (
+    ALL_WORKER_SERVICES,
+    build_deployment_plan,
+    compose_up_command,
+    read_deployment_plan,
+    write_deployment_plan,
+)
 
 def select_rag_priority():
     print_header("RAG LLM Priority")
@@ -356,14 +238,27 @@ def _active_runtime_info(scope="production"):
     return runtime, model_id, generation_id
 
 
+def _runtime_start_info(scope="production"):
+    info = _active_runtime_info(scope)
+    if info:
+        return info
+    migrated = stage_legacy_runtime_generation(scope)
+    if migrated:
+        print(
+            f"{YELLOW}• Migrated the existing flat LLM configuration to a "
+            f"managed runtime generation: {migrated[2]}{RESET}"
+        )
+    return migrated
+
+
 def initialize_llm_runtime_config(mode, priority_mode="balanced", cluster_mode=False, keep_weights=False, scope="production"):
     if mode != "1":
         print(f"{YELLOW}• Skipping LLM runtime detection because Full Local AI RAG mode is not selected.{RESET}")
-        return
+        return False
 
     previous_payload = load_llm_runtime_config(scope=scope)
 
-    print_header("🧭 LLM Runtime Setup")
+    print_header("LLM Runtime Setup")
     cmd = (
         f"{COMPOSE_COMMAND} exec app "
         "python manage.py detect_llm_runtime --interactive"
@@ -373,12 +268,12 @@ def initialize_llm_runtime_config(mode, priority_mode="balanced", cluster_mode=F
     print(f"Command: {BOLD}{cmd}{RESET}\n")
     if not run_interactive_command(cmd):
         print(f"{YELLOW}• LLM runtime setup failed. The service will continue with the built-in catalog fallback.{RESET}")
-        return
+        return False
 
     pending = _read_pending_generation(scope)
     if pending is None:
         print(f"{YELLOW}• No candidate runtime generation was produced; nothing to activate.{RESET}")
-        return
+        return False
 
     runtime, model_id, generation_id = pending
     spec = build_runtime_spec(scope, runtime, model_id, generation_id)
@@ -389,12 +284,12 @@ def initialize_llm_runtime_config(mode, priority_mode="balanced", cluster_mode=F
 
     if not result.ok:
         print(f"{RED}• Runtime activation failed{' (rolled back to the previous runtime)' if result.rolled_back else ''}.{RESET}")
-        return
+        return False
 
     print(f"{GREEN}• LLM runtime configuration and service switch completed.{RESET}")
     new_info = extract_runtime_and_repo(load_llm_runtime_config(scope=scope))
     if new_info:
-        print_header("🧹 Cleaning Up Previous Runtime")
+        print_header("Cleaning Up Previous Runtime")
         messages = cleanup_stale_runtime(
             previous_payload,
             *new_info,
@@ -406,10 +301,11 @@ def initialize_llm_runtime_config(mode, priority_mode="balanced", cluster_mode=F
                 print(f"{GREEN}• {message}{RESET}")
         else:
             print(f"{YELLOW}• Nothing to clean up.{RESET}")
+    return True
 
 
 def remove_llm_runtime_cli(assume_yes=False):
-    print_header("🗑  Remove LLM Runtime")
+    print_header("Remove LLM Runtime")
     if not assume_yes:
         confirm = input(
             f"{YELLOW}This will stop and remove the runtime container and permanently delete "
@@ -428,7 +324,7 @@ def remove_llm_runtime_cli(assume_yes=False):
     print(f"{GREEN}• LLM runtime removal complete.{RESET}")
 
 
-STATUS_SERVICES = ["db", "redis", "app", "nginx", "embedding-worker", "search-worker", "rag-worker"]
+STATUS_SERVICES = ["db", "redis", "app", "nginx", *ALL_WORKER_SERVICES]
 STATUS_PUBLISHED_PORTS = {"local_http": 8000, "external_http": 80, "external_https": 443}
 
 
@@ -452,7 +348,7 @@ def _probe_external_app_url():
 
 def _print_server_status_report(report):
     connection = report["connection"]
-    print_header("1. Connection")
+    print_header("Connection")
     print(f"domain: {connection.get('domain') or '-'}")
     print(f"published_ports: {connection['published_ports']}")
     print("docker_services:")
@@ -463,13 +359,44 @@ def _print_server_status_report(report):
     probe_color = GREEN if probe.get("ok") else YELLOW
     print(f"external_probe: {probe_color}{probe.get('message', '-')}{RESET} ({probe.get('elapsed_ms', 0)}ms)")
 
+    deployment = report.get("deployment")
+    if deployment:
+        enabled_workers = [
+            worker["compose_service"]
+            for worker in deployment.get("workers", [])
+            if worker.get("enabled")
+        ]
+        print_header("Deployment Plan")
+        print(f"scope: {deployment.get('scope', '-')}")
+        print(f"mode: {deployment.get('mode', '-')}")
+        print(f"generation: {deployment.get('generation_id', '-')}")
+        print(f"workers: {', '.join(enabled_workers) if enabled_workers else '-'}")
+
+    runtime = report.get("runtime") or {}
+    persisted_runtime = runtime.get("runtime_status") or {}
+    if runtime:
+        print_header("Local LLM Runtime")
+        print(f"container: {runtime.get('container_name', '-')}")
+        print(f"running: {runtime.get('running', False)} health={runtime.get('health') or '-'}")
+        print(f"restart_count: {runtime.get('restart_count', 0)} oom_killed={runtime.get('oom_killed', False)}")
+        if persisted_runtime:
+            runtime_color = GREEN if persisted_runtime.get("status") == "healthy" else YELLOW
+            print(
+                f"status: {runtime_color}{persisted_runtime.get('status', '-')}{RESET} "
+                f"reason={persisted_runtime.get('reason_code') or '-'}"
+            )
+            if persisted_runtime.get("message"):
+                print(f"  {persisted_runtime['message']}")
+            if persisted_runtime.get("retryable"):
+                print(f"  recovery: {YELLOW}python3 install.py --retry-llm{RESET}")
+
     if not report["container_reachable"]:
         print(f"\n{YELLOW}[WARN] Could not reach the app container to collect feature status. "
               f"Is 'app' running?{RESET}")
         return
 
     features = report["features"]
-    print_header("2. Feature Status")
+    print_header("Feature Status")
     file_io = features["file_io"]
     print(f"file_io: enabled={file_io['enabled']}")
     if file_io.get("pipeline_check"):
@@ -479,9 +406,12 @@ def _print_server_status_report(report):
     embedding = features["embedding"]
     print(f"embedding: enabled={embedding['enabled']}")
     rag = features["rag"]
-    print(f"rag: enabled={rag['enabled']} configured={rag.get('configured')}")
+    print(
+        f"rag: enabled={rag['enabled']} configured={rag.get('configured')} "
+        f"available={rag.get('available')}"
+    )
 
-    print_header("3. Feature Detail")
+    print_header("Feature Detail")
     print(f"embedding: model={embedding['model']} backend={embedding['backend']} "
           f"dimension={embedding['dimension']} sparse_enabled={embedding['sparse_enabled']}")
     if rag.get("configured"):
@@ -538,6 +468,8 @@ def handle_server_status_cli(json_output=False, skip_file_io=False, scope="produ
         },
         "features": (container_report or {}).get("features"),
         "container_reachable": container_report is not None,
+        "deployment": read_deployment_plan(scope),
+        "runtime": rag_status,
     }
 
     if json_output:
@@ -546,57 +478,155 @@ def handle_server_status_cli(json_output=False, skip_file_io=False, scope="produ
     _print_server_status_report(report)
 
 
-def run_services(mode, initialize_llm=False, rag_priority="balanced"):
-    print_header("🚀 3. Start Dotori Docker Containers")
+def _saved_operation_mode():
+    env_settings = read_env_file(ENV_FILE)
+    if env_settings.get("QUERY_LLM_ENABLED", "1") != "0":
+        return "1"
+    return "2" if env_settings.get("EMBEDDING_MODEL") else "3"
+
+
+def run_services(
+    mode,
+    initialize_llm=False,
+    rag_priority="balanced",
+    *,
+    build_images=False,
+    force_recreate=False,
+    rebuild_runtime=False,
+):
+    print_header("Starting Dotori Docker Containers")
 
     # A normal start always restores local-only access. External access is
     # enabled only through the explicit network access action.
     run_command(f"{COMPOSE_COMMAND} --profile direct-https stop nginx")
 
-    # Base services that always run
-    services = ["db", "redis", "app"]
-
-    want_rag = False
-    if mode == "1":
-        # Full AI Mode
-        services += ["embedding-worker", "search-worker", "rag-worker"]
-        want_rag = not initialize_llm
-    elif mode == "2":
-        # Search AI Mode
-        services += ["embedding-worker", "search-worker"]
-
     manager = RuntimeLifecycleManager()
-    manager.ensure_network("production")
 
-    cmd = f"{COMPOSE_COMMAND} up --build --quiet-build --quiet-pull -d " + " ".join(services)
+    # RAG workers are intentionally excluded from the initial plan. They are
+    # started only after a resolved runtime has passed lifecycle validation.
+    initial_plan = build_deployment_plan(mode, scope="production")
+    services = list(initial_plan.enabled_services)
+    if initial_plan.disabled_worker_services:
+        run_command(
+            f"{COMPOSE_COMMAND} stop "
+            + " ".join(initial_plan.disabled_worker_services)
+        )
+
+    cmd = compose_up_command(
+        COMPOSE_COMMAND,
+        services,
+        build_images=build_images,
+        force_recreate=force_recreate,
+    )
     print(f"Command: {BOLD}{cmd}{RESET}\n")
 
-    print("Building and starting containers in the background. This may take a while...")
-    print(f"{YELLOW}(pip/apt install output is condensed; full logs are shown automatically if a build fails){RESET}")
+    if build_images:
+        print("Building and starting containers in the background. This may take a while...")
+        print(f"{YELLOW}(pip/apt install output is condensed; full logs are shown automatically if a build fails){RESET}")
+    else:
+        print("Starting containers from existing images without rebuilding...")
     # run in real time
     process = subprocess.Popen(cmd, shell=True)
     process.communicate()
 
     if process.returncode == 0:
+        runtime_ready = False
         if initialize_llm:
-            initialize_llm_runtime_config(mode, priority_mode=rag_priority)
-        elif want_rag:
-            # Ensure the already-configured runtime is running (or start it
-            # for the first time); anything else gets torn down inside apply().
-            info = _active_runtime_info("production")
+            runtime_ready = initialize_llm_runtime_config(
+                mode, priority_mode=rag_priority
+            )
+            if not runtime_ready:
+                current = manager.status("production")
+                runtime_ready = bool(
+                    current.get("owned")
+                    and current.get("running")
+                    and current.get("health") == "healthy"
+                    and _active_runtime_info("production")
+                )
+                if runtime_ready:
+                    print(
+                        f"{YELLOW}• Model setup did not produce a new runtime; "
+                        f"continuing with the existing healthy runtime.{RESET}"
+                    )
+        elif initial_plan.mode == "rag":
+            # Ordinary starts reuse the active generation and an existing
+            # image. Rebuild is an explicit maintenance action.
+            info = _runtime_start_info("production")
             if info:
                 runtime, model_id, generation_id = info
                 spec = build_runtime_spec("production", runtime, model_id, generation_id)
-                manager.apply(spec)
+                result = manager.apply(spec) if rebuild_runtime else manager.resume(spec)
+                runtime_ready = result.ok or (
+                    result.rolled_back
+                    and manager.status("production").get("health") == "healthy"
+                )
+                for message in result.messages:
+                    color = GREEN if result.ok else (YELLOW if result.rolled_back else RED)
+                    print(f"{color}• {message}{RESET}")
             else:
                 print(f"{YELLOW}• No LLM runtime is configured yet; run --change-llm to select one.{RESET}")
         else:
-            manager.stop("production")
-        print_header("🎉 Startup Complete")
+            manager.stop("production", remove_container=False)
+
+        runtime_spec = None
+        if initial_plan.mode == "rag" and runtime_ready:
+            info = _active_runtime_info("production")
+            if info:
+                runtime, model_id, generation_id = info
+                runtime_spec = build_runtime_spec(
+                    "production", runtime, model_id, generation_id
+                )
+
+        final_plan = build_deployment_plan(
+            mode,
+            scope="production",
+            runtime=runtime_spec,
+            network_access="local",
+        )
+        write_deployment_plan(final_plan)
+
+        if initial_plan.mode == "rag" and not runtime_ready:
+            print(
+                f"{YELLOW}[WARN] Dotori core and search services are healthy, but the "
+                f"local LLM is unavailable. RAG answer generation remains disabled.{RESET}"
+            )
+            print(
+                f"{YELLOW}• Document processing and hybrid search remain available.{RESET}"
+            )
+            print(
+                f"{YELLOW}• Retry after freeing memory: "
+                f"python3 install.py --retry-llm{RESET}"
+            )
+
+        runtime_workers = [
+            worker.compose_service
+            for worker in final_plan.enabled_workers
+            if worker.requires_runtime
+        ]
+        if runtime_workers:
+            worker_cmd = f"{COMPOSE_COMMAND} up --no-build -d " + " ".join(runtime_workers)
+            worker_ok, _stdout, worker_error = run_command(worker_cmd)
+            if not worker_ok:
+                print(f"{RED}[ERROR] Runtime is healthy, but the RAG worker failed to start: {worker_error}{RESET}")
+                return False
+
+        print_header("Startup Complete")
         print(f"• {BOLD}Web application:{RESET} {GREEN}{APP_URL}{RESET}")
-        print(f"• {BOLD}To stop the services, run:{RESET} {YELLOW}{COMPOSE_COMMAND} down{RESET}")
+        print(f"• {BOLD}Deployment mode:{RESET} {final_plan.mode} ({final_plan.generation_id})")
+        if final_plan.mode == "rag" and not runtime_ready:
+            print(f"• {BOLD}RAG answer generation:{RESET} {YELLOW}disabled (search-only fallback){RESET}")
+        print(f"• {BOLD}To pause the services, run:{RESET} {YELLOW}python install.py --stop{RESET}")
+        return True
     else:
-        print(f"\n{RED}[ERROR] Failed to start Docker services. Verify that Docker Desktop is running.{RESET}")
+        if build_images:
+            detail = "Verify that Docker Desktop is running and review the build output."
+        else:
+            detail = (
+                "Existing images could not be started. Run Install / Setup Wizard "
+                "or Maintenance > Rebuild and Restart."
+            )
+        print(f"\n{RED}[ERROR] Failed to start Docker services. {detail}{RESET}")
+        return False
 
 
 def _scope_arg(args, default="production"):
@@ -610,14 +640,47 @@ def _scope_arg(args, default="production"):
     return value
 
 
-def handle_stop_cli(scope="production"):
-    print_header(f"Stop Dotori Services ({scope})")
+def handle_pause_cli(scope="production"):
+    print_header(f"Pause Dotori Services ({scope})")
     scope_cfg = SCOPE_CONFIG[scope]
     compose_command = f"docker compose -f {scope_cfg.compose_file}"
 
-    run_command(f"{compose_command} stop rag-worker")
-    RuntimeLifecycleManager().stop(scope, remove_container=True)
-    ok, _stdout, stderr = run_command(f"{compose_command} down")
+    ok, _stdout, stderr = run_command(
+        f"{compose_command} --profile direct-https --profile managed-rag stop"
+    )
+    runtime_ok = RuntimeLifecycleManager().stop(scope, remove_container=False)
+
+    if ok and runtime_ok:
+        print(f"{GREEN}• Dotori services paused. Containers, images, and model cache were preserved.{RESET}")
+        return True
+    detail = stderr or (
+        "the managed LLM runtime could not be paused"
+        if not runtime_ok
+        else "is Docker Desktop running?"
+    )
+    print(f"{RED}[ERROR] Failed to pause Dotori services: {detail}{RESET}")
+    return False
+
+
+def handle_shutdown_cli(scope="production"):
+    print_header(f"Full Shutdown ({scope})")
+    scope_cfg = SCOPE_CONFIG[scope]
+    compose_command = f"docker compose -f {scope_cfg.compose_file}"
+
+    saved_plan = read_deployment_plan(scope)
+    planned_workers = []
+    if saved_plan:
+        planned_workers = [
+            worker.get("compose_service")
+            for worker in saved_plan.get("workers", [])
+            if worker.get("enabled") and worker.get("compose_service")
+        ]
+    worker_services = planned_workers or list(ALL_WORKER_SERVICES)
+    run_command(f"{compose_command} stop " + " ".join(worker_services))
+    runtime_ok = RuntimeLifecycleManager().stop(scope, remove_container=True)
+    ok, _stdout, stderr = run_command(
+        f"{compose_command} --profile direct-https --profile managed-rag down"
+    )
 
     inspect_ok, count_out, _ = run_command(
         f'docker network inspect {scope_cfg.network_name} --format "{{{{len .Containers}}}}"'
@@ -625,15 +688,21 @@ def handle_stop_cli(scope="production"):
     if inspect_ok and count_out.strip() == "0":
         run_command(f"docker network rm {scope_cfg.network_name}")
 
-    if ok:
-        print(f"{GREEN}• Dotori services stopped.{RESET}")
+    if ok and runtime_ok:
+        print(f"{GREEN}• Dotori containers and networks were removed. Data, images, configuration, and model cache were preserved.{RESET}")
     else:
-        print(f"{RED}[ERROR] Failed to stop Dotori services: {stderr or 'is Docker Desktop running?'}{RESET}")
-    return ok
+        detail = stderr or (
+            "the managed LLM runtime could not be removed"
+            if not runtime_ok
+            else "is Docker Desktop running?"
+        )
+        print(f"{RED}[ERROR] Full shutdown failed: {detail}{RESET}")
+    return ok and runtime_ok
 
 
 def main():
     has_run_flag = "--run" in sys.argv
+    has_retry_llm_flag = "--retry-llm" in sys.argv
     network_result = handle_network_access_cli(sys.argv[1:])
     if network_result is not None:
         if not network_result:
@@ -649,12 +718,12 @@ def main():
     if "--remove-llm" in sys.argv:
         remove_llm_runtime_cli(assume_yes="--yes" in sys.argv)
         return
-    if "--stop" in sys.argv:
-        ok = handle_stop_cli(_scope_arg(sys.argv))
+    if "--shutdown" in sys.argv:
+        ok = handle_shutdown_cli(_scope_arg(sys.argv))
         sys.exit(0 if ok else 1)
-    if any(option in sys.argv for option in ("--list-llm-models", "--search-llm", "--show-llm")):
-        handle_llm_catalog_cli(sys.argv[1:])
-        return
+    if "--stop" in sys.argv:
+        ok = handle_pause_cli(_scope_arg(sys.argv))
+        sys.exit(0 if ok else 1)
     if "--status" in sys.argv:
         handle_server_status_cli(
             json_output="--json-output" in sys.argv,
@@ -671,27 +740,36 @@ def main():
             with open(ENV_FILE, "w", encoding="utf-8") as f:
                 f.write("# Generated by install.py\n")
 
-    # If --run flag is passed, we check if setup is already complete and skip wizard
+    if "--restart" in sys.argv:
+        paused = handle_pause_cli("production")
+        ok = paused and run_services(_saved_operation_mode())
+        sys.exit(0 if ok else 1)
+
+    if has_retry_llm_flag:
+        if _saved_operation_mode() != "1":
+            print(f"{YELLOW}• Local LLM retry is available only in Full Local AI RAG mode.{RESET}")
+            return
+        ok = run_services(_saved_operation_mode())
+        sys.exit(0 if ok else 1)
+
+    if "--rebuild" in sys.argv:
+        ok = run_services(
+            _saved_operation_mode(),
+            build_images=True,
+            force_recreate=True,
+            rebuild_runtime=True,
+        )
+        sys.exit(0 if ok else 1)
+
+    # A normal run reuses existing images and the active runtime generation.
     if has_run_flag:
-        env_settings = read_env_file(ENV_FILE)
-        # Determine mode from env variables
-        query_llm_enabled = env_settings.get("QUERY_LLM_ENABLED", "1")
-
-        # Infer mode
-        if query_llm_enabled == "0":
-            # Check if embedding is enabled (we assume yes if we ran it, or we look at worker status)
-            # Just look at backend
-            mode = "2" if env_settings.get("EMBEDDING_MODEL") else "3"
-        else:
-            mode = "1"
-
-        run_services(mode)
-        return
+        ok = run_services(_saved_operation_mode())
+        sys.exit(0 if ok else 1)
 
     # Run Wizard
     detect_hardware()
 
-    print_header("⚙️  2. Select Operation Mode")
+    print_header("Select Operation Mode")
     print(f"{BOLD}[1] Full Local AI RAG Mode{RESET}")
     print("    - Run local LLM answer generation, query analysis, and embeddings.")
     print()
@@ -757,6 +835,7 @@ def main():
             mode,
             initialize_llm=True,
             rag_priority=rag_priority,
+            build_images=True,
         )
     else:
         print(f"\n{YELLOW}• Setup complete. To start the services later, run python install.py --run.{RESET}")

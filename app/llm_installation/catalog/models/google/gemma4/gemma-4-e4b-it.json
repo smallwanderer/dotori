@@ -10,6 +10,7 @@
         "num_hidden_layers": 42,
         "num_attention_heads": 8,
         "num_key_value_heads": 2,
+        "head_dim": 256,
         "extra": {
             "metadata_source": "autoconfig:google/gemma-4-E4B-it",
             "root_architecture": "gemma4"

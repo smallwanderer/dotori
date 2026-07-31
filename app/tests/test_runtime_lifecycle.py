@@ -4,8 +4,11 @@ import subprocess
 import pytest
 
 from llm_installation.runtime_lifecycle import (
+    HUGGINGFACE_CACHE_VOLUME,
+    LLM_UNAVAILABLE_OOM,
     RuntimeLifecycleManager,
     build_runtime_spec,
+    load_runtime_status,
 )
 
 pytestmark = pytest.mark.unit
@@ -37,9 +40,27 @@ class FakeDockerEnvironment:
         self.images: set[str] = set()
         self.containers: dict[str, dict] = {}
         self.health_after_start = "healthy"
+        self.fail_candidate_oom = False
 
-    def seed_container(self, name, *, labels, running=True, health="healthy"):
-        self.containers[name] = {"labels": labels, "running": running, "health": health}
+    def seed_container(
+        self,
+        name,
+        *,
+        labels,
+        running=True,
+        health="healthy",
+        oom_killed=False,
+        exit_code=0,
+    ):
+        self.containers[name] = {
+            "labels": labels,
+            "running": running,
+            "health": health,
+            "oom_killed": oom_killed,
+            "exit_code": exit_code,
+            "restart_count": 0,
+            "restart_policy": "unless-stopped",
+        }
 
     def __call__(self, args, **kwargs) -> subprocess.CompletedProcess:
         self.calls.append(args)
@@ -55,7 +76,7 @@ class FakeDockerEnvironment:
                 return self._ok()
 
         if sub == "build":
-            # docker build -q -t <image> <context>
+            # docker build -q -t <image> -f <dockerfile> <context>
             image = args[4]
             self.images.add(image)
             return self._ok(stdout="sha256:fakeimageid")
@@ -73,7 +94,13 @@ class FakeDockerEnvironment:
             if fmt == "{{.State.Health.Status}}":
                 return self._ok(stdout=container["health"] or "")
             running = "true" if container["running"] else "false"
-            return self._ok(stdout=f"{running}|{container['health'] or ''}")
+            oom_killed = "true" if container.get("oom_killed") else "false"
+            return self._ok(
+                stdout=(
+                    f"{running}|{container['health'] or ''}|{oom_killed}|"
+                    f"{container.get('exit_code', 0)}|{container.get('restart_count', 0)}"
+                )
+            )
 
         if sub == "run":
             name = args[args.index("--name") + 1]
@@ -84,9 +111,20 @@ class FakeDockerEnvironment:
                     labels[key] = value
             self.containers[name] = {
                 "labels": labels,
-                "running": True,
-                "health": self.health_after_start,
+                "running": not self.fail_candidate_oom,
+                "health": None if self.fail_candidate_oom else self.health_after_start,
+                "oom_killed": self.fail_candidate_oom,
+                "exit_code": 137 if self.fail_candidate_oom else 0,
+                "restart_count": 0,
+                "restart_policy": args[args.index("--restart") + 1],
             }
+            return self._ok()
+
+        if sub == "update":
+            container = self.containers.get(args[-1])
+            if container is None:
+                return self._fail()
+            container["restart_policy"] = args[args.index("--restart") + 1]
             return self._ok()
 
         if sub == "rm":
@@ -112,10 +150,15 @@ class FakeDockerEnvironment:
                 return self._fail()
             container["running"] = True
             container["health"] = "healthy"
+            container["oom_killed"] = False
+            container["exit_code"] = 0
             return self._ok()
 
         if sub == "exec":
             return self._ok()
+
+        if sub == "logs":
+            return self._ok(stdout="runtime failed to initialize")
 
         if sub == "compose":
             return self._ok()
@@ -144,6 +187,17 @@ def test_apply_fresh_install_starts_and_commits(tmp_path):
     assert "--network-alias" in run_call
     assert "rag-runtime" in run_call
     assert f"com.dotori.scope={spec.scope}" in run_call
+    assert "RAG_RUNTIME_ARGS_FILE=/runtime/runtime.args" in run_call
+    assert f"{HUGGINGFACE_CACHE_VOLUME}:/root/.cache/huggingface" in run_call
+    assert run_call[run_call.index("--restart") + 1] == "no"
+    assert "900s" in run_call
+    assert any(
+        call[1:4] == ["update", "--restart", "unless-stopped"]
+        for call in env.calls
+    )
+    build_call = next(c for c in env.calls if c[1] == "build")
+    assert "llama.Dockerfile" in build_call[-2]
+    assert build_call[-1].endswith("llm-runtime")
 
     active_path = tmp_path / "data" / "config" / "runtime_scopes" / "production" / "llm_runtime.json"
     assert active_path.exists()
@@ -186,6 +240,138 @@ def test_apply_rolls_back_on_unhealthy_candidate(tmp_path):
     assert env.containers[spec.container_name]["running"] is True
     active_path = tmp_path / "data" / "config" / "runtime_scopes" / "production" / "llm_runtime.json"
     assert not active_path.exists()
+
+
+def test_apply_does_not_start_rag_worker_when_first_runtime_fails(tmp_path):
+    env = FakeDockerEnvironment()
+    env.health_after_start = "unhealthy"
+    spec = _spec(tmp_path)
+    manager = RuntimeLifecycleManager(tmp_path, runner=env)
+
+    result = manager.apply(spec)
+
+    assert result.ok is False
+    assert result.rolled_back is False
+    assert any("runtime failed to initialize" in message for message in result.messages)
+    assert not any(
+        call[1:5] == ["compose", "-f", "docker-compose.yml", "start"]
+        and call[-1] == "rag-worker"
+        for call in env.calls
+    )
+
+
+def test_apply_records_oom_and_leaves_runtime_stopped_without_restart_loop(tmp_path):
+    env = FakeDockerEnvironment()
+    env.fail_candidate_oom = True
+    spec = _spec(tmp_path)
+    manager = RuntimeLifecycleManager(tmp_path, runner=env)
+
+    result = manager.apply(spec)
+
+    assert result.ok is False
+    assert result.failure_code == LLM_UNAVAILABLE_OOM
+    assert spec.container_name not in env.containers
+    run_call = next(call for call in env.calls if call[1] == "run")
+    assert run_call[run_call.index("--restart") + 1] == "no"
+    assert not any(
+        call[1:4] == ["update", "--restart", "unless-stopped"]
+        for call in env.calls
+    )
+    persisted = load_runtime_status(spec.scope, repo_root=tmp_path)
+    assert persisted["status"] == "unavailable"
+    assert persisted["reason_code"] == LLM_UNAVAILABLE_OOM
+    assert persisted["retryable"] is True
+
+
+def test_resume_starts_matching_stopped_container_without_building(tmp_path):
+    env = FakeDockerEnvironment()
+    spec = _spec(tmp_path)
+    env.seed_container(
+        spec.container_name,
+        labels={
+            "com.dotori.managed": "true",
+            "com.dotori.component": "rag-runtime",
+            "com.dotori.scope": spec.scope,
+            "com.dotori.runtime": spec.runtime,
+            "com.dotori.generation": spec.generation_id,
+        },
+        running=False,
+        health=None,
+    )
+    manager = RuntimeLifecycleManager(tmp_path, runner=env)
+
+    result = manager.resume(spec)
+
+    assert result.ok is True
+    assert env.containers[spec.container_name]["running"] is True
+    assert any(call[1] == "start" for call in env.calls)
+    assert not any(call[1] == "build" for call in env.calls)
+    assert not any(call[1] == "run" for call in env.calls)
+
+
+def test_resume_recreates_missing_container_from_existing_image_without_building(tmp_path):
+    env = FakeDockerEnvironment()
+    spec = _spec(tmp_path)
+    env.images.add(spec.image)
+    manager = RuntimeLifecycleManager(tmp_path, runner=env)
+
+    result = manager.resume(spec)
+
+    assert result.ok is True
+    assert env.containers[spec.container_name]["running"] is True
+    assert any(call[1] == "run" for call in env.calls)
+    assert not any(call[1] == "build" for call in env.calls)
+
+
+def test_resume_requires_rebuild_when_runtime_image_is_missing(tmp_path):
+    env = FakeDockerEnvironment()
+    spec = _spec(tmp_path)
+    manager = RuntimeLifecycleManager(tmp_path, runner=env)
+
+    result = manager.resume(spec)
+
+    assert result.ok is False
+    assert "Rebuild & Restart" in result.messages[0]
+    assert not any(call[1] == "build" for call in env.calls)
+    assert not any(call[1] == "run" for call in env.calls)
+
+
+def test_resume_rejects_args_path_when_it_is_a_directory(tmp_path):
+    env = FakeDockerEnvironment()
+    spec = _spec(tmp_path)
+    spec.args_file.unlink()
+    spec.args_file.mkdir()
+    manager = RuntimeLifecycleManager(tmp_path, runner=env)
+
+    result = manager.resume(spec)
+
+    assert result.ok is False
+    assert "Missing args file" in result.messages[0]
+    assert env.calls == []
+
+
+def test_resume_refuses_container_from_another_generation(tmp_path):
+    env = FakeDockerEnvironment()
+    spec = _spec(tmp_path)
+    env.seed_container(
+        spec.container_name,
+        labels={
+            "com.dotori.managed": "true",
+            "com.dotori.component": "rag-runtime",
+            "com.dotori.scope": spec.scope,
+            "com.dotori.runtime": spec.runtime,
+            "com.dotori.generation": "old-generation",
+        },
+        running=False,
+        health=None,
+    )
+    manager = RuntimeLifecycleManager(tmp_path, runner=env)
+
+    result = manager.resume(spec)
+
+    assert result.ok is False
+    assert "active generation" in result.messages[0]
+    assert not any(call[1] in {"start", "build", "run"} for call in env.calls)
 
 
 def test_stop_refuses_when_container_not_owned(tmp_path):

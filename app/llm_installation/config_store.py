@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -11,6 +12,16 @@ from llm_installation.runtime_probe import ServerRuntimeProfile
 
 
 CONFIG_VERSION = 7
+RUNTIME_BASE_URL = "http://rag-runtime:8080"
+LEGACY_ARGS_FILE = {
+    "llama.cpp": "llama_rag.args",
+    "vllm": "vllm_rag.args",
+}
+
+
+def _write_runtime_args(path: Path, args_text: str) -> None:
+    with path.open("w", encoding="utf-8", newline="\n") as args_file:
+        args_file.write(args_text)
 
 
 def _serialize_catalog_entry(entry) -> dict[str, Any]:
@@ -180,9 +191,7 @@ def write_runtime_generation(
 
     args = _build_runtime_args(target=target, profile=profile)
     if args is not None:
-        (generation_dir / "runtime.args").write_text(
-            "\n".join(args) + "\n", encoding="utf-8"
-        )
+        _write_runtime_args(generation_dir / "runtime.args", "\n".join(args) + "\n")
 
     return generation_dir
 
@@ -201,6 +210,89 @@ def commit_active_runtime_config(
     tmp_path.write_text(payload_text, encoding="utf-8")
     tmp_path.replace(active_path)
     return active_path
+
+
+def stage_legacy_runtime_generation(
+    scope: str, *, repo_root: Path | None = None
+) -> tuple[str, str, str] | None:
+    """Convert a flat pre-generation config into a staged managed runtime.
+
+    The active scoped pointer is left untouched until RuntimeLifecycleManager
+    validates the container and commits this generation.
+    """
+    active_path = get_llm_runtime_config_path(scope, repo_root=repo_root)
+    root = repo_root or Path(__file__).resolve().parents[2]
+    legacy_path = root / "data" / "config" / "llm_runtime.json"
+
+    source_path = active_path if active_path.is_file() else legacy_path
+    if not source_path.is_file():
+        return None
+
+    try:
+        payload = json.loads(source_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    target = payload.get("target") if isinstance(payload, dict) else None
+    if not isinstance(target, dict):
+        return None
+
+    generation_id = str(target.get("generation_id") or "")
+    if generation_id:
+        generation_dir = active_path.parent / "generations" / generation_id
+        if (generation_dir / "runtime.json").is_file() and (
+            generation_dir / "runtime.args"
+        ).is_file():
+            return None
+
+        # A scoped pointer without its generation artifacts cannot be
+        # resumed. Fall back to the pre-generation files when they still
+        # exist so an interrupted migration can be staged and validated
+        # again instead of leaving RAG permanently disabled.
+        if source_path == legacy_path or not legacy_path.is_file():
+            return None
+        source_path = legacy_path
+        try:
+            payload = json.loads(source_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        target = payload.get("target") if isinstance(payload, dict) else None
+        if not isinstance(target, dict) or target.get("generation_id"):
+            return None
+
+    runtime = str(target.get("runtime") or "")
+    model_id = str(target.get("model") or "")
+    args_filename = LEGACY_ARGS_FILE.get(runtime)
+    if not runtime or not model_id or not args_filename:
+        return None
+
+    args_path = source_path.with_name(args_filename)
+    try:
+        args_text = args_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if not args_text.strip():
+        return None
+
+    fingerprint = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        + b"\0"
+        + args_text.encode("utf-8")
+    ).hexdigest()
+    generation_id = f"legacy-{fingerprint[:12]}"
+    generation_dir = active_path.parent / "generations" / generation_id
+    generation_dir.mkdir(parents=True, exist_ok=True)
+
+    migrated_payload = json.loads(json.dumps(payload))
+    migrated_target = migrated_payload["target"]
+    migrated_target["generation_id"] = generation_id
+    migrated_target["base_url"] = RUNTIME_BASE_URL
+    (generation_dir / "runtime.json").write_text(
+        json.dumps(migrated_payload, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_runtime_args(generation_dir / "runtime.args", args_text)
+    return runtime, model_id, generation_id
 
 
 def write_llm_runtime_config(
@@ -229,7 +321,7 @@ def write_llm_runtime_config(
     args = _build_runtime_args(target=target, profile=profile)
     if args is not None:
         args_filename = "llama_rag.args" if target.runtime == "llama.cpp" else "vllm_rag.args"
-        config_path.with_name(args_filename).write_text(
-            "\n".join(args) + "\n", encoding="utf-8"
+        _write_runtime_args(
+            config_path.with_name(args_filename), "\n".join(args) + "\n"
         )
     return config_path

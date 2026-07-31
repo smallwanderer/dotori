@@ -176,6 +176,45 @@ def test_rag_status_reads_persisted_config_without_live_probe(monkeypatch, tmp_p
     assert status["runtime"] == target.runtime
 
 
+def test_rag_status_reports_persisted_oom_without_live_probe(monkeypatch, tmp_path):
+    config_path = tmp_path / "llm_runtime.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "target": {
+                    "endpoint_name": "Local runtime",
+                    "base_url": "http://rag-runtime:8080",
+                    "model": "test-model",
+                    "runtime": "llama.cpp",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "runtime_status.json").write_text(
+        json.dumps(
+            {
+                "status": "unavailable",
+                "reason_code": "LLM_UNAVAILABLE_OOM",
+                "retryable": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LLM_RUNTIME_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("QUERY_LLM_ENABLED", "1")
+    monkeypatch.setattr(
+        "document_ai.management.commands.server_status.check_endpoint_health",
+        lambda *a, **k: pytest.fail("must not probe an unavailable runtime"),
+    )
+
+    status = _rag_status(timeout=1)
+
+    assert status["configured"] is True
+    assert status["available"] is False
+    assert status["runtime_status"]["reason_code"] == "LLM_UNAVAILABLE_OOM"
+
+
 class ServerStatusCommandTests(TestCase):
     def test_json_output_contains_expected_top_level_keys(self):
         out = io.StringIO()

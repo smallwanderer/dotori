@@ -1,4 +1,7 @@
+import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +17,59 @@ from installation.network_access import (
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_django_network_security_uses_dotori_namespace():
+    env = os.environ.copy()
+    env.update(
+        {
+            "DOTORI_DJANGO_ALLOWED_HOSTS": "docs.example.com",
+            "DOTORI_DJANGO_CSRF_TRUSTED_ORIGINS": "https://docs.example.com",
+            "DOTORI_DJANGO_SECURE_PROXY_SSL_HEADER": "1",
+            "DOTORI_DJANGO_SECURE_SSL_REDIRECT": "1",
+            "DOTORI_DJANGO_SESSION_COOKIE_SECURE": "1",
+            "DOTORI_DJANGO_CSRF_COOKIE_SECURE": "1",
+            # Conflicting legacy values prove they no longer control the
+            # network-access module's settings.
+            "DJANGO_CSRF_TRUSTED_ORIGINS": "http://legacy.example.com",
+            "DJANGO_SECURE_PROXY_SSL_HEADER": "0",
+            "DJANGO_SECURE_SSL_REDIRECT": "0",
+            "DJANGO_SESSION_COOKIE_SECURE": "0",
+            "DJANGO_CSRF_COOKIE_SECURE": "0",
+        }
+    )
+    script = """
+import json
+from config import settings
+
+print(json.dumps({
+    "allowed_hosts": settings.ALLOWED_HOSTS,
+    "csrf_trusted_origins": settings.CSRF_TRUSTED_ORIGINS,
+    "secure_proxy_ssl_header": settings.SECURE_PROXY_SSL_HEADER,
+    "secure_ssl_redirect": settings.SECURE_SSL_REDIRECT,
+    "session_cookie_secure": settings.SESSION_COOKIE_SECURE,
+    "csrf_cookie_secure": settings.CSRF_COOKIE_SECURE,
+}))
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload == {
+        "allowed_hosts": ["docs.example.com"],
+        "csrf_trusted_origins": ["https://docs.example.com"],
+        "secure_proxy_ssl_header": ["HTTP_X_FORWARDED_PROTO", "https"],
+        "secure_ssl_redirect": True,
+        "session_cookie_secure": True,
+        "csrf_cookie_secure": True,
+    }
 
 
 def _write_valid_provider_env(project_root: Path) -> None:

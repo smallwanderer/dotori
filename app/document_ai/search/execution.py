@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 def _queue_rag_generation_for_search_job(search_job) -> int:
     from document_ai.models import RAGJob
+    from document_ai.services.rag_runtime_config import server_rag_runtime_availability
     from document_ai.tasks import generate_rag_response
 
     queued = 0
@@ -22,7 +23,26 @@ def _queue_rag_generation_for_search_job(search_job) -> int:
         status=AIStatus.PENDING,
         task_id="",
     )
+    runtime_available, runtime_status = server_rag_runtime_availability()
     for rag_job in rag_jobs:
+        if not rag_job.llm_endpoint_id and not runtime_available:
+            reason_code = runtime_status.get("reason_code") or "LLM_RUNTIME_UNAVAILABLE"
+            rag_job.status = AIStatus.FAILED
+            rag_job.stage = RAGStage.FAILED
+            rag_job.stage_message = "로컬 LLM을 사용할 수 없어 답변 생성을 시작하지 못했습니다."
+            rag_job.completed_at = timezone.now()
+            rag_job.error_message = reason_code
+            rag_job.save(
+                update_fields=[
+                    "status",
+                    "stage",
+                    "stage_message",
+                    "completed_at",
+                    "error_message",
+                    "updated_at",
+                ]
+            )
+            continue
         async_result = generate_rag_response.apply_async(args=[rag_job.id], queue="rag")
         rag_job.task_id = async_result.id
         rag_job.stage = RAGStage.GENERATING

@@ -19,6 +19,7 @@ from llm_installation.cli import (
     json_output,
     model_detail_dict,
     print_model_table,
+    render_table,
 )
 from llm_installation.config_store import write_llm_runtime_config, write_runtime_generation
 from llm_installation.planner import (
@@ -31,6 +32,8 @@ from llm_installation.router import resolve_server_rag_target
 from llm_installation.runtime_lifecycle import make_generation_id
 from llm_installation.selection import (
     SelectionCandidate,
+    estimated_decode_tps,
+    rank_manual_candidates,
     select_catalog_model,
 )
 from llm_installation.runtime_handoff import (
@@ -98,6 +101,81 @@ class Command(BaseCommand):
             help="Run interactive 11-step installation and LLM management wizard.",
         )
 
+    PAGE_SIZE = 20
+
+    def _candidate_table_row(self, candidate, index):
+        entry = candidate.entry
+        assessment = candidate.assessment
+        placement = assessment.memory_placement
+        if placement is None:
+            est_mem = "Unavailable"
+        else:
+            vram_label = ",".join(
+                str(value) for value in placement.required_vram_per_gpu_mb
+            ) or "-"
+            est_mem = f"RAM {placement.required_ram_mb} / VRAM [{vram_label}] MB"
+        tps = estimated_decode_tps(assessment)
+        est_tps = f"{tps:.1f} tps" if tps is not None else "N/A"
+        fit_color = (
+            self.style.SUCCESS if assessment.fit_status == "FIT"
+            else self.style.WARNING if assessment.fit_status == "RISKY"
+            else self.style.ERROR
+        )
+        row = [str(index), entry.id, assessment.backend_profile or "-", assessment.fit_status, est_mem, est_tps]
+        row_styles = [None, None, None, fit_color, None, None]
+        return row, row_styles
+
+    def _print_candidate_page(self, candidates, start_index):
+        headers = ["Idx", "Model ID", "Candidate Type", "Status", "Est RAM/VRAM", "Est TPS"]
+        widths = [5, 28, 18, 8, 32, 10]
+        rows = []
+        row_styles = []
+        for offset, candidate in enumerate(candidates):
+            row, styles = self._candidate_table_row(candidate, start_index + offset)
+            rows.append(row)
+            row_styles.append(styles)
+        render_table(headers, widths, rows, self.stdout, row_styles=row_styles)
+
+    def _run_manual_selection(self, display_candidates, priority_preset):
+        total = len(display_candidates)
+        last_page = max((total - 1) // self.PAGE_SIZE, 0)
+        page = 0
+        while True:
+            start = page * self.PAGE_SIZE
+            end = min(start + self.PAGE_SIZE, total)
+            self._print_candidate_page(display_candidates[start:end], start + 1)
+            self.stdout.write(f"Showing items {start + 1}-{end} of {total}.")
+            self.stdout.write("Commands: [Enter/n] Next Page, [p] Previous Page, [Index] Select, [q] Quit")
+            choice = input("> ").strip().lower()
+            if choice == "q":
+                raise CommandError("Manual model selection was cancelled.")
+            if choice in ("", "n"):
+                if page < last_page:
+                    page += 1
+                else:
+                    self.stdout.write(self.style.WARNING("Already on the last page."))
+                continue
+            if choice == "p":
+                if page > 0:
+                    page -= 1
+                else:
+                    self.stdout.write(self.style.WARNING("Already on the first page."))
+                continue
+            if not choice.isdigit() or not 1 <= int(choice) <= total:
+                self.stdout.write(self.style.ERROR("Please enter a valid catalog index."))
+                continue
+            selected_artifact_id = display_candidates[int(choice) - 1].entry.id
+            selection_result = select_catalog_model(
+                display_candidates,
+                priority_preset,
+                selection_mode="manual",
+                selected_artifact_id=selected_artifact_id,
+            )
+            if selection_result.selection_status == "INVALID_MANUAL_SELECTION":
+                self.stdout.write(self.style.ERROR("That model cannot be selected."))
+                continue
+            return selected_artifact_id
+
     def handle(self, *args, **options):
         profile = probe_server_runtime()
         if options["cluster_mode"]:
@@ -158,70 +236,37 @@ class Command(BaseCommand):
             self.stdout.write("")
 
             # Generate and calculate candidate fits
-            all_candidates = []
+            selection_candidates = []
             for entry in catalog:
                 assessment = assess_catalog_entry(entry, profile)
                 fit_evaluation = evaluate_catalog_fit(entry, profile)
-                all_candidates.append((entry, assessment, fit_evaluation))
+                selection_candidates.append(SelectionCandidate(entry, assessment, fit_evaluation))
 
-            selection_candidates = [
-                SelectionCandidate(entry, assessment, fit_evaluation)
-                for entry, assessment, fit_evaluation in all_candidates
-            ]
             self.stdout.write("Select model selection method:")
             self.stdout.write("1) Automatic recommendation (default)")
             self.stdout.write("2) Choose from the assessed model catalog")
             selection_choice = input("Enter choice (1-2, default: 1): ").strip()
             selection_mode = "manual" if selection_choice == "2" else "automatic"
-            selection_result = select_catalog_model(
-                selection_candidates,
-                priority_preset,
-                selection_mode=selection_mode,
-            )
 
             self.stdout.write(self.style.MIGRATE_HEADING("=== 3. Model Ranking & Automatic Selection ==="))
-            self.stdout.write(
-                f"{'Idx':<4} | {'Model ID':<15} | {'Candidate Type':<20} | {'Status':<10} | {'Est RAM/VRAM':<20} | {'Speed Score':<12}"
-            )
-            self.stdout.write("-" * 95)
-            
-            for idx, (entry, plan, fit_evaluation) in enumerate(all_candidates, 1):
-                placement = plan.memory_placement
-                if placement is None:
-                    est_mem = "Unavailable"
-                else:
-                    vram_label = ",".join(
-                        str(value) for value in placement.required_vram_per_gpu_mb
-                    ) or "-"
-                    est_mem = f"RAM {placement.required_ram_mb} / VRAM [{vram_label}] MB"
-                fit_color = self.style.SUCCESS if plan.fit_status == "FIT" else (self.style.WARNING if plan.fit_status == "RISKY" else self.style.ERROR)
-                self.stdout.write(
-                    f"{idx:<4} | {entry.id:<15} | {(plan.backend_profile or '-'):<20} | "
-                    f"{fit_color(plan.fit_status):<18} | {est_mem:<20} | {entry.priority:<12}"
-                )
-                self.stdout.write(f"     Grounds: {plan.fit_reason}")
-                self.stdout.write("-" * 95)
 
             selected_artifact_id = None
             if selection_mode == "manual":
-                while True:
-                    choice = input("Select an eligible model index (or 'q' to quit): ").strip()
-                    if choice.lower() == "q":
-                        raise CommandError("Manual model selection was cancelled.")
-                    if not choice.isdigit() or not 1 <= int(choice) <= len(all_candidates):
-                        self.stdout.write(self.style.ERROR("Please enter a valid catalog index."))
-                        continue
-                    selected_artifact_id = all_candidates[int(choice) - 1][0].id
-                    selection_result = select_catalog_model(
-                        selection_candidates,
-                        priority_preset,
-                        selection_mode="manual",
-                        selected_artifact_id=selected_artifact_id,
-                    )
-                    if selection_result.selection_status == "INVALID_MANUAL_SELECTION":
-                        self.stdout.write(self.style.ERROR("That model cannot be selected."))
-                        continue
-                    break
+                ranked, non_selectable = rank_manual_candidates(selection_candidates, priority_preset)
+                display_candidates = ranked + non_selectable
+                selected_artifact_id = self._run_manual_selection(display_candidates, priority_preset)
+                selection_result = select_catalog_model(
+                    display_candidates,
+                    priority_preset,
+                    selection_mode="manual",
+                    selected_artifact_id=selected_artifact_id,
+                )
+            else:
+                selection_result = select_catalog_model(
+                    selection_candidates,
+                    priority_preset,
+                    selection_mode=selection_mode,
+                )
 
             if selection_result.selection_status == "RISKY_CONFIRMATION_REQUIRED":
                 confirmation = input(

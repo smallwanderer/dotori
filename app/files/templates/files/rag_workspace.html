@@ -1125,7 +1125,16 @@
         },
         body: JSON.stringify(payload),
       });
-      if (!response.ok) throw new Error(`RAG request failed: ${response.status}`);
+      if (!response.ok) {
+        let errorMessage = `RAG request failed: ${response.status}`;
+        try {
+          const errorPayload = await response.json();
+          errorMessage = errorPayload?.error?.message || errorMessage;
+        } catch (_error) {
+          // Keep the HTTP fallback when the response isn't JSON.
+        }
+        throw new Error(errorMessage);
+      }
       const data = await response.json();
       if (data.stage_message) {
         setMessageHtml(pendingId, escapeHtml(data.stage_message));
@@ -1134,7 +1143,8 @@
       pollRagJob(data.job_id, pendingId, 0);
     } catch (error) {
       setProgress('failed');
-      setMessageHtml(pendingId, `${escapeHtml(t('requestFailed'))}${renderRetryAction()}`);
+      const message = error?.message || t('requestFailed');
+      setMessageHtml(pendingId, `${escapeHtml(message)}${renderRetryAction()}`);
       console.error(error);
     }
   }

@@ -410,7 +410,7 @@ def test_speed_priority_selects_awq_vllm_candidate():
 
 def test_router_does_not_reselect_after_endpoint_failure(monkeypatch):
     def fake_check(base_url, expected_model=""):
-        if "vllm" in base_url:
+        if expected_model == AWQ_MODEL_ID:
             return EndpointStatus(base_url=base_url, ok=False, check_name="models", message="not ready")
         return EndpointStatus(base_url=base_url, ok=True, check_name="models", message="ok")
 
@@ -434,7 +434,7 @@ def test_router_does_not_reselect_after_endpoint_failure(monkeypatch):
 
 def test_router_does_not_reselect_after_smoke_failure(monkeypatch):
     def fake_smoke(base_url, model):
-        if "vllm" in base_url:
+        if model == AWQ_MODEL_ID:
             return SmokeTestStatus(base_url=base_url, model=model, ok=False, message="completion failed")
         return SmokeTestStatus(base_url=base_url, model=model, ok=True, message="ok")
 

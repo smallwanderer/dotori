@@ -13,6 +13,7 @@
     "num_hidden_layers": 48,
     "num_attention_heads": 32,
     "num_key_value_heads": 4,
+    "head_dim": 128,
     "extra": {
       "metadata_source": "autoconfig:Qwen/Qwen3-30B-A3B-Instruct-2507",
       "root_architecture": "qwen3"

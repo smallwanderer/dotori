@@ -12,7 +12,10 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management.base import BaseCommand
 from django.db import connection
 
-from document_ai.services.rag_runtime_config import target_from_persisted_config
+from document_ai.services.rag_runtime_config import (
+    load_llm_runtime_status,
+    target_from_persisted_config,
+)
 from llm_installation.cli import json_output
 from llm_installation.runtime_probe import (
     check_endpoint_health,
@@ -119,17 +122,22 @@ def _embedding_status() -> dict:
 def _rag_status(*, timeout: int) -> dict:
     enabled = _truthy_env_flag("QUERY_LLM_ENABLED", "1")
     target = target_from_persisted_config()
+    runtime_status = load_llm_runtime_status()
 
     if target is None:
         return {
             "enabled": enabled,
             "configured": False,
+            "available": False,
+            "runtime_status": runtime_status,
             "message": "No LLM runtime persisted; run detect_llm_runtime --write.",
         }
 
     detail = {
         "enabled": enabled,
         "configured": True,
+        "available": not runtime_status or runtime_status.get("status") == "healthy",
+        "runtime_status": runtime_status,
         "endpoint_name": target.endpoint_name,
         "base_url": target.base_url,
         "model": target.model,
@@ -141,7 +149,7 @@ def _rag_status(*, timeout: int) -> dict:
         "retrieval_threshold": settings.RAG_RETRIEVAL_THRESHOLD,
     }
 
-    if enabled:
+    if enabled and detail["available"]:
         health = check_endpoint_health(target.base_url, timeout=timeout)
         detail["health_status"] = asdict(health)
         if health.ok:

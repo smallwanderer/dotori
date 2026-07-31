@@ -24,8 +24,6 @@ staticfiles/
 
 # Docker volume / runtime data
 data/
-llama-rag/data/
-vllm-rag/data/
 
 # Celery runtime
 celerybeat-schedule
@@ -75,3 +73,4 @@ legal/
 # Devs
 dev-docs/
 docker-compose.dev.yml
+app/requirements.dev.txt

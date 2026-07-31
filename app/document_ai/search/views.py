@@ -27,11 +27,48 @@ from document_ai.search.query_frontend import prepare_retrieval_query
 from document_ai.parsers.text_utils import normalize_extracted_text
 from document_ai.services.rag_cancel_service import set_rag_cancel_signal
 from document_ai.services.llm_endpoint_service import build_rag_llm_snapshot
+from document_ai.services.rag_runtime_config import (
+    LLMRuntimeNotConfigured,
+    server_rag_runtime_availability,
+)
 from document_ai.tasks import perform_vector_search
 from files.models import Node, NodeType
 
 
 EMPTY_SCOPE_SENTINEL = "00000000-0000-0000-0000-000000000000"
+
+
+def _llm_runtime_unavailable_response(runtime_status: dict | None = None) -> Response:
+    detail = runtime_status or {}
+    reason_code = detail.get("reason_code") or "LLM_RUNTIME_NOT_CONFIGURED"
+    if reason_code == "LLM_UNAVAILABLE_OOM":
+        message = (
+            "메모리 부족으로 로컬 LLM 답변 생성이 비활성화되었습니다. "
+            "문서 검색은 계속 사용할 수 있습니다."
+        )
+    elif reason_code == "LLM_UNAVAILABLE_TIMEOUT":
+        message = (
+            "로컬 LLM이 제한 시간 안에 준비되지 않아 답변 생성이 비활성화되었습니다. "
+            "문서 검색은 계속 사용할 수 있습니다."
+        )
+    else:
+        message = (
+            "현재 로컬 LLM을 사용할 수 없어 답변을 생성할 수 없습니다. "
+            "문서 검색은 계속 사용할 수 있습니다."
+        )
+    return Response(
+        {
+            "error": {
+                "code": "LLM_RUNTIME_UNAVAILABLE",
+                "reason": reason_code,
+                "message": message,
+                "search_available": True,
+                "retryable": bool(detail.get("retryable", True)),
+                "recovery_command": "python3 install.py --retry-llm",
+            }
+        },
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
 
 
 def _expand_scope_node_ids(user, node_ids) -> list[str]:
@@ -204,6 +241,19 @@ class RAGView(APIView):
         serializer = RAGRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        try:
+            llm_snapshot = build_rag_llm_snapshot(request.user)
+        except LLMRuntimeNotConfigured:
+            return _llm_runtime_unavailable_response()
+
+        # Explicit external endpoints do not depend on the server-managed
+        # local runtime. Server-default requests are accepted only after the
+        # local candidate has passed lifecycle validation.
+        if not llm_snapshot.get("llm_endpoint"):
+            runtime_available, runtime_status = server_rag_runtime_availability()
+            if not runtime_available:
+                return _llm_runtime_unavailable_response(runtime_status)
+
         node_ids = serializer.validated_data.get("node_ids") or []
         scoped_node_ids = _expand_scope_node_ids(request.user, node_ids)
         question = serializer.validated_data["question"]
@@ -237,7 +287,7 @@ class RAGView(APIView):
             node_ids=[str(node_id) for node_id in node_ids],
             stage=RAGStage.SEARCHING,
             stage_message="문서에서 관련 근거를 검색하고 있습니다.",
-            **build_rag_llm_snapshot(request.user),
+            **llm_snapshot,
         )
 
         # Vector Search Worker

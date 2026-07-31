@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 title Dotori Launcher
 cd /d "%~dp0"
 
@@ -15,27 +16,25 @@ echo ============================================================
 echo   Dotori Launcher
 echo ============================================================
 echo   [1] Install / Setup Wizard   (first run or reconfigure)
-echo   [2] Start Dotori             (use saved settings)
-echo   [3] Change LLM Model
-echo   [4] View Available LLM Models
-echo   [5] Stop Dotori Services
-echo   [6] Remove LLM Runtime
-echo   [7] Show Server Status
-echo   [8] Advanced Network Settings
-echo   [9] Exit
+echo   [2] Start / Resume Dotori     (no rebuild)
+echo   [3] Stop / Pause Dotori       (preserve containers and cache)
+echo   [4] Change LLM Model
+echo   [5] Show Server Status
+echo   [6] Maintenance
+echo   [7] Advanced Network Settings
+echo   [8] Exit
 echo ============================================================
 set "choice="
-set /p choice="Select an option (1-9): "
+set /p choice="Select an option (1-8): "
 
 if "%choice%"=="1" goto install
 if "%choice%"=="2" goto run
-if "%choice%"=="3" goto change_llm
-if "%choice%"=="4" goto list_models
-if "%choice%"=="5" goto stop
-if "%choice%"=="6" goto remove_llm
-if "%choice%"=="7" goto status
-if "%choice%"=="8" goto network_menu
-if "%choice%"=="9" exit /b
+if "%choice%"=="3" goto stop
+if "%choice%"=="4" goto change_llm
+if "%choice%"=="5" goto status
+if "%choice%"=="6" goto maintenance_menu
+if "%choice%"=="7" goto network_menu
+if "%choice%"=="8" exit /b
 echo.
 echo [ERROR] Invalid option: %choice%
 pause
@@ -50,6 +49,7 @@ pause
 goto menu
 
 :run
+echo Starting Dotori from existing images and resuming the configured LLM runtime...
 python install.py --run
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to start Dotori.
@@ -65,23 +65,10 @@ if %errorlevel% neq 0 (
 pause
 goto menu
 
-:list_models
-python install.py --list-llm-models
-pause
-goto menu
-
 :stop
 python install.py --stop
 if %errorlevel% neq 0 (
-    echo [ERROR] Failed to stop Dotori services. Is Docker Desktop running?
-)
-pause
-goto menu
-
-:remove_llm
-python install.py --remove-llm
-if %errorlevel% neq 0 (
-    echo [ERROR] Failed to remove the LLM runtime.
+    echo [ERROR] Failed to pause Dotori services. Is Docker Desktop running?
 )
 pause
 goto menu
@@ -90,6 +77,62 @@ goto menu
 python install.py --status
 pause
 goto menu
+
+:maintenance_menu
+cls
+echo ============================================================
+echo   Maintenance
+echo ============================================================
+echo   [1] Restart Services            (no rebuild)
+echo   [2] Rebuild and Restart         (application + LLM runtime)
+echo   [3] Full Shutdown               (remove containers, keep data/cache)
+echo   [4] Remove LLM Runtime and Model Cache
+echo   [5] Back
+echo ============================================================
+set "maintenance_choice="
+set /p maintenance_choice="Select an option (1-5): "
+
+if "%maintenance_choice%"=="1" goto restart
+if "%maintenance_choice%"=="2" goto rebuild
+if "%maintenance_choice%"=="3" goto shutdown
+if "%maintenance_choice%"=="4" goto remove_llm
+if "%maintenance_choice%"=="5" goto menu
+echo.
+echo [ERROR] Invalid option: %maintenance_choice%
+pause
+goto maintenance_menu
+
+:restart
+python install.py --restart
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to restart Dotori without rebuilding.
+)
+pause
+goto maintenance_menu
+
+:rebuild
+python install.py --rebuild
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to rebuild and restart Dotori.
+)
+pause
+goto maintenance_menu
+
+:shutdown
+python install.py --shutdown
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to shut down Dotori completely.
+)
+pause
+goto maintenance_menu
+
+:remove_llm
+python install.py --remove-llm
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to remove the LLM runtime and model cache.
+)
+pause
+goto maintenance_menu
 
 :network_menu
 cls
