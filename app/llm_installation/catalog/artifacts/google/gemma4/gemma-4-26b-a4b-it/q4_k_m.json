@@ -1,0 +1,36 @@
+{
+    "id": "gemma-4-26b-a4b-it-qat-q4_k_m-gguf",
+    "model_id": "gemma-4-26b-a4b-it",
+    "enabled": true,
+    "priority": 80,
+    "display_name": "Gemma 4 26B-A4B Instruct",
+    "hf": {
+        "repo_id": "unsloth/gemma-4-26b-a4b-it-GGUF"
+    },
+    "artifact": {
+        "format": "gguf",
+        "filename": "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+        "quant": "Q4_K_M",
+        "download_size_mb": 16163,
+        "disk_required_mb": 16163
+    },
+    "backend_profiles": [
+        "llamacpp-cpu",
+        "llamacpp-gpu-offload"
+    ],
+    "policy": {
+        "visible": true,
+        "allow_auto_select": true,
+        "allow_manual_select": true,
+        "safety": "safe",
+        "tags": [
+            "q4_k_m",
+            "gguf",
+            "llama.cpp",
+            "cpu",
+            "rag",
+            "ram-offload"
+        ]
+    },
+    "description": ""
+}

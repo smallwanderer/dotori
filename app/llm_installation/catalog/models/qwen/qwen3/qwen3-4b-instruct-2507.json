@@ -1,0 +1,25 @@
+{
+  "id": "qwen3-4b-instruct-2507",
+  "display_name": "Qwen3 4B Instruct",
+  "description": "Qwen3 4B instruction model for document RAG and chat.",
+  "license": "apache-2.0",
+  "model_metadata": {
+    "architecture": "qwen3",
+    "parameter_count_b": 4.0,
+    "max_context_length": 262144,
+    "hidden_size": 2560,
+    "num_hidden_layers": 36,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 8,
+    "head_dim": 128,
+    "extra": {
+      "metadata_source": "autoconfig:Qwen/Qwen3-4B-Instruct-2507",
+      "root_architecture": "qwen3"
+    }
+  },
+  "capabilities": {
+    "modalities": ["text"],
+    "tasks": ["rag", "chat", "summarization"],
+    "languages": ["ko", "en"]
+  }
+}

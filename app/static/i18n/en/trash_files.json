@@ -1,0 +1,22 @@
+{
+  "trashTitle": "Trash",
+  "emptyTrash": "Empty trash",
+  "restoreSelected": "Restore selected",
+  "clearSelection": "Clear",
+  "trashRetentionNotice": "Trashed files are kept for 7 days before automatic removal.",
+  "name": "Name",
+  "size": "Size",
+  "deletedOn": "Deleted on",
+  "autoDeleteIn": "Auto delete in",
+  "trashIconText": "Trash",
+  "trashEmptyTitle": "Your trash is empty",
+  "trashEmptyBody": "Deleted files will appear here for 7 days.",
+  "selected": "{0} selected",
+  "daysLeft": "{0} day(s)",
+  "restore": "Restore",
+  "deletePermanently": "Delete permanently",
+  "restoreSelectedFailed": "Unable to restore selected items.",
+  "restoreFailed": "Unable to restore this item.",
+  "confirmPermanentDelete": "Permanently delete this item? This cannot be undone.",
+  "confirmEmptyTrash": "Empty the trash? Restoring these items will no longer be possible."
+}

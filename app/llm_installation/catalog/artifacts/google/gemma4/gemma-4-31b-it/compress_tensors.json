@@ -1,0 +1,34 @@
+{
+  "id": "gemma-4-31b-it-qat-w4a16-ct",
+  "model_id": "gemma-4-31b-it",
+  "enabled": true,
+  "priority": 94,
+  "display_name": "Gemma 4 31B Instruct QAT-W4A16",
+  "description": "Official Google Gemma 4 31B 4-bit weight quantized QAT model served with vLLM.",
+  "hf": {
+    "repo_id": "google/gemma-4-31B-it-qat-w4a16-ct"
+  },
+  "artifact": {
+    "format": "compress-tensors",
+    "quant": "W4A16",
+    "dtype": "int4",
+    "download_size_mb": 22187,
+    "disk_required_mb": 22187
+  },
+  "backend_profiles": [
+    "vllm-cuda"
+  ],
+  "policy": {
+    "visible": true,
+    "allow_auto_select": true,
+    "allow_manual_select": true,
+    "safety": "safe",
+    "tags": [
+      "compress-tensors",
+      "w4a16",
+      "vllm",
+      "gpu",
+      "rag"
+    ]
+  }
+}

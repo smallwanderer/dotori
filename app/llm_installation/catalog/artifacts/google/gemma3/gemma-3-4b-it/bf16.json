@@ -1,0 +1,30 @@
+{
+    "id": "gemma-3-4b-it-bf16",
+    "model_id": "gemma-3-4b-it",
+    "priority": 70,
+    "display_name": "Gemma3 4B Instruct bf16",
+    "description": "bf16 artifact served with llama.cpp.",
+    "hf": {
+        "repo_id": "unsloth/gemma-3-4b-it-GGUF"
+    },
+    "artifact": {
+        "format": "gguf",
+        "quant": "bf16",
+        "filename": "gemma-3-4b-it-BF16.gguf",
+        "download_size_mb": 7408,
+        "disk_required_mb": 0
+    },
+    "backend_profiles": [
+        "llamacpp-cpu",
+        "llamacpp-gpu-offload"
+    ],
+    "policy": {
+        "tags": [
+            "gguf",
+            "llama.cpp",
+            "cpu",
+            "rag",
+            "ram-offload"
+        ]
+    }
+}

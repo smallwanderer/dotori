@@ -1,0 +1,33 @@
+{
+  "id": "gemma-4-26b-a4b-it-awq",
+  "model_id": "gemma-4-26b-a4b-it",
+  "enabled": true,
+  "priority": 94,
+  "display_name": "Gemma 4 26B-A4B Instruct AWQ",
+  "description": "Pre-quantized AWQ 4-bit model served with vLLM.",
+  "hf": {
+    "repo_id": "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
+  },
+  "artifact": {
+    "format": "awq",
+    "quant": "AWQ-INT4",
+    "dtype": "int4",
+    "download_size_mb": 16394,
+    "disk_required_mb": 16394
+  },
+  "backend_profiles": [
+    "vllm-cuda"
+  ],
+  "policy": {
+    "visible": true,
+    "allow_auto_select": true,
+    "allow_manual_select": true,
+    "safety": "safe",
+    "tags": [
+      "awq",
+      "vllm",
+      "gpu",
+      "rag"
+    ]
+  }
+}

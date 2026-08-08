@@ -60,9 +60,18 @@ def trash(request):
 @login_required
 @email_verification_required
 def rag_workspace(request):
+    from document_ai.services.llm_endpoint_service import (
+        get_or_create_llm_preference,
+        get_effective_rag_target,
+    )
+
     selected_nodes = request.GET.get("nodes", "").strip()
+    preference = get_or_create_llm_preference(request.user)
+    rag_target = get_effective_rag_target(preference)
     return render(request, "files/rag_workspace.html", {
         "selected_nodes": selected_nodes,
+        "rag_model_label": rag_target.get("model", ""),
+        "rag_provider_label": rag_target.get("label", "Server default"),
     })
 
 @login_required

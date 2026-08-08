@@ -1,14 +1,23 @@
 name: dotori
 
+x-dotori-app: &dotori-app
+  image: dotori-app:local
+  build:
+    context: ./app
+    args:
+      INSTALL_AI_DEPS: "1"
+      INSTALL_DEV_DEPS: "0"
+
 services:
   db:
     image: pgvector/pgvector:pg16
+    command: [ "postgres", "-c", "shared_preload_libraries=pg_stat_statements", "-c", "compute_query_id=on" ]
     container_name: db
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - ./data/pgdata:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
     expose:
       - "5432"
@@ -22,7 +31,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: redis
-    restart: always
+    restart: unless-stopped
     expose:
       - "6379"
     healthcheck:
@@ -32,25 +41,36 @@ services:
       retries: 10
 
   app:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "0"
+    <<: *dotori-app
     container_name: app
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
+    environment:
+      DOTORI_DJANGO_ALLOWED_HOSTS: ${DOTORI_DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      DOTORI_DJANGO_CSRF_TRUSTED_ORIGINS: ${DOTORI_DJANGO_CSRF_TRUSTED_ORIGINS:-http://localhost,http://127.0.0.1}
+      DOTORI_DJANGO_SECURE_PROXY_SSL_HEADER: ${DOTORI_DJANGO_SECURE_PROXY_SSL_HEADER:-0}
+      DOTORI_DJANGO_SECURE_SSL_REDIRECT: ${DOTORI_DJANGO_SECURE_SSL_REDIRECT:-0}
+      DOTORI_DJANGO_SESSION_COOKIE_SECURE: ${DOTORI_DJANGO_SESSION_COOKIE_SECURE:-0}
+      DOTORI_DJANGO_CSRF_COOKIE_SECURE: ${DOTORI_DJANGO_CSRF_COOKIE_SECURE:-0}
+      RUNTIME_SCOPE: production
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/staticfiles:/app/staticfiles
       - ./data/logs:/data/logs
+      - ./data/config:/data/config
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    networks:
+      - default
+      - rag-runtime
     expose:
       - "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
     command: >
       bash -lc "python manage.py collectstatic --noinput && python manage.py migrate && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4"
     healthcheck:
@@ -60,93 +80,94 @@ services:
       retries: 5
       start_period: 60s
 
-  celery-core-worker:
+  test:
+    profiles: [ "test" ]
+    image: dotori-app-test:local
     build:
       context: ./app
       args:
         INSTALL_AI_DEPS: "1"
-    container_name: celery-core-worker
-    restart: always
+        INSTALL_DEV_DEPS: "1"
+    env_file:
+      - .env
+    volumes:
+      - ./installation:/app/installation:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: [ "python", "-m", "pytest" ]
+
+  embedding-worker:
+    <<: *dotori-app
+    container_name: embedding-worker
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/logs:/data/logs
+      - ./data/config:/data/config:ro
+      - huggingface-cache:/app/.cache/huggingface
+    environment:
+      RUNTIME_SCOPE: production
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     command: [ "bash", "-lc", "celery -A config worker -l info -Q parse,embed --concurrency=$${DOCUMENT_AI_WORKER_CONCURRENCY:-1} --prefetch-multiplier=1" ]
 
-  celery-search-worker:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "1"
-    container_name: celery-search-worker
-    restart: always
+  search-worker:
+    <<: *dotori-app
+    container_name: search-worker
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/logs:/data/logs
+      - ./data/config:/data/config:ro
+      - huggingface-cache:/app/.cache/huggingface
+    environment:
+      RUNTIME_SCOPE: production
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     command: [ "bash", "-lc", "celery -A config worker -l info -Q search --concurrency=$${SEARCH_WORKER_CONCURRENCY:-1} --prefetch-multiplier=1" ]
 
-  celery-query-worker:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "0"
-    container_name: celery-query-worker
-    restart: always
+  rag-worker:
+    <<: *dotori-app
+    profiles: [ "managed-rag" ]
+    container_name: rag-worker
+    # The external runtime lifecycle starts this worker only after the
+    # selected runtime validates. Do not auto-start it on Docker daemon boot.
+    restart: on-failure:5
     env_file:
       - .env
+    environment:
+      RUNTIME_SCOPE: production
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/logs:/data/logs
+      - ./data/config:/data/config
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
-      llm-parser:
-        condition: service_started
-    command: [ "bash", "-lc", "celery -A config worker -l info -Q query --concurrency=$${QUERY_WORKER_CONCURRENCY:-1} --prefetch-multiplier=1" ]
-
-  celery-llm-rag-worker:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "0"
-    container_name: celery-llm-rag-worker
-    restart: always
-    env_file:
-      - .env
-    volumes:
-      - ./data/uploads:/data/uploads
-      - ./data/logs:/data/logs
-    depends_on:
-      db:
-        condition: service_started
-      redis:
-        condition: service_started
-      llm-parser:
-        condition: service_started
+        condition: service_healthy
+    networks:
+      - default
+      - rag-runtime
     command: [ "bash", "-lc", "celery -A config worker -l info -Q rag --concurrency=$${RAG_WORKER_CONCURRENCY:-1} --prefetch-multiplier=1" ]
 
-  celery-text2sql-worker:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "0"
-    container_name: celery-text2sql-worker
-    restart: always
+  recovery-worker:
+    <<: *dotori-app
+    container_name: recovery-worker
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
@@ -154,70 +175,49 @@ services:
       - ./data/logs:/data/logs
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
-      llm-parser:
-        condition: service_started
-    command: [ "bash", "-lc", "celery -A config worker -l info -Q text2sql --concurrency=$${TEXT2SQL_WORKER_CONCURRENCY:-1} --prefetch-multiplier=1" ]
-
-  celery-beat:
-    build:
-      context: ./app
-      args:
-        INSTALL_AI_DEPS: "0"
-    container_name: celery-beat
-    restart: always
-    env_file:
-      - .env
-    volumes:
-      - ./data/uploads:/data/uploads
-      - ./data/logs:/data/logs
-    depends_on:
-      db:
-        condition: service_started
-      redis:
-        condition: service_started
+        condition: service_healthy
     command: [ "bash", "-lc", "celery -A config beat -l info" ]
 
   nginx:
     image: nginx:stable
     container_name: nginx
-    restart: always
+    restart: unless-stopped
+    profiles: [ "direct-https" ]
     environment:
-      NGINX_SERVER_NAME: ${NGINX_SERVER_NAME:?Set NGINX_SERVER_NAME in .env}
-      LETSENCRYPT_DOMAIN: ${LETSENCRYPT_DOMAIN:?Set LETSENCRYPT_DOMAIN in .env}
-      NGINX_ENVSUBST_FILTER: "^(NGINX_SERVER_NAME|LETSENCRYPT_DOMAIN)$"
+      DOTORI_EXTERNAL_DOMAIN: ${DOTORI_EXTERNAL_DOMAIN:-}
+      NGINX_ENVSUBST_FILTER: "^DOTORI_EXTERNAL_DOMAIN$"
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/default.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./data/config/network_access/nginx:/etc/nginx/templates:ro
       - ./data/certbot/www:/var/www/certbot:ro
       - ./data/certbot/conf:/etc/letsencrypt:ro
-      - ./data/uploads:/var/www/uploads:ro
-      - ./data/staticfiles:/var/www/staticfiles:ro
     depends_on:
       app:
-        condition: service_started
-
-  llm-parser:
-    build:
-      context: ./llama-cpp-parser
-      dockerfile: Dockerfile
-    container_name: llm-parser
-    restart: always
-    expose:
-      - "8080"
-    env_file:
-      - .env
-    volumes:
-      - ./llama-cpp-parser/data/cache:/root/.cache
-    command: >
-      --hf-repo ggml-org/gemma-4-E4B-it-GGUF:Q4_K_M --host 0.0.0.0 --port 8080 --threads 8 --ctx-size 4096 --parallel 1 --metrics
+        condition: service_healthy
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      test: [ "CMD", "nginx", "-t" ]
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 120s
+      retries: 3
+  # The RAG runtime container (llama.cpp or vLLM, whichever is selected) is
+  # intentionally NOT defined here. It's a single, scope-scoped container
+  # ("dotori-llm") managed directly by
+  # app/llm_installation/runtime_lifecycle.py (plain docker build/run/stop/rm),
+  # reachable from app/rag-worker at http://rag-runtime:8080 over the
+  # named "rag-runtime" network below. See
+  # dev-docs/agent/rag_runtime_container_lifecycle.md.
+
+networks:
+  rag-runtime:
+    name: dotori-runtime
+    driver: bridge
+
+volumes:
+  postgres-data:
+    name: dotori-postgres-data
+  huggingface-cache:
+    name: dotori-huggingface-cache

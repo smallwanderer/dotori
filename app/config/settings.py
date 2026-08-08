@@ -49,8 +49,8 @@ SECRET_KEY = os.getenv(
 DEBUG = _env_bool("DJANGO_DEBUG", True)
 
 ALLOWED_HOSTS = _env_list(
-    "DJANGO_ALLOWED_HOSTS",
-    ["*"] if DEBUG else ["localhost", "127.0.0.1"],
+    "DOTORI_DJANGO_ALLOWED_HOSTS",
+    ["localhost", "127.0.0.1"],
 )
 
 # SESSION SETTINGS
@@ -81,33 +81,39 @@ LOGIN_URL = '/accounts/login/'
 LOGIN_REDIRECT_URL = '/files/'
 LOGOUT_REDIRECT_URL = '/accounts/login/'
 
+# 개인/로컬 배포 기본값: 로그인 없이 로컬 관리자 프로필로 자동 진입한다.
+# 외부 접속을 허용하는 배포에서는 1로 설정해 실제 로그인을 요구한다.
+LOGIN_REQUIRED = _env_bool("LOGIN_REQUIRED", False)
+
 MEDIA_URL = os.getenv("MEDIA_URL", "/media/")
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", str(BASE_DIR / "media")))
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'accounts.middleware.LocalProfileMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
 CSRF_TRUSTED_ORIGINS = _env_list(
-    "DJANGO_CSRF_TRUSTED_ORIGINS",
-    ["http://localhost"],
+    "DOTORI_DJANGO_CSRF_TRUSTED_ORIGINS",
+    ["http://localhost", "http://127.0.0.1"],
 )
 CSRF_FAILURE_VIEW = "accounts.views.csrf_failure"
 
-SECURE_SSL_REDIRECT = _env_bool("DJANGO_SECURE_SSL_REDIRECT", False)
-SESSION_COOKIE_SECURE = _env_bool("DJANGO_SESSION_COOKIE_SECURE", False)
-CSRF_COOKIE_SECURE = _env_bool("DJANGO_CSRF_COOKIE_SECURE", False)
+SECURE_SSL_REDIRECT = _env_bool("DOTORI_DJANGO_SECURE_SSL_REDIRECT", False)
+SESSION_COOKIE_SECURE = _env_bool("DOTORI_DJANGO_SESSION_COOKIE_SECURE", False)
+CSRF_COOKIE_SECURE = _env_bool("DOTORI_DJANGO_CSRF_COOKIE_SECURE", False)
 SECURE_HSTS_SECONDS = int(os.getenv("DJANGO_SECURE_HSTS_SECONDS", "0"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
 SECURE_HSTS_PRELOAD = _env_bool("DJANGO_SECURE_HSTS_PRELOAD", False)
 
-if _env_bool("DJANGO_SECURE_PROXY_SSL_HEADER", False):
+if _env_bool("DOTORI_DJANGO_SECURE_PROXY_SSL_HEADER", False):
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 ROOT_URLCONF = 'config.urls'
@@ -123,6 +129,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'files.context_processors.storage_usage',
+                'accounts.context_processors.login_mode',
             ],
         },
     },
@@ -219,20 +226,20 @@ CELERY_BEAT_SCHEDULE = {
 
 
 # Document AI — Parser & Chunker
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
-EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "bgem3_hybrid")
-CHUNK_MAX_TOKENS = int(os.getenv("CHUNK_MAX_TOKENS", "1024"))
-EMBEDDING_TOKEN_HEADROOM = int(os.getenv("EMBEDDING_TOKEN_HEADROOM", "256"))
-# EMBEDDING_MAX_TOKENS: 미설정 시 config.py 가 CHUNK_MAX_TOKENS + HEADROOM 으로 계산
-_embedding_max_tokens_raw = os.getenv("EMBEDDING_MAX_TOKENS")
-if _embedding_max_tokens_raw:
-    EMBEDDING_MAX_TOKENS = int(_embedding_max_tokens_raw)
-_query_embedding_max_tokens_raw = os.getenv("QUERY_EMBEDDING_MAX_TOKENS")
-if _query_embedding_max_tokens_raw:
-    QUERY_EMBEDDING_MAX_TOKENS = int(_query_embedding_max_tokens_raw)
+PARSER_TOKENIZER_ID = os.getenv("PARSER_TOKENIZER_ID", "BAAI/bge-m3")
+PARSER_TOKENIZER_REVISION = os.getenv("PARSER_TOKENIZER_REVISION", "5617a9f")
+EMBEDDING_MAX_TOKENS = int(os.getenv("EMBEDDING_MAX_TOKENS", "1280"))
+EMBEDDING_TOKEN_HEADROOM = int(os.getenv("EMBEDDING_TOKEN_HEADROOM", "128"))
+if EMBEDDING_MAX_TOKENS <= EMBEDDING_TOKEN_HEADROOM:
+    raise ValueError(
+        "EMBEDDING_MAX_TOKENS must be greater than EMBEDDING_TOKEN_HEADROOM."
+    )
+CHUNK_MAX_TOKENS = EMBEDDING_MAX_TOKENS - EMBEDDING_TOKEN_HEADROOM
+_search_query_embedding_max_tokens_raw = os.getenv("SEARCH_QUERY_EMBEDDING_MAX_TOKENS")
+if _search_query_embedding_max_tokens_raw:
+    SEARCH_QUERY_EMBEDDING_MAX_TOKENS = int(_search_query_embedding_max_tokens_raw)
 
 # Document AI — Retriever (Hybrid Search)
-EMBEDDING_DISTANCE_STRATEGY = os.getenv("EMBEDDING_DISTANCE_STRATEGY", "inner_product")
 EMBEDDING_DOC_POOLING_METHOD = os.getenv("EMBEDDING_DOC_POOLING_METHOD", "normalized_logsumexp")
 EMBEDDING_HYBRID_DENSE_WEIGHT = float(os.getenv("EMBEDDING_HYBRID_DENSE_WEIGHT", "0.3"))
 EMBEDDING_HYBRID_SPARSE_WEIGHT = float(os.getenv("EMBEDDING_HYBRID_SPARSE_WEIGHT", "0.7"))
@@ -318,11 +325,20 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 STATICFILES_DIRS = [
     BASE_DIR / "static",
 ]
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

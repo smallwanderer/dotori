@@ -1,0 +1,36 @@
+{
+    "id": "gemma-3-27b-it",
+    "display_name": "Gemma 3 27B Instruct",
+    "description": "Google Gemma 3 27B multimodal instruction-tuned model for RAG, chat, reasoning, and image-text understanding.",
+    "license": "gemma",
+    "model_metadata": {
+        "architecture": "gemma3",
+        "parameter_count_b": 27.4,
+        "max_context_length": 131072,
+        "hidden_size": 5376,
+        "num_hidden_layers": 64,
+        "num_attention_heads": 32,
+        "num_key_value_heads": 16,
+        "head_dim": 256,
+        "extra": {
+            "metadata_source": "autoconfig:google/gemma-3-27b-it",
+            "root_architecture": "gemma3"
+        }
+    },
+    "capabilities": {
+        "modalities": [
+            "text",
+            "vision"
+        ],
+        "tasks": [
+            "rag",
+            "chat",
+            "reasoning",
+            "code"
+        ],
+        "languages": [
+            "ko",
+            "en"
+        ]
+    }
+}

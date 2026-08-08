@@ -1,0 +1,43 @@
+{% extends "accounts/base.html" %}
+
+{% block title %}계정 전환 | Dotori for Document{% endblock %}
+
+{% block auth_header %}
+<h1 data-i18n="switchTitle">계정 전환</h1>
+<p data-i18n="switchSubtitle">로그인 없이 사용할 로컬 계정을 선택하거나 새로 만드세요.</p>
+{% endblock %}
+
+{% block auth_body %}
+{% if profiles %}
+<div class="form-group">
+    {% for profile in profiles %}
+    <form method="post" style="margin-bottom: 8px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="switch">
+        <input type="hidden" name="user_id" value="{{ profile.id }}">
+        <button type="submit" class="btn auth-submit" style="text-align:left;">
+            {{ profile.display_label }}
+            {% if profile.id == request.user.id %}<span style="color: var(--muted);">(현재)</span>{% endif %}
+        </button>
+    </form>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="auth-header" style="margin-top: 24px; margin-bottom: 8px;">
+    <p data-i18n="switchCreateLabel">새 계정 만들기</p>
+</div>
+<form method="post" novalidate>
+    {% csrf_token %}
+    <input type="hidden" name="action" value="create">
+    <div class="form-group">
+        <label for="new-profile-display-name" data-i18n="accountDisplayName">별칭</label>
+        <input type="text" id="new-profile-display-name" name="display_name" class="auth-input" maxlength="50" required autofocus>
+    </div>
+    <button type="submit" class="btn btn-primary auth-submit" data-i18n="switchCreateSubmit">계정 만들기</button>
+</form>
+{% endblock %}
+
+{% block auth_footer %}
+<a href="{% url 'files:index' %}" data-i18n="switchBack">돌아가기</a>
+{% endblock %}

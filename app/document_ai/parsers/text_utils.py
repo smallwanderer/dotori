@@ -14,12 +14,31 @@ class ExtFormat(Enum):
 def serialize_meta(meta: Any) -> Any:
     if meta is None:
         return None
+    if isinstance(meta, (str, int, float, bool)):
+        return meta
+    if isinstance(meta, Enum):
+        return serialize_meta(meta.value)
+    if isinstance(meta, Path):
+        return str(meta)
     if hasattr(meta, "model_dump"):
-        return meta.model_dump()
+        return serialize_meta(meta.model_dump(mode="json"))
     if hasattr(meta, "dict"):
-        return meta.dict()
+        return serialize_meta(meta.dict())
+    if isinstance(meta, dict):
+        return {
+            str(key): serialize_meta(value)
+            for key, value in meta.items()
+        }
+    if isinstance(meta, (list, tuple, set)):
+        return [serialize_meta(value) for value in meta]
     if hasattr(meta, "__dict__"):
-        return meta.__dict__
+        return serialize_meta(
+            {
+                key: value
+                for key, value in vars(meta).items()
+                if not key.startswith("_")
+            }
+        )
     return str(meta)
 
 

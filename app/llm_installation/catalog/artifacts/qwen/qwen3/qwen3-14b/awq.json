@@ -1,0 +1,28 @@
+{
+  "id": "qwen3-14b-awq",
+  "model_id": "qwen3-14b",
+  "priority": 94,
+  "display_name": "Qwen3 14B AWQ",
+  "description": "Pre-quantized AWQ 4-bit model served with vLLM.",
+  "hf": {
+    "repo_id": "Qwen/Qwen3-14B-AWQ"
+  },
+  "artifact": {
+    "format": "awq",
+    "quant": "AWQ-INT4",
+    "dtype": "int4",
+    "download_size_mb": 9514,
+    "disk_required_mb": 10500
+  },
+  "backend_profiles": [
+    "vllm-cuda"
+  ],
+  "policy": {
+    "tags": [
+      "awq",
+      "vllm",
+      "gpu",
+      "rag"
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "uploadTitle": "파일 업로드",
+  "uploadDropTitle": "파일을 여기에 끌어다 놓으세요",
+  "uploadDropBody": "또는 버튼을 클릭하여 파일을 선택하세요",
+  "selectFiles": "파일 선택",
+  "maxFileSize": "최대 파일 크기: 100MB",
+  "supportedTypes": "지원 형식: PDF, 이미지, 문서, 기타",
+  "multiUpload": "복수 파일 동시 업로드 가능",
+  "clearAll": "모두 지우기",
+  "startUpload": "업로드 시작",
+  "waiting": "대기 중",
+  "remove": "제거",
+  "aiProcessingOption": "업로드 후 AI 분석",
+  "aiProcessingOptionHelp": "끄면 파싱/임베딩/RAG 검색 대상에서 제외됩니다.",
+  "uploading": "업로드 중",
+  "uploadingProgress": "업로드 중...",
+  "uploadDone": "완료",
+  "uploadFailed": "실패"
+}

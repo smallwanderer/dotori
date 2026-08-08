@@ -29,8 +29,15 @@
 
 /* Create form */
 .create-form{display:flex;gap:10px;padding:0 24px 20px;flex-wrap:wrap}
-.create-form input[type=text]{flex:1;min-width:200px;padding:9px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:14px;font-family:var(--font);outline:none;transition:border-color .15s,box-shadow .15s}
-.create-form input[type=text]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(168,102,56,.1)}
+.create-form input[type=text],
+.create-form input[type=url],
+.create-form input[type=password],
+.create-form select{flex:1;min-width:200px;padding:9px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:14px;font-family:var(--font);outline:none;transition:border-color .15s,box-shadow .15s}
+.create-form input[type=text]:focus,
+.create-form input[type=url]:focus,
+.create-form input[type=password]:focus,
+.create-form select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(168,102,56,.1)}
+.create-form input.secret-input{flex-basis:100%}
 
 /* New token banner */
 .new-token-banner{margin:0 24px 16px;padding:14px 16px;background:linear-gradient(135deg,rgba(34,197,94,.08),rgba(168,102,56,.08));border:1px solid rgba(34,197,94,.25);border-radius:var(--radius);animation:bannerIn .4s ease}
@@ -52,9 +59,12 @@
 .token-status{font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;text-transform:uppercase;letter-spacing:.3px;flex-shrink:0}
 .token-status.active{background:rgba(34,197,94,.12);color:var(--success)}
 .token-status.inactive{background:rgba(220,38,38,.1);color:var(--danger)}
+.token-status.check-failed{background:rgba(220,38,38,.1);color:var(--danger)}
 .token-meta{font-size:12px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
 .token-key-row{display:flex;align-items:center;gap:6px;margin-top:4px}
 .token-key-masked{font-family:'SF Mono',Consolas,monospace;font-size:12px;color:var(--muted);letter-spacing:.5px}
+.endpoint-check-row{font-size:12px;color:var(--muted);line-height:1.5;margin-top:2px}
+.endpoint-check-row strong{font-weight:600;color:var(--text)}
 .token-actions{display:flex;gap:4px;align-items:center;flex-shrink:0}
 .token-actions form{display:inline}
 .icon-btn-sm{width:32px;height:32px;border:1px solid var(--border);background:var(--surface);border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:all .15s;font-family:var(--font)}
@@ -134,8 +144,8 @@
   <div class="card profile-card">
     <div class="stat-cell">
       <span class="stat-label" data-i18n="settingsAccount">계정</span>
-      <span class="stat-value" style="font-size:15px;word-break:break-all">{{ user.email }}</span>
-      <span class="stat-sub">가입일: {{ user.created_at|date:"Y-m-d" }}</span>
+      <span class="stat-value" style="font-size:15px;word-break:break-all">{{ user.display_label }}</span>
+      <span class="stat-sub">{{ user.email }} · 가입일: {{ user.created_at|date:"Y-m-d" }}</span>
     </div>
     <div class="stat-cell">
       <span class="stat-label" data-i18n="settingsSyncQuota">동기화 용량</span>
@@ -148,6 +158,8 @@
       <span class="stat-sub" data-i18n="settingsActiveFiles">활성 파일 수</span>
     </div>
   </div>
+
+  {% include "accounts/partials/llm_endpoint_settings.html" %}
 
   <!-- API Token Management -->
   <div class="card settings-section">
@@ -277,6 +289,44 @@
     </div>
   </div>
 
+  <!-- Display Name -->
+  <div class="card settings-section">
+    <div class="section-title-row">
+      <h2>
+        <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span data-i18n="displayNameSectionTitle">표시 이름</span>
+      </h2>
+    </div>
+    <p class="section-desc" data-i18n="displayNameSectionDesc">
+      네브바와 계정 전환 화면에 이메일 대신 표시할 이름입니다. 비워두면 이메일이 표시됩니다.
+    </p>
+    <form method="post" class="create-form">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="update_display_name">
+      <input type="text" name="display_name" placeholder="별칭 (선택)" maxlength="50" value="{{ user.display_name }}" data-i18n-placeholder="displayNamePlaceholder">
+      <button type="submit" class="btn btn-primary" data-i18n="saveDisplayName">저장</button>
+    </form>
+  </div>
+
+  <!-- Email -->
+  <div class="card settings-section">
+    <div class="section-title-row">
+      <h2>
+        <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" opacity="0"/><path d="M22 6l-10 7L2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
+        <span data-i18n="emailSectionTitle">이메일</span>
+      </h2>
+    </div>
+    <p class="section-desc" data-i18n="emailSectionDesc">
+      로그인에 사용되는 이메일입니다. 로그인 없이 만든 계정은 실제로 받을 수 없는 임시 주소가 지정되어 있으니, 나중에 로그인 필수 모드에서 이 계정을 쓰려면 실제 이메일로 바꿔두세요.
+    </p>
+    <form method="post" class="create-form">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="change_email">
+      <input type="email" name="email" placeholder="이메일" required value="{{ user.email }}" data-i18n-placeholder="accountEmailPlaceholder">
+      <button type="submit" class="btn btn-primary" data-i18n="saveEmail">저장</button>
+    </form>
+  </div>
+
   <!-- Danger Zone -->
   <div class="card settings-section danger-section">
     <div class="section-title-row">
@@ -288,10 +338,15 @@
     <div class="settings-form">
       <div class="danger-item" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
         <div>
+          {% if user.has_usable_password %}
           <h4 style="font-size: 14px; font-weight: 500; margin-bottom: 4px;" data-i18n="changePassword">비밀번호 변경</h4>
           <p style="font-size: 13px; color: var(--muted);" data-i18n="changePasswordDesc">정기적으로 비밀번호를 변경하여 계정을 안전하게 보호하세요.</p>
+          {% else %}
+          <h4 style="font-size: 14px; font-weight: 500; margin-bottom: 4px;" data-i18n="setPassword">비밀번호 설정</h4>
+          <p style="font-size: 13px; color: var(--muted);" data-i18n="setPasswordDesc">이 계정은 로그인 없이 만들어져 비밀번호가 없습니다. 로그인 필수 모드에서 이 계정으로 로그인하려면 비밀번호를 설정하세요.</p>
+          {% endif %}
         </div>
-        <button type="button" class="btn btn-ghost" style="border: 1px solid var(--border);" id="openPasswordModal" data-i18n="changePasswordBtn">비밀번호 변경</button>
+        <button type="button" class="btn btn-ghost" style="border: 1px solid var(--border);" id="openPasswordModal" data-i18n="changePasswordBtn">{% if user.has_usable_password %}비밀번호 변경{% else %}비밀번호 설정{% endif %}</button>
       </div>
       <div class="danger-item">
         <div>
@@ -322,10 +377,12 @@
         {% csrf_token %}
         <input type="hidden" name="action" value="change_password">
         <div class="form-grid" style="margin-bottom:16px; max-width:100%;">
+          {% if user.has_usable_password %}
           <div class="form-field">
             <label data-i18n="currentPassword">현재 비밀번호</label>
             <input type="password" name="current_password" class="form-input" required autocomplete="current-password">
           </div>
+          {% endif %}
           <div class="form-field">
             <label data-i18n="newPassword">새 비밀번호</label>
             <input type="password" name="new_password" class="form-input" required minlength="8" autocomplete="new-password">

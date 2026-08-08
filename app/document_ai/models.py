@@ -2,7 +2,7 @@ from django.db import models
 from django.conf import settings
 from pgvector.django import VectorField, HnswIndex
 
-from config.enums import AIStatus, FileLanguage
+from config.enums import AIStatus, FileLanguage, QueryAnswerMode, QueryIntent, RAGStage
 
 class DocumentParseResult(models.Model):
     """
@@ -192,6 +192,35 @@ class DocumentChunk(models.Model):
         }
 
 
+class EmbeddingGeneration(models.Model):
+    generation_id = models.CharField(max_length=96, unique=True)
+    scope = models.CharField(max_length=32, default="production", db_index=True)
+    runtime_fingerprint = models.CharField(max_length=64, blank=True, db_index=True)
+    catalog_id = models.CharField(max_length=96, blank=True)
+    model_id = models.CharField(max_length=128)
+    model_revision = models.CharField(max_length=64, blank=True)
+    provider = models.CharField(max_length=64)
+    store = models.CharField(max_length=64)
+    dimension = models.PositiveIntegerField(default=1024)
+    supports_sparse = models.BooleanField(default=True)
+    status = models.CharField(max_length=32, default="READY", db_index=True)
+    expected_chunks = models.PositiveIntegerField(default=0)
+    completed_chunks = models.PositiveIntegerField(default=0)
+    failed_chunks = models.PositiveIntegerField(default=0)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["scope", "status"]),
+            models.Index(fields=["model_id", "model_revision"]),
+        ]
+
+    def __str__(self):
+        return f"{self.scope}:{self.generation_id} ({self.status})"
+
+
 class ChunkEmbedding(models.Model):
     """
     bge-m3 embedding 결과 저장 모델
@@ -206,6 +235,16 @@ class ChunkEmbedding(models.Model):
 
     model_name = models.CharField(max_length=128, default="BAAI/bge-m3")
     model_version = models.CharField(max_length=32, blank=True)
+    model_revision = models.CharField(max_length=64, default="legacy")
+    provider = models.CharField(max_length=64, default="bgem3_hybrid")
+    generation = models.ForeignKey(
+        "document_ai.EmbeddingGeneration",
+        to_field="generation_id",
+        db_column="generation_id",
+        on_delete=models.PROTECT,
+        related_name="chunk_embeddings",
+        default="legacy-bge-m3",
+    )
 
     # dimension ?? 
     vector = VectorField(dimensions=1024, null=True, blank=True)
@@ -230,18 +269,19 @@ class ChunkEmbedding(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["chunk", "model_name", "model_version"],
-                name="uniq_embedding_per_chunk_model_version",
+                fields=["chunk", "generation"],
+                name="uniq_embedding_per_chunk_generation",
             )
         ]
         indexes = [
             models.Index(fields=["model_name"]),
+            models.Index(fields=["generation", "status"]),
             HnswIndex(
                 name='chunk_embedding_vector_hnsw_idx',
                 fields=['vector'],
                 m=16,
                 ef_construction=64,
-                opclasses=['vector_cosine_ops']
+                opclasses=['vector_ip_ops']
             )
         ]
 
@@ -272,6 +312,14 @@ class ChunkSentenceEmbedding(models.Model):
     sentence_index = models.PositiveIntegerField()
     text = models.TextField()
     token_count = models.PositiveIntegerField(null=True, blank=True)
+    generation = models.ForeignKey(
+        "document_ai.EmbeddingGeneration",
+        to_field="generation_id",
+        db_column="generation_id",
+        on_delete=models.PROTECT,
+        related_name="sentence_embeddings",
+        default="legacy-bge-m3",
+    )
     
     # dimensions=1024 for BGE-M3 dense embedding
     vector = VectorField(dimensions=1024, null=True, blank=True)
@@ -282,8 +330,8 @@ class ChunkSentenceEmbedding(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["chunk", "sentence_index"],
-                name="uniq_sentence_emb_per_chunk_index",
+                fields=["chunk", "generation", "sentence_index"],
+                name="uniq_sentence_emb_per_chunk_generation_index",
             )
         ]
         indexes = [
@@ -293,7 +341,7 @@ class ChunkSentenceEmbedding(models.Model):
                 fields=['vector'],
                 m=16,
                 ef_construction=64,
-                opclasses=['vector_cosine_ops']
+                opclasses=['vector_ip_ops']
             )
         ]
 
@@ -317,6 +365,14 @@ class ChunkSegmentEmbedding(models.Model):
     text = models.TextField()
     char_start = models.PositiveIntegerField(default=0)
     char_end = models.PositiveIntegerField(default=0)
+    generation = models.ForeignKey(
+        "document_ai.EmbeddingGeneration",
+        to_field="generation_id",
+        db_column="generation_id",
+        on_delete=models.PROTECT,
+        related_name="segment_embeddings",
+        default="legacy-bge-m3",
+    )
 
     vector = VectorField(dimensions=1024, null=True, blank=True)
     sparse_vector = models.JSONField(default=dict, blank=True)
@@ -329,8 +385,8 @@ class ChunkSegmentEmbedding(models.Model):
         ordering = ["chunk", "window_size", "segment_index"]
         constraints = [
             models.UniqueConstraint(
-                fields=["chunk", "window_size", "segment_index"],
-                name="uniq_segment_emb_per_chunk_window_index",
+                fields=["chunk", "generation", "window_size", "segment_index"],
+                name="uniq_segment_emb_per_chunk_generation_window_index",
             )
         ]
         indexes = [
@@ -342,11 +398,64 @@ class ChunkSegmentEmbedding(models.Model):
         return f"{self.chunk_id} - Segment {self.segment_index} (w={self.window_size})"
 
 
+class QueryUnderstandingLog(models.Model):
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="document_ai_query_understanding_logs",
+    )
+    mode = models.CharField(max_length=32, default="search", db_index=True)
+    raw_query = models.TextField()
+    normalized_query = models.TextField(blank=True)
+    semantic_query = models.TextField(blank=True)
+    intent = models.CharField(
+        max_length=64,
+        choices=QueryIntent.choices,
+        default=QueryIntent.AMBIGUOUS,
+        db_index=True,
+    )
+    answer_mode = models.CharField(
+        max_length=64,
+        choices=QueryAnswerMode.choices,
+        default=QueryAnswerMode.AMBIGUOUS,
+    )
+    retrieval_required = models.BooleanField(default=True)
+    confidence = models.FloatField(default=0.0)
+    reason = models.CharField(max_length=255, blank=True)
+    source = models.CharField(max_length=64, blank=True, db_index=True)
+    status = models.CharField(max_length=32, default="success", db_index=True)
+    warnings = models.JSONField(default=list, blank=True)
+    classification = models.JSONField(default=dict, blank=True)
+    query_dsl = models.JSONField(default=dict, blank=True)
+    orm = models.JSONField(default=dict, blank=True)
+    raw_result = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["owner", "mode", "-created_at"]),
+            models.Index(fields=["intent", "-created_at"]),
+            models.Index(fields=["retrieval_required", "-created_at"]),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"QueryUnderstandingLog({self.id}) {self.intent}: {self.raw_query[:40]}"
+
+
 class SearchJob(models.Model):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="document_ai_search_jobs",
+    )
+    query_log = models.ForeignKey(
+        "document_ai.QueryUnderstandingLog",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="search_jobs",
     )
 
     query = models.TextField()
@@ -364,6 +473,7 @@ class SearchJob(models.Model):
     task_id = models.CharField(max_length=255, blank=True)
     results = models.JSONField(default=list, blank=True)
     error_message = models.TextField(blank=True)
+    performance_metrics = models.JSONField(default=dict, blank=True)
 
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -380,6 +490,106 @@ class SearchJob(models.Model):
         return f"SearchJob({self.id}) {self.status}: {self.query[:40]}"
 
 
+class LLMEndpoint(models.Model):
+    """OpenAI-compatible LLM endpoint registered by a user."""
+
+    ENDPOINT_OPENAI_COMPATIBLE = "openai_compatible"
+    ENDPOINT_OLLAMA = "ollama"
+    ENDPOINT_LLAMA_CPP = "llama_cpp"
+    ENDPOINT_VLLM = "vllm"
+
+    ENDPOINT_TYPE_CHOICES = [
+        (ENDPOINT_OPENAI_COMPATIBLE, "OpenAI compatible"),
+        (ENDPOINT_OLLAMA, "Ollama"),
+        (ENDPOINT_LLAMA_CPP, "llama.cpp"),
+        (ENDPOINT_VLLM, "vLLM"),
+    ]
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="llm_endpoints",
+    )
+    name = models.CharField(max_length=128)
+    endpoint_type = models.CharField(
+        max_length=32,
+        choices=ENDPOINT_TYPE_CHOICES,
+        default=ENDPOINT_OPENAI_COMPATIBLE,
+    )
+    base_url = models.URLField(
+        max_length=512,
+        help_text="Base URL without /v1 suffix when the endpoint already exposes OpenAI-compatible routes.",
+    )
+    default_model = models.CharField(max_length=256)
+    api_key = models.CharField(max_length=512, blank=True)
+    is_active = models.BooleanField(default=True)
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+    last_check_status = models.CharField(max_length=32, blank=True)
+    last_check_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner", "name"],
+                name="uniq_llm_endpoint_name_per_owner",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["owner", "is_active"]),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.owner})"
+
+    @property
+    def normalized_base_url(self) -> str:
+        base_url = self.base_url.rstrip("/")
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3].rstrip("/")
+        return base_url
+
+    @property
+    def chat_completions_url(self) -> str:
+        return f"{self.normalized_base_url}/v1/chat/completions"
+
+    @property
+    def responses_url(self) -> str:
+        return f"{self.normalized_base_url}/v1/responses"
+
+
+class UserLLMPreference(models.Model):
+    """Per-user defaults for LLM-backed document AI tasks."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="llm_preference",
+    )
+    rag_endpoint = models.ForeignKey(
+        "document_ai.LLMEndpoint",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rag_preferences",
+    )
+    rag_model = models.CharField(max_length=256, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"LLM preferences for {self.user}"
+
+    def get_rag_model(self) -> str:
+        if self.rag_model:
+            return self.rag_model
+        if self.rag_endpoint_id and self.rag_endpoint:
+            return self.rag_endpoint.default_model
+        return ""
+
+
 class RAGJob(models.Model):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -393,11 +603,42 @@ class RAGJob(models.Model):
         blank=True,
         related_name="rag_jobs",
     )
+    query_log = models.ForeignKey(
+        "document_ai.QueryUnderstandingLog",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rag_jobs",
+    )
 
     question = models.TextField()
+    retrieval_query = models.TextField(blank=True)
+    query_intent = models.CharField(
+        max_length=64,
+        choices=QueryIntent.choices,
+        default=QueryIntent.AMBIGUOUS,
+        db_index=True,
+    )
+    answer_mode = models.CharField(
+        max_length=64,
+        choices=QueryAnswerMode.choices,
+        default=QueryAnswerMode.RAG,
+    )
+    retrieval_required = models.BooleanField(default=True)
+    query_confidence = models.FloatField(default=0.0)
     top_k = models.PositiveIntegerField(default=5)
     language = models.CharField(max_length=8, default="ko")
     node_ids = models.JSONField(default=list, blank=True)
+    llm_endpoint = models.ForeignKey(
+        "document_ai.LLMEndpoint",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rag_jobs",
+    )
+    llm_endpoint_name = models.CharField(max_length=128, blank=True)
+    llm_base_url = models.URLField(max_length=512, blank=True)
+    llm_model = models.CharField(max_length=256, blank=True)
 
     status = models.CharField(
         max_length=32,
@@ -405,10 +646,21 @@ class RAGJob(models.Model):
         default=AIStatus.PENDING,
         db_index=True,
     )
+    stage = models.CharField(
+        max_length=32,
+        choices=RAGStage.choices,
+        default=RAGStage.QUEUED,
+        db_index=True,
+    )
+    stage_message = models.CharField(max_length=255, blank=True)
     task_id = models.CharField(max_length=255, blank=True)
     answer = models.TextField(blank=True)
     citations = models.JSONField(default=list, blank=True)
     error_message = models.TextField(blank=True)
+    cancel_requested_at = models.DateTimeField(null=True, blank=True)
+    canceled_at = models.DateTimeField(null=True, blank=True)
+    cancel_reason = models.CharField(max_length=255, blank=True)
+    performance_metrics = models.JSONField(default=dict, blank=True)
 
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

@@ -1,0 +1,11 @@
+{
+  "id": "qwen2.5-7b-instruct-bf16",
+  "model_id": "qwen2.5-7b-instruct",
+  "priority": 80,
+  "display_name": "Qwen2.5 7B Instruct BF16",
+  "description": "Full precision safetensors artifact intended for vLLM cluster serving.",
+  "hf": {"repo_id": "Qwen/Qwen2.5-7B-Instruct"},
+  "artifact": {"format": "safetensors", "quant": "bf16", "dtype": "bfloat16", "download_size_mb": 14500, "disk_required_mb": 16000},
+  "backend_profiles": ["vllm-cuda"],
+  "policy": {"tags": ["bf16", "cluster", "rag"]}
+}

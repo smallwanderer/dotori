@@ -1,7 +1,5 @@
-# Full local dependency set. Docker builds install these selectively:
-# - app: requirements.web.txt
-# - celery-worker: requirements.web.txt + requirements.ai.txt
-# - dev app: requirements.web.txt + requirements.dev.txt
+# Full local dependency set. The release app and worker services share one
+# image with web + AI dependencies. Development/test builds add dev packages.
 -r requirements.web.txt
 -r requirements.ai.txt
 -r requirements.dev.txt

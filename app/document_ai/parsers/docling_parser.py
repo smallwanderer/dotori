@@ -86,7 +86,7 @@ class ParseResult(BaseModel):
 
 # ──────────────────────────────────────────────
 # 테이블을 마크다운 형식으로 직렬화하기 위한 시리얼라이저 프로바이더
-# 이미지를 "<!-- image -->"로 치환하기 위한 시리얼라이저 프로바이더
+# 이미지 placeholder를 검색 텍스트에 출력하지 않는 시리얼라이저 프로바이더
 # ──────────────────────────────────────────────
 
 class CustomSerializerProvider(ChunkingSerializerProvider):
@@ -95,7 +95,7 @@ class CustomSerializerProvider(ChunkingSerializerProvider):
             doc=doc,
             table_serializer=MarkdownTableSerializer(),
             params=MarkdownParams(
-                image_placeholder="<!-- image -->",
+                image_placeholder="",
             ),
         )
 
@@ -118,15 +118,17 @@ def _parse_docling_document(
     chunk_iter = chunker.chunk(result.document)
 
     chunks: List[ChunkPayload] = []
-    for i, chunk in enumerate(chunk_iter):
+    for chunk in chunk_iter:
         serialized_text = normalize_extracted_text(
             chunker.contextualize(chunk=chunk)
         )
+        if not serialized_text:
+            continue
         meta = serialize_meta(chunk.meta) if hasattr(chunk, "meta") else None
 
         chunks.append(
             ChunkPayload(
-                chunk_index=i,
+                chunk_index=len(chunks),
                 serialized_text=serialized_text,
                 tokens=tokenizer.count_tokens(serialized_text),
                 meta=meta,

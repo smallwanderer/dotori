@@ -1,203 +1,102 @@
 # 도토리 문서
 
-**도토리 문서는 개인 또는 소규모 팀이 직접 운영할 수 있는 가벼운 문서 검색 및 RAG 시스템입니다.**
+도토리는 문서 관리, 하이브리드 검색, 검색 증강 생성(RAG)을 한 서버에서 운영하는 셀프호스팅 문서 작업 공간입니다. 문서, 검색 인덱스, 로컬 AI 런타임을 운영자가 관리하는 Docker Compose 환경 안에 보관합니다.
 
 <p align="center">
- <img src = "https://github.com/user-attachments/assets/72862426-bc9f-47b0-adb1-b6987e4eaa7c", width="80%">
+  <img src="https://github.com/user-attachments/assets/263cba6d-04f6-49ba-9ccb-85481157539a" width="80%" alt="도토리 문서 작업 공간">
 </p>
 
-파일 저장소, 문서 파싱, 하이브리드 벡터 검색, RAG 답변 생성을 하나의 Docker Compose 환경에서 실행할 수 있도록 구성되어 있습니다. 서버에서도 실행할 수 있고, Windows에서는 Docker Desktop과 WSL2 기반으로 실행할 수 있습니다.
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/d240cf34-1dfb-462e-8366-3f0d3e4a435f" width="80%" alt="도토리 RAG 작업 공간">
+</p>
 
-영문 문서는 [README.md](README.md), 단계별 실행 가이드는 [WALKTHROUGH.md](WALKTHROUGH.md)를 참고하세요.
+영문 문서는 [README.md](README.md)를 참고하세요. 
 
-## 무엇을 하는 시스템인가요?
-
-도토리 문서는 개인 문서나 팀 문서를 웹 화면에서 관리하고, 업로드된 문서에 대해 검색과 질문 답변을 수행하는 시스템입니다.
-
-- 파일과 폴더를 웹 UI에서 관리합니다.
-- 문서를 비동기 worker가 파싱하고 임베딩합니다.
-- PostgreSQL + pgvector에 문서 벡터를 저장합니다.
-- dense/sparse hybrid retriever로 문서를 검색합니다.
-- RAG 화면에서 질문하고, 근거 문서와 함께 답변을 확인합니다.
-- Docker Compose로 서버 또는 Windows 환경에서 실행할 수 있습니다.
-
-## 현재 릴리즈
-
-`0.1.1`은 source-based early release입니다. 핵심 파일 관리, 문서 파싱/임베딩, AI 검색, RAG 흐름은 사용할 수 있지만 운영 자동화와 일부 고급 기능은 아직 개선 중입니다.
-
-이 릴리즈는 source-based release입니다. 아직 Docker 이미지를 별도로 배포하지 않습니다. release tag를 checkout한 뒤 Docker Compose로 직접 build해서 실행합니다.
-
-## 구조
-
-```text
-nginx
-  -> app
-      Django 웹 UI, 파일 API, 작업 큐잉
-
-redis
-  Celery broker
-
-db
-  PostgreSQL + pgvector
-
-celery-core-worker
-  문서 파싱, 청킹, 임베딩
-
-celery-search-worker
-  query embedding, hybrid retrieval, 검색 job 처리
-
-celery-llm-rag-worker
-  RAG 답변 생성
-
-celery-query-worker
-  실험적 query parsing
-
-celery-text2sql-worker
-  실험적 Text2SQL 작업
-
-llm-parser
-  llama.cpp 호환 로컬 LLM endpoint
-```
-
-웹 컨테이너는 가볍게 유지하고, 파싱/임베딩/검색/LLM 작업은 worker 컨테이너에서 처리합니다.
+상세 내용은 [Walkthrough](./documents/WALKTHROUGH.md)을 참고하세요.
 
 ## 주요 기능
 
-- 로그인 기반 파일 및 폴더 관리
-- 비동기 문서 AI 처리 파이프라인
-- BGE-M3 기반 dense/sparse hybrid 검색
-- 근거 문서가 표시되는 RAG 질문 화면
-- 검색/RAG evidence에 대한 embedding 기반 contextual compression
-- Shelf-Sync 연동을 위한 서버 측 sync API 기반
-- 업로드/동기화 파일의 AI 파싱 및 임베딩 처리 여부 제어
-- 한국어/영어 화면 언어 설정 저장
-- 운영 상태 확인을 위한 Django admin 확장
-- 검증과 fallback을 포함한 실험적 QueryDSL parser 경로
+- 여러 개의 계정을 생성하여 파일과 문서 기능을 안전하게 분리 가능
+- 인증, 휴지통, 즐겨찾기, 최근 파일을 포함한 폴더 및 파일 관리
+- PDF, HWP, DOCS 등 텍스트 파일의 분석 기능
+- 자연어 검색을 통한 문서 검색 기능
+- 외부로 정보가 유출되지 않고 문서 내용을 기반으로 답변을 제공하는 RAG 기능
+- 컴퓨터 사양을 바탕으로 직접 고르는 로컬 LLM 설치 및 사용 기능
+- 파일 관리 전용부터 전체 로컬 RAG까지 선택할 수 있는 세 가지 설치 모드
+- 한국어와 영어 웹 UI와 외부 AI 모델 연동을 위한 기능
 
-## 요구 사항
+!주의
+로컬 LLM은 사용자가 직접 선택해야 하며, AI 모델과 런타임은 사용자별 설정이 아니라 서버 전체 설정으로 관리됩니다.
+외부 LLM(ChatGPT, Claude 등)을 선택하는 경우, 문서 내용이 외부로 제공될 수 있습니다. 
 
-- Docker Engine 또는 Docker Desktop
-- Docker Compose v2
-- Git
-- 모델 다운로드에 필요한 Hugging Face token
 
-Windows에서는 Docker Desktop의 WSL2 backend 사용을 권장합니다.
+## 설치 모드
+
+시스템에 제공하는 설치 도우미(start.bat)을 통해 코딩 없이 서버를 설치할 수 있습니다.
+관련 내용은 [설치 가이드](docs/installation-user-guide.md)를 참고하세요.
+
+설치 모드에서 제공하는 옵션은 다음과 같습니다:
+1. 선택적 기능 활성화(자연어 검색 기능, RAG 기능을 끄고 킬 수 있습니다)
+2. 로컬 LLM 설치 가이드
+3. 서버 운영 환경설정 가이드
+4. 서버 외부접속 도메인설정
+
 
 ## 빠른 시작
 
-```bash
-git clone https://github.com/smallwanderer/dotori.git
-cd dotori
-cp .env.example .env
-docker compose up -d --build
-docker compose exec app python manage.py createsuperuser
-```
+### 요구 사항
 
-접속:
+- Docker Engine 또는 Docker Desktop
+- Python 3.x
+- vLLM GPU 런타임 사용 시 NVIDIA 드라이버와 NVIDIA Container Toolkit
+- 선택한 모델이 인증을 요구할 경우 Hugging Face 토큰
 
-```text
-http://localhost/
-```
+Windows에서는 Docker Desktop의 WSL2 백엔드를 권장합니다.
 
-관리자 페이지:
+
+## 시스템 구조
 
 ```text
-http://localhost/admin/
+      Nginx
+        |
+     Web App -------------- DataBase
+        |
+    Queue Server
+        |
+        +-- embedding-worker  [parse, embed]
+        +-- search-worker     [search]
+        +-- rag-worker        [rag] ---- 선택된 로컬 런타임
+                                          |-- llama-rag (llama.cpp)
+                                          `-- vllm-rag  (vLLM)
 ```
 
-Windows 또는 로컬 개발 환경:
+각 worker로 구성된 Queue Server는 설정된 동시성을 바탕으로 작업을 비동기적으로 처리합니다.
 
+
+## 데이터와 설정
+
+- `.env.example`에는 운영에 필요한 주요 설정값이 담겨 있습니다. 이 파일을 복사하여 `.env` 파일을 만들고 필요에 따라 수정하세요. 
+- 또한 `.env.example`에는 고급 기능들을 위한 제어 설정들이 포함되어 있습니다. 
+- 해당 프로그램을 사용하며 저장한 모든 파일들은 로컬 서버의 파일시스템에 저장됩니다. 별다른 백업 기능은 아직 제공하지 않고 있습니다.
+- `data/config/llm_runtime.json`은 로컬 RAG 설정 과정에서 생성되는 서버 단위 런타임 기준 파일입니다.
+
+## 개발
+
+저장소의 주요 애플리케이션 경계는 `files`, `accounts`, `document_ai`입니다. 
+무거운 AI 작업은 processing, embedding, query-understanding, search, RAG, 설치 및 런타임 모듈로 분리되어 있습니다.
+
+변경 사항을 확인하기 위한 테스트 코드는 일부 제공됩니다.
 ```bash
-cp .env.example .env.dev
-docker compose -f docker-compose.dev.yml up -d --build
+docker compose --profile test run --rm test python manage.py check
+docker compose --profile test run --rm test python -m pytest
 ```
 
-접속:
+## 프로젝트 상태
 
-```text
-http://localhost:8888/
-```
+도토리는 현재 개발 중입니다. 
+현 소스에는 소개된 기능들이 제공되고 있으며, 실험적 기능들이 포함되어 있습니다.
+버그 및 기능 건의는 이슈 혹은 이메일을 통해 부탁드립니다.
 
-서버와 Windows 환경별 자세한 실행 순서는 [WALKTHROUGH.md](WALKTHROUGH.md)를 참고하세요.
+## 라이선스
 
-## 주요 설정
-
-대부분의 설정은 `.env` 또는 `.env.dev`에서 변경합니다.
-
-| 변수 | 설명 |
-| --- | --- |
-| `DJANGO_SECRET_KEY` | Django secret key. 실제 운영에서는 반드시 변경해야 합니다. |
-| `DJANGO_ALLOWED_HOSTS` | 접속을 허용할 도메인 또는 IP |
-| `DJANGO_CSRF_TRUSTED_ORIGINS` | 브라우저 요청을 신뢰할 origin |
-| `NGINX_SERVER_NAME` | Nginx가 요청을 받을 서버 이름. 개발 환경 기본값은 `_` |
-| `LETSENCRYPT_DOMAIN` | Let’s Encrypt 인증서를 발급받고 Nginx 인증서 경로에서 사용할 도메인 |
-| `LETSENCRYPT_EMAIL` | Let’s Encrypt 인증서 발급/만료 알림 이메일 |
-| `DJANGO_SECURE_PROXY_SSL_HEADER` | Nginx HTTPS 프록시 헤더를 Django가 신뢰할지 여부 |
-| `DJANGO_SECURE_SSL_REDIRECT` | Django 레벨 HTTPS 리다이렉트 여부 |
-| `DJANGO_SESSION_COOKIE_SECURE` | 세션 쿠키를 HTTPS 전용으로 설정 |
-| `DJANGO_CSRF_COOKIE_SECURE` | CSRF 쿠키를 HTTPS 전용으로 설정 |
-| `POSTGRES_*` | PostgreSQL 접속 정보 |
-| `HF_TOKEN` | 모델 다운로드에 필요한 Hugging Face token |
-| `EMBEDDING_MODEL` | 임베딩 모델. 기본값은 BGE-M3 |
-| `EMBEDDING_DISTANCE_STRATEGY` | dense 검색 거리 계산 방식 |
-| `EMBEDDING_HYBRID_DENSE_WEIGHT` | dense score 가중치 |
-| `EMBEDDING_HYBRID_SPARSE_WEIGHT` | sparse score 가중치 |
-| `CONTEXTUAL_COMPRESSION_ENABLED` | evidence 압축 사용 여부 |
-| `RAG_SEARCH_TOP_K` | RAG에서 기본으로 검색할 문서 수 |
-| `RAG_RETRIEVAL_THRESHOLD` | RAG dense similarity threshold |
-| `RAG_EVIDENCE_LIMIT` | RAG prompt에 넣을 최대 근거 수 |
-| `QUERY_FRONTEND_MODE` | Query parser 사용 방식. 기본은 passthrough |
-
-운영 HTTPS 인증서는 별도 [docker-compose.certbot.yml](docker-compose.certbot.yml)로 발급/갱신합니다. Nginx는 `./data/certbot/www`와 `./data/certbot/conf`만 공유해서 challenge 파일과 인증서를 읽습니다. 일반적인 단일 도메인 배포에서는 `NGINX_SERVER_NAME`과 `LETSENCRYPT_DOMAIN`을 같은 값으로 설정합니다.
-
-## 테스트
-
-CI와 같은 unit test:
-
-```bash
-docker compose -f docker-compose.dev.yml run --rm celery-core-worker python -m pytest -m "unit"
-```
-
-웹/API 중심 개발 테스트:
-
-```bash
-docker compose -f docker-compose.dev.yml exec app python manage.py check
-docker compose -f docker-compose.dev.yml exec app python -m pytest --reuse-db files/tests.py tests/test_rag_flow.py
-```
-
-웹 `app` 컨테이너는 AI 의존성을 가볍게 유지하므로 Docling 기반 테스트는 `celery-core-worker`에서 실행해야 합니다.
-
-## 운영 메모
-
-- 업로드 파일과 DB 데이터는 `data/` 아래에 저장됩니다.
-- 기본 Compose 파일은 운영에 가까운 `docker-compose.yml`입니다.
-- 개발용 Compose 파일은 `docker-compose.dev.yml`이며 `http://localhost:8888/`에서 실행됩니다.
-- RAG와 Text2SQL은 `llm-parser` 컨테이너를 사용합니다.
-- LLM의 reasoning/thinking 출력은 기본적으로 요청하거나 저장하지 않습니다. 자세한 내용은 [LLM_REASONING_POLICY.md](LLM_REASONING_POLICY.md)를 참고하세요.
-- QueryDSL parser는 실험 기능입니다. 기본 검색/RAG 경로는 semantic query passthrough를 사용합니다.
-
-## 0.1.1 요약
-
-- 사용자 설정 화면 및 화면 언어 저장 기능 추가
-- 파일 목록, 상세, 업로드 화면의 한국어/영어 전환 범위 확대
-- 파일/폴더별 AI 처리 제외 및 재허용 UI 추가
-- 휴지통 이동 시 AI 처리 대상에서 제외하고 복원 후에도 자동 재처리하지 않도록 조정
-- Shelf-Sync 업로드 API에서 `ai_processing_enabled` 옵션 지원
-- AI 처리 제외 파일의 파싱/임베딩 큐잉 및 복구 큐잉 방지
-
-## 0.1.0-alpha 요약
-
-- Full-stack RAG 통합
-- Hybrid retriever 개선
-- Evidence contextual compression 추가
-- 서버 측 sync API 기반 추가
-- Django admin 운영 모니터링 확장
-- LLM reasoning/thinking 출력 정책 문서화
-
-## 앞으로의 계획
-
-- golden set 기반 검색 성능 평가 확대
-- RAG 답변 품질 평가와 citation 이동 개선
-- Text2SQL workflow 확장
-- QueryDSL parser 평가 후 선택적 활성화
-- 운영 보안, 백업, 모니터링 문서화
+[LICENSE](LICENSE)를 참고하세요.

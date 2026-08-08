@@ -197,36 +197,7 @@
 {% block extra_scripts %}
 <script>
   if (window.DotoriI18n) {
-    window.DotoriI18n.register({
-      ko: {
-        aiSearchHistoryFull: 'AI 검색 전체 기록',
-        answerFailed: '답변 생성에 실패했거나 내용이 없습니다.',
-        viewCitationsPrefix: '참고 문서 (',
-        viewCitationsSuffix: '건) 보기',
-        sourceDoc: '출처 문서',
-        noCitations: '등록된 참고 문서가 없습니다.',
-        noSearchHistory: '검색 기록이 없습니다',
-        noSearchHistoryDesc: 'AI를 사용해 문서를 검색하면 이곳에 기록이 저장됩니다.',
-        firstPage: '&laquo; 처음',
-        prevPage: '이전',
-        nextPage: '다음',
-        lastPage: '마지막 &raquo;'
-      },
-      en: {
-        aiSearchHistoryFull: 'All AI Search History',
-        answerFailed: 'Failed to generate an answer or the content is empty.',
-        viewCitationsPrefix: 'View references (',
-        viewCitationsSuffix: ')',
-        sourceDoc: 'Source Document',
-        noCitations: 'No references available.',
-        noSearchHistory: 'No search history',
-        noSearchHistoryDesc: 'Your AI search history will appear here.',
-        firstPage: '&laquo; First',
-        prevPage: 'Prev',
-        nextPage: 'Next',
-        lastPage: 'Last &raquo;'
-      }
-    });
+    window.DotoriI18n.loadNamespace('ai_search_history');
   }
 
   function toggleCitations(id) {

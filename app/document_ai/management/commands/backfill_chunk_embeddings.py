@@ -1,9 +1,9 @@
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 
 from config.enums import AIStatus
 from document_ai.embedding.embeding_models import embed_document
-from document_ai.models import ChunkEmbedding, DocumentChunk
+from document_ai.embedding.store_registry import get_embedding_store_instance
+from document_ai.models import DocumentChunk
 from document_ai.parsers.config import get_embedding_backend, get_embedding_model
 from document_ai.parsers.text_utils import normalize_extracted_text
 
@@ -40,6 +40,10 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         backend = options["backend"]
         model_name = options["model_name"]
+        store = get_embedding_store_instance(
+            model_name=model_name,
+            backend=backend,
+        )
 
         chunk_qs = DocumentChunk.objects.select_related(
             "parse_result",
@@ -51,11 +55,7 @@ class Command(BaseCommand):
             chunk_qs = chunk_qs.filter(parse_result__node__owner__email=user_email)
 
         if not options["overwrite"]:
-            existing_chunk_ids = ChunkEmbedding.objects.filter(
-                model_name=model_name,
-                model_version=backend,
-                status=AIStatus.COMPLETED,
-            ).values_list("chunk_id", flat=True)
+            existing_chunk_ids = store.completed_chunk_ids()
             chunk_qs = chunk_qs.exclude(id__in=existing_chunk_ids)
         limit = options.get("limit")
         if limit:
@@ -90,33 +90,19 @@ class Command(BaseCommand):
                     model_name=model_name,
                     backend=backend,
                 )
-                ChunkEmbedding.objects.update_or_create(
+                store.save_chunk_embedding(
                     chunk=chunk,
-                    model_name=model_name,
-                    model_version=backend,
-                    defaults={
-                        "vector": embedding.dense_vector,
-                        "sparse_vector": embedding.sparse_vector,
-                        "embedded_at": timezone.now(),
-                        "status": AIStatus.COMPLETED,
-                        "error_message": "",
-                    },
+                    embedding=embedding,
+                    status=AIStatus.COMPLETED,
                 )
                 success_count += 1
                 self.stdout.write(f"[{index}/{total}] chunk_id={chunk.id} done")
             except Exception as exc:
                 failed_count += 1
-                ChunkEmbedding.objects.update_or_create(
+                store.mark_chunk_embedding_failed(
                     chunk=chunk,
-                    model_name=model_name,
-                    model_version=backend,
-                    defaults={
-                        "vector": None,
-                        "sparse_vector": {},
-                        "embedded_at": None,
-                        "status": AIStatus.FAILED,
-                        "error_message": str(exc)[:255],
-                    },
+                    error_message=str(exc)[:255],
+                    status=AIStatus.FAILED,
                 )
                 self.stdout.write(
                     self.style.ERROR(f"[{index}/{total}] chunk_id={chunk.id} failed: {exc}")

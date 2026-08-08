@@ -1,6 +1,7 @@
 from datetime import timedelta
 import json
 
+import pytest
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -14,6 +15,8 @@ from document_ai.models import DocumentChunk, DocumentParseResult
 from files.models import FileBlob, Node
 from files.services import file_service
 from files.services import storage as storage_service
+
+pytestmark = pytest.mark.unit
 
 User = get_user_model()
 
@@ -485,7 +488,10 @@ class FileBulkApiTests(TestCase):
         self.assertEqual(returned[str(folder.uid)]["node_type"], NodeType.FOLDER)
         self.assertEqual(returned[str(folder.uid)]["file_count"], 1)
         self.assertEqual(returned[str(folder.uid)]["depth"], 1)
-        self.assertNotIn("ai_ready", returned[str(folder.uid)])
+        self.assertEqual(
+            set(returned[str(folder.uid)].keys()),
+            {"uid", "name", "path", "node_type", "depth", "ext", "file_count"},
+        )
         returned_uids = [item["uid"] for item in payload["nodes"]]
         self.assertLess(returned_uids.index(str(folder.uid)), returned_uids.index(str(child_file.uid)))
 

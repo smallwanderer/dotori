@@ -1,0 +1,37 @@
+{
+    "id": "gemma-4-e4b-it",
+    "display_name": "Gemma 4 E4B Instruct",
+    "license": "gemma",
+    "model_metadata": {
+        "architecture": "gemma4_text",
+        "parameter_count_b": 7.996,
+        "max_context_length": 131072,
+        "hidden_size": 2560,
+        "num_hidden_layers": 42,
+        "num_attention_heads": 8,
+        "num_key_value_heads": 2,
+        "head_dim": 256,
+        "extra": {
+            "metadata_source": "autoconfig:google/gemma-4-E4B-it",
+            "root_architecture": "gemma4"
+        }
+    },
+    "capabilities": {
+        "modalities": [
+            "text",
+            "vision",
+            "audio"
+        ],
+        "tasks": [
+            "rag",
+            "chat",
+            "reasoning",
+            "code"
+        ],
+        "languages": [
+            "ko",
+            "en"
+        ]
+    },
+    "description": ""
+}

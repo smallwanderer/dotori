@@ -1,8 +1,9 @@
-docling==2.*
-torchvision==0.*
+docling==2.113.0
+torch==2.13.0
+torchvision==0.28.0
 
-sentence-transformers==5.*
-FlagEmbedding==1.*
+sentence-transformers==5.6.0
+FlagEmbedding==1.4.0
 
-python-hwpx==2.*
+python-hwpx==2.29.1
 pyhwp==0.1b15

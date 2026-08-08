@@ -1,0 +1,28 @@
+{
+  "id": "qwen3.5-4b-awq",
+  "model_id": "qwen3.5-4b",
+  "priority": 93,
+  "display_name": "Qwen3.5 4B AWQ",
+  "description": "Pre-quantized AWQ 4-bit model served with vLLM.",
+  "hf": {
+    "repo_id": "cyankiwi/Qwen3.5-4B-AWQ-INT8-INT4"
+  },
+  "artifact": {
+    "format": "awq",
+    "quant": "AWQ-INT4",
+    "dtype": "int4",
+    "download_size_mb": 4333,
+    "disk_required_mb": 4800
+  },
+  "backend_profiles": [
+    "vllm-cuda"
+  ],
+  "policy": {
+    "tags": [
+      "awq",
+      "vllm",
+      "gpu",
+      "rag"
+    ]
+  }
+}

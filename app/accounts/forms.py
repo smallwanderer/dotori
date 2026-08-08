@@ -37,7 +37,7 @@ class UserRegistrationForm(forms.ModelForm):
 
     class Meta:
         model = User
-        fields = ["email"]
+        fields = ["email", "display_name"]
         widgets = {
             "email": forms.EmailInput(
                 attrs={
@@ -45,7 +45,14 @@ class UserRegistrationForm(forms.ModelForm):
                     "placeholder": "Enter your email address",
                     "data-i18n-placeholder": "signupEmailPlaceholder",
                 }
-            )
+            ),
+            "display_name": forms.TextInput(
+                attrs={
+                    "class": "auth-input",
+                    "placeholder": "Display name (optional)",
+                    "data-i18n-placeholder": "signupDisplayNamePlaceholder",
+                }
+            ),
         }
 
     def clean_email(self):

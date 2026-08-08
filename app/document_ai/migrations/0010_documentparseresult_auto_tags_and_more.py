@@ -36,7 +36,7 @@ class Migration(migrations.Migration):
                 ('chunk', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='sentence_embeddings', to='document_ai.documentchunk')),
             ],
             options={
-                'indexes': [models.Index(fields=['chunk', 'sentence_index'], name='document_ai_chunk_i_8971ec_idx'), pgvector.django.indexes.HnswIndex(ef_construction=64, fields=['vector'], m=16, name='sent_emb_vec_hnsw_idx', opclasses=['vector_cosine_ops'])],
+                'indexes': [models.Index(fields=['chunk', 'sentence_index'], name='document_ai_chunk_i_8971ec_idx'), pgvector.django.indexes.HnswIndex(ef_construction=64, fields=['vector'], m=16, name='sent_emb_vec_hnsw_idx', opclasses=['vector_ip_ops'])],
                 'constraints': [models.UniqueConstraint(fields=('chunk', 'sentence_index'), name='uniq_sentence_emb_per_chunk_index')],
             },
         ),

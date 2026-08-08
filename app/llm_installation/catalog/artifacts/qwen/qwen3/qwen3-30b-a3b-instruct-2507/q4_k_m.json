@@ -1,0 +1,29 @@
+{
+  "id": "qwen3-30b-a3b-instruct-2507-q4_k_m",
+  "model_id": "qwen3-30b-a3b-instruct-2507",
+  "priority": 90,
+  "display_name": "Qwen3 30B-A3B Instruct Q4_K_M",
+  "description": "GGUF artifact for standalone CPU, GPU full offload, or RAM spill serving.",
+  "hf": {
+    "repo_id": "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF"
+  },
+  "artifact": {
+    "format": "gguf",
+    "filename": "Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
+    "quant": "Q4_K_M",
+    "download_size_mb": 17697,
+    "disk_required_mb": 19500
+  },
+  "backend_profiles": [
+    "llamacpp-gpu-offload",
+    "llamacpp-cpu"
+  ],
+  "policy": {
+    "tags": [
+      "gguf",
+      "q4",
+      "rag",
+      "ram-offload"
+    ]
+  }
+}

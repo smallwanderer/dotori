@@ -6,13 +6,16 @@ from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.text import Truncator
 
-from config.enums import AIStatus
+from config.enums import AIStatus, RAGStage
 from document_ai.models import (
     ChunkEmbedding,
     DocumentChunk,
     DocumentParseResult,
+    LLMEndpoint,
+    QueryUnderstandingLog,
     RAGJob,
     SearchJob,
+    UserLLMPreference,
 )
 from document_ai.tasks import enqueue_embedding_tasks, generate_rag_response, perform_vector_search
 
@@ -263,6 +266,92 @@ class ChunkEmbeddingAdmin(admin.ModelAdmin):
         return len(obj.sparse_vector or {})
 
 
+@admin.register(QueryUnderstandingLog)
+class QueryUnderstandingLogAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "owner_email",
+        "mode",
+        "intent",
+        "semantic_query_preview",
+        "retrieval_required",
+        "confidence",
+        "source",
+        "status",
+        "created_at",
+    )
+    list_filter = (
+        "mode",
+        "intent",
+        "answer_mode",
+        "retrieval_required",
+        "source",
+        "status",
+        "created_at",
+    )
+    search_fields = (
+        "raw_query",
+        "normalized_query",
+        "semantic_query",
+        "reason",
+        "owner__email",
+        "error_message",
+    )
+    readonly_fields = (
+        "owner",
+        "mode",
+        "raw_query",
+        "normalized_query",
+        "semantic_query",
+        "intent",
+        "answer_mode",
+        "retrieval_required",
+        "confidence",
+        "reason",
+        "source",
+        "status",
+        "warnings_pretty",
+        "classification_pretty",
+        "query_dsl_pretty",
+        "orm_pretty",
+        "raw_result_pretty",
+        "error_message",
+        "created_at",
+    )
+    raw_id_fields = ("owner",)
+    date_hierarchy = "created_at"
+    ordering = ("-created_at",)
+    list_select_related = ("owner",)
+
+    @admin.display(description="Owner")
+    def owner_email(self, obj):
+        return obj.owner.email
+
+    @admin.display(description="Semantic query")
+    def semantic_query_preview(self, obj):
+        return Truncator(obj.semantic_query).chars(80) if obj.semantic_query else "-"
+
+    @admin.display(description="Warnings")
+    def warnings_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.warnings, length=2000))
+
+    @admin.display(description="Classification")
+    def classification_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.classification, length=2000))
+
+    @admin.display(description="QueryDSL")
+    def query_dsl_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.query_dsl, length=3000))
+
+    @admin.display(description="ORM")
+    def orm_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.orm, length=3000))
+
+    @admin.display(description="Raw result")
+    def raw_result_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.raw_result, length=4000))
+
+
 @admin.register(SearchJob)
 class SearchJobAdmin(admin.ModelAdmin):
     list_display = (
@@ -291,9 +380,11 @@ class SearchJobAdmin(admin.ModelAdmin):
     )
     readonly_fields = (
         "owner",
+        "query_log",
         "query",
         "tuning_params_pretty",
         "results_pretty",
+        "performance_metrics_pretty",
         "error_message",
         "task_id",
         "started_at",
@@ -303,7 +394,7 @@ class SearchJobAdmin(admin.ModelAdmin):
         "duration",
         "result_count",
     )
-    raw_id_fields = ("owner",)
+    raw_id_fields = ("owner", "query_log")
     actions = ("requeue_selected_search_jobs",)
     date_hierarchy = "created_at"
     ordering = ("-created_at",)
@@ -333,6 +424,10 @@ class SearchJobAdmin(admin.ModelAdmin):
     def results_pretty(self, obj):
         return format_html("<pre>{}</pre>", _json_preview(obj.results, length=4000))
 
+    @admin.display(description="Performance metrics")
+    def performance_metrics_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.performance_metrics, length=4000))
+
     @admin.action(description="Requeue selected failed/pending search jobs")
     def requeue_selected_search_jobs(self, request, queryset):
         candidate_qs = queryset.filter(status__in=[AIStatus.PENDING, AIStatus.FAILED])
@@ -342,6 +437,7 @@ class SearchJobAdmin(admin.ModelAdmin):
             job.task_id = async_result.id
             job.status = AIStatus.PENDING
             job.error_message = ""
+            job.performance_metrics = {}
             job.started_at = None
             job.completed_at = None
             job.save(
@@ -351,6 +447,7 @@ class SearchJobAdmin(admin.ModelAdmin):
                     "error_message",
                     "started_at",
                     "completed_at",
+                    "performance_metrics",
                 ]
             )
             queued += 1
@@ -364,7 +461,10 @@ class RAGJobAdmin(admin.ModelAdmin):
         "owner_email",
         "question_preview",
         "status",
+        "stage",
+        "query_intent",
         "search_status",
+        "llm_model",
         "citation_count",
         "task_id",
         "created_at",
@@ -372,7 +472,12 @@ class RAGJobAdmin(admin.ModelAdmin):
     )
     list_filter = (
         "status",
+        "stage",
+        "query_intent",
+        "answer_mode",
+        "retrieval_required",
         "language",
+        "llm_endpoint_name",
         "created_at",
         "started_at",
         "completed_at",
@@ -383,14 +488,29 @@ class RAGJobAdmin(admin.ModelAdmin):
         "owner__email",
         "task_id",
         "error_message",
+        "stage_message",
+        "llm_endpoint_name",
+        "llm_model",
     )
     readonly_fields = (
         "owner",
         "search_job",
+        "query_log",
         "question",
+        "retrieval_query",
+        "query_intent",
+        "answer_mode",
+        "retrieval_required",
+        "query_confidence",
         "answer",
         "citations_pretty",
+        "performance_metrics_pretty",
         "error_message",
+        "stage",
+        "stage_message",
+        "llm_endpoint_name",
+        "llm_base_url",
+        "llm_model",
         "task_id",
         "started_at",
         "completed_at",
@@ -398,11 +518,11 @@ class RAGJobAdmin(admin.ModelAdmin):
         "updated_at",
         "citation_count",
     )
-    raw_id_fields = ("owner", "search_job")
+    raw_id_fields = ("owner", "search_job", "query_log", "llm_endpoint")
     actions = ("requeue_selected_rag_jobs",)
     date_hierarchy = "created_at"
     ordering = ("-created_at",)
-    list_select_related = ("owner", "search_job")
+    list_select_related = ("owner", "search_job", "llm_endpoint")
 
     @admin.display(description="Owner")
     def owner_email(self, obj):
@@ -424,6 +544,10 @@ class RAGJobAdmin(admin.ModelAdmin):
     def citations_pretty(self, obj):
         return format_html("<pre>{}</pre>", _json_preview(obj.citations, length=4000))
 
+    @admin.display(description="Performance metrics")
+    def performance_metrics_pretty(self, obj):
+        return format_html("<pre>{}</pre>", _json_preview(obj.performance_metrics, length=4000))
+
     @admin.action(description="Requeue selected completed-search RAG jobs")
     def requeue_selected_rag_jobs(self, request, queryset):
         queued = 0
@@ -433,24 +557,57 @@ class RAGJobAdmin(admin.ModelAdmin):
             async_result = generate_rag_response.apply_async(args=[job.id], queue="rag")
             job.task_id = async_result.id
             job.status = AIStatus.PENDING
+            job.stage = RAGStage.GENERATING
+            job.stage_message = "검색된 근거를 바탕으로 답변을 생성하고 있습니다."
             job.error_message = ""
             job.answer = ""
             job.citations = []
             job.started_at = None
             job.completed_at = None
+            job.performance_metrics = {}
             job.save(
                 update_fields=[
                     "task_id",
                     "status",
+                    "stage",
+                    "stage_message",
                     "error_message",
                     "answer",
                     "citations",
                     "started_at",
                     "completed_at",
+                    "performance_metrics",
                 ]
             )
             queued += 1
         self.message_user(request, f"Requeued {queued} RAG jobs.", messages.SUCCESS)
+
+
+@admin.register(LLMEndpoint)
+class LLMEndpointAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "name",
+        "owner",
+        "endpoint_type",
+        "base_url",
+        "default_model",
+        "is_active",
+        "updated_at",
+    )
+    list_filter = ("endpoint_type", "is_active", "created_at", "updated_at")
+    search_fields = ("name", "base_url", "default_model", "owner__email")
+    raw_id_fields = ("owner",)
+    readonly_fields = ("created_at", "updated_at", "last_checked_at", "last_check_status", "last_check_message")
+    ordering = ("owner__email", "name")
+
+
+@admin.register(UserLLMPreference)
+class UserLLMPreferenceAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "rag_endpoint", "rag_model", "updated_at")
+    search_fields = ("user__email", "rag_model", "rag_endpoint__name")
+    raw_id_fields = ("user", "rag_endpoint")
+    readonly_fields = ("created_at", "updated_at")
 
 
 try:

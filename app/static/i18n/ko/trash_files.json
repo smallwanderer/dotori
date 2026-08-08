@@ -1,0 +1,22 @@
+{
+  "trashTitle": "휴지통",
+  "emptyTrash": "휴지통 비우기",
+  "restoreSelected": "선택 항목 복원",
+  "clearSelection": "선택 해제",
+  "trashRetentionNotice": "휴지통 파일은 자동 삭제 전 7일 동안 보관됩니다.",
+  "name": "이름",
+  "size": "크기",
+  "deletedOn": "삭제 날짜",
+  "autoDeleteIn": "자동 삭제까지",
+  "trashIconText": "휴지통",
+  "trashEmptyTitle": "휴지통이 비어 있습니다",
+  "trashEmptyBody": "삭제한 파일은 7일 동안 여기에 표시됩니다.",
+  "selected": "{0}개 선택됨",
+  "daysLeft": "{0}일",
+  "restore": "복원",
+  "deletePermanently": "영구 삭제",
+  "restoreSelectedFailed": "선택 항목을 복원할 수 없습니다.",
+  "restoreFailed": "이 항목을 복원할 수 없습니다.",
+  "confirmPermanentDelete": "이 항목을 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다.",
+  "confirmEmptyTrash": "휴지통을 비울까요? 이후에는 복원할 수 없습니다."
+}

@@ -6,12 +6,12 @@ from .models import APIToken, SyncQuota, User
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = ("email", "is_active", "is_staff", "email_verified", "created_at")
+    list_display = ("email", "display_name", "is_active", "is_staff", "email_verified", "created_at")
     list_filter = ("is_active", "is_staff", "email_verified")
-    search_fields = ("email",)
+    search_fields = ("email", "display_name")
     ordering = ("-created_at",)
     fieldsets = (
-        (None, {"fields": ("email", "password")}),
+        (None, {"fields": ("email", "display_name", "password")}),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "email_verified")}),
         ("Dates", {"fields": ("created_at", "email_verification_sent_at")}),
     )

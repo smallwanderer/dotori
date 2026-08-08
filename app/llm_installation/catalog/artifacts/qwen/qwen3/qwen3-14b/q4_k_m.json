@@ -1,0 +1,29 @@
+{
+  "id": "qwen3-14b-q4_k_m",
+  "model_id": "qwen3-14b",
+  "priority": 90,
+  "display_name": "Qwen3 14B Q4_K_M",
+  "description": "GGUF artifact for standalone CPU, GPU full offload, or RAM spill serving.",
+  "hf": {
+    "repo_id": "Qwen/Qwen3-14B-GGUF"
+  },
+  "artifact": {
+    "format": "gguf",
+    "filename": "Qwen3-14B-Q4_K_M.gguf",
+    "quant": "Q4_K_M",
+    "download_size_mb": 8584,
+    "disk_required_mb": 9500
+  },
+  "backend_profiles": [
+    "llamacpp-gpu-offload",
+    "llamacpp-cpu"
+  ],
+  "policy": {
+    "tags": [
+      "gguf",
+      "q4",
+      "rag",
+      "ram-offload"
+    ]
+  }
+}

@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ ! -f .env ]]; then
-  echo ".env file is required."
+PROVIDER_ENV="data/config/network_access/provider.env"
+
+if [[ ! -f "$PROVIDER_ENV" ]]; then
+  echo "$PROVIDER_ENV is required. Create and edit the external access configuration first."
   exit 1
 fi
 
 set -a
-source .env
+source "$PROVIDER_ENV"
 set +a
 
-DOMAIN="${LETSENCRYPT_DOMAIN:-}"
-EMAIL="${LETSENCRYPT_EMAIL:-}"
+DOMAIN="${DOTORI_EXTERNAL_DOMAIN:-}"
+EMAIL="${DOTORI_CERTIFICATE_EMAIL:-}"
 
 if [[ -z "$DOMAIN" || "$DOMAIN" == "localhost" ]]; then
-  echo "Set LETSENCRYPT_DOMAIN to the real domain in .env."
+  echo "Set DOTORI_EXTERNAL_DOMAIN to the real domain in $PROVIDER_ENV."
   exit 1
 fi
 
 if [[ -z "$EMAIL" ]]; then
-  echo "Set LETSENCRYPT_EMAIL in .env."
+  echo "Set DOTORI_CERTIFICATE_EMAIL in $PROVIDER_ENV."
   exit 1
 fi
 
@@ -93,7 +95,7 @@ elif [[ ! -f "$CERT_DIR/fullchain.pem" || ! -f "$CERT_DIR/privkey.pem" ]]; then
   DUMMY_CERT_CREATED=1
 fi
 
-docker compose up -d nginx
+docker compose --env-file .env --env-file "$PROVIDER_ENV" --profile direct-https up -d --force-recreate app nginx
 wait_for_challenge_endpoint
 
 if [[ "$DUMMY_CERT_CREATED" == "1" ]]; then
@@ -110,7 +112,7 @@ docker compose -f docker-compose.certbot.yml run --rm certbot certonly --webroot
   $STAGING_ARG \
   -d "$DOMAIN"
 
-docker compose exec nginx nginx -s reload
+docker compose --env-file .env --env-file "$PROVIDER_ENV" --profile direct-https exec nginx nginx -s reload
 
 trap - EXIT
 echo "Done. Verify with: curl -I https://$DOMAIN/"

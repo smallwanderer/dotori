@@ -1,0 +1,13 @@
+{
+  "sidebarUpload": "+ Upload files",
+  "ragQuestion": "RAG question",
+  "ragSubtitle": "Document-grounded answers",
+  "sidebarExplore": "Explore",
+  "allFiles": "All files",
+  "recentFiles": "Recent files",
+  "starred": "Starred",
+  "aiSearchHistory": "AI search history",
+  "trash": "Trash",
+  "storage": "Storage",
+  "storageUsed": "Used space"
+}

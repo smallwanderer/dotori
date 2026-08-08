@@ -1,0 +1,29 @@
+{
+  "id": "qwen3.6-35b-a3b-q4_k_m",
+  "model_id": "qwen3.6-35b-a3b",
+  "priority": 90,
+  "display_name": "Qwen3.6 35B-A3B Q4_K_M",
+  "description": "GGUF artifact for standalone CPU, GPU full offload, or RAM spill serving.",
+  "hf": {
+    "repo_id": "unsloth/Qwen3.6-35B-A3B-GGUF"
+  },
+  "artifact": {
+    "format": "gguf",
+    "filename": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+    "quant": "Q4_K_M",
+    "download_size_mb": 21109,
+    "disk_required_mb": 23200
+  },
+  "backend_profiles": [
+    "llamacpp-gpu-offload",
+    "llamacpp-cpu"
+  ],
+  "policy": {
+    "tags": [
+      "gguf",
+      "q4",
+      "rag",
+      "ram-offload"
+    ]
+  }
+}

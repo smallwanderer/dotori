@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "catalog_name": "dotori-embedding-model-catalog",
+  "default_preset": "balanced",
+  "updated_at": "2026-07-31"
+}

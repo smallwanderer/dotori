@@ -1,0 +1,25 @@
+{
+  "id": "qwen3.6-27b",
+  "display_name": "Qwen3.6 27B",
+  "description": "Qwen3.6 27B multimodal model for document RAG and chat.",
+  "license": "apache-2.0",
+  "model_metadata": {
+    "architecture": "qwen3_5",
+    "parameter_count_b": 27.0,
+    "max_context_length": 262144,
+    "hidden_size": 5120,
+    "num_hidden_layers": 64,
+    "num_attention_heads": 24,
+    "num_key_value_heads": 4,
+    "head_dim": 256,
+    "extra": {
+      "metadata_source": "autoconfig:Qwen/Qwen3.6-27B",
+      "root_architecture": "qwen3_5"
+    }
+  },
+  "capabilities": {
+    "modalities": ["text"],
+    "tasks": ["rag", "chat", "summarization"],
+    "languages": ["ko", "en"]
+  }
+}

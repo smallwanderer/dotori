@@ -1,0 +1,15 @@
+{
+  "starredTitle": "Starred",
+  "name": "Name",
+  "type": "Type",
+  "size": "Size",
+  "uploadedDate": "Uploaded date",
+  "noStarredTitle": "No starred files",
+  "noStarredBody": "Use the star button in the file list to add favorites.",
+  "backToFileList": "Back to files",
+  "fileCount": "{0} files",
+  "file": "File",
+  "folder": "Folder",
+  "unstar": "Unstar",
+  "download": "Download"
+}
