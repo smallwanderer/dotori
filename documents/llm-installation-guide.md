@@ -39,6 +39,8 @@ Dotori LLM 설치 서비스는 다음 두 가지를 자동으로 처리합니다
 | `llama.cpp` | CPU 전용 또는 GPU 부분 오프로드 | GGUF 포맷 모델. RAM이 충분하면 CPU에서 실행. GPU가 있으면 레이어를 VRAM에 올림. |
 | `vLLM` | NVIDIA GPU + CUDA | AWQ/GPTQ/safetensors 포맷. GPU 전용. RAM으로 스필 없음. |
 
+> 두 런타임을 동시에 띄우지 않습니다. 선택한 엔진에 맞춰 단일 컨테이너(`dotori-llm`)의 이미지와 실행 인자가 교체됩니다. 자세한 구조는 [7장](#7-서비스-전환-이해하기)을 참고하세요.
+
 ---
 
 ## 2. 처음 설치
@@ -213,18 +215,20 @@ docker compose exec app python manage.py inspect_llm_runtime
 출력 예시:
 ```
 Persisted LLM runtime config
-path: /app/data/config/llm_runtime.json
+path: /app/data/config/runtime_scopes/production/llm_runtime.json
 exists: True
 generated_at: 2026-07-04T12:00:00Z
 
 Configured RAG target
 endpoint_name: Qwen2.5 7B Instruct (CPU full)
-base_url: http://llama-rag:8080
+base_url: http://rag-runtime:8080
 model: qwen2.5-7b-instruct-q4_k_m
 runtime: llama.cpp
 priority_preset: balanced
 serving_profile: {'context_length': 16384, 'concurrency': 4, ...}
 ```
+
+> 경로는 scope별로 분리됩니다. `docker-compose.dev.yml` 개발 스택은 `runtime_scopes/development/llm_runtime.json`을 사용합니다. `base_url`은 선택된 엔진과 무관하게 항상 같은 네트워크 별칭(`rag-runtime`)을 가리킵니다.
 
 ### 현재 서버 상태와 함께 확인 (라이브 탐지)
 
@@ -251,11 +255,12 @@ docker compose exec app python manage.py detect_llm_runtime --interactive
 ```
 
 변경 후 자동으로:
-1. `data/config/llm_runtime.json` 갱신
-2. 선택된 런타임 컨테이너(`llama-rag` 또는 `vllm-rag`) 시작 (이미 실행 중이었다면 재시작하여 새 인자를 반영)
-3. 미사용 런타임 컨테이너 제거 (`docker compose rm -f`)
-4. `rag-worker` 재시작
-5. 이전에 선택했던 모델과 다른 모델로 바꾼 경우, 이전 모델의 다운로드된 가중치 파일을 캐시에서 삭제
+1. 후보 설정을 `data/config/runtime_scopes/<scope>/generations/<generation-id>/`에 먼저 기록 (아직 활성 설정에는 반영되지 않음)
+2. 단일 런타임 컨테이너(`dotori-llm`)를 새 이미지/인자로 재생성하고 헬스체크를 통과할 때까지 대기 — docker-compose 서비스가 아니라 Docker CLI로 직접 관리됩니다
+3. 헬스체크를 통과해야만 `runtime_scopes/<scope>/llm_runtime.json`을 새 설정으로 원자적으로 교체
+4. 헬스체크에 실패하면 이전 컨테이너로 롤백하고 기존 설정을 그대로 유지
+5. `rag-worker` 재시작
+6. 이전에 선택했던 모델과 다른 모델로 바꾼 경우, 이전 모델의 다운로드된 가중치 파일을 캐시에서 삭제
 
 기존 모델을 다시 쓸 계획이 있어 가중치를 남겨두고 싶다면 `--keep-weights` 옵션을 추가합니다:
 
@@ -278,27 +283,36 @@ python install.py --remove-llm --yes
 
 ## 7. 서비스 전환 이해하기
 
-Dotori는 두 RAG 런타임 서비스를 갖습니다. **동시에 하나만 활성화**됩니다.
+Dotori는 런타임 컨테이너를 **하나만** 운영합니다. llama.cpp와 vLLM을 동시에 띄우지 않고, 선택한 엔진에 맞는 이미지로 같은 컨테이너를 교체합니다.
 
-```
-llama-rag   ← llama.cpp 기반 (GGUF 모델, CPU/GPU 혼합)
-vllm-rag    ← vLLM 기반  (AWQ/GPTQ 모델, GPU 전용)
-```
+| scope | 컨테이너 이름 | 네트워크 | 사용 시점 |
+|-------|--------------|---------|----------|
+| `production` | `dotori-llm` | `dotori-runtime` | `python install.py`(기본 배포, `docker-compose.yml`) |
+| `development` | `dotori-dev-rag-runtime` | `dotori-dev-runtime` | `docker-compose.dev.yml` 개발 스택 |
 
-`llm_runtime.json`에 기록된 `runtime` 값에 따라 서비스가 결정됩니다.
+이 컨테이너는 `docker-compose.yml`의 서비스가 아니라, `RuntimeLifecycleManager`(`app/llm_installation/runtime_lifecycle.py`)가 Docker CLI(`docker run`/`rm`/`update`)로 직접 생성·교체·삭제합니다. **`docker compose` 명령으로는 이 컨테이너를 제어할 수 없으므로, 반드시 `python install.py` 명령을 사용하세요.** 컨테이너에는 `com.dotori.*` 라벨(managed/component/scope/runtime/generation)이 붙어 있어, 이름이 같아도 다른 배포가 소유한 컨테이너는 건드리지 않습니다.
 
-| `runtime` 값 | 활성 컨테이너 |
-|-------------|--------------|
-| `llama.cpp` | `llama-rag` |
-| `vllm` | `vllm-rag` |
+선택한 `runtime` 값에 따라 빌드되는 이미지가 달라집니다.
+
+| `runtime` 값 | 이미지 | Dockerfile |
+|-------------|--------|-----------|
+| `llama.cpp` | `dotori/llama-rag` | `llm-runtime/llama.Dockerfile` |
+| `vllm` | `dotori/vllm-rag` | `llm-runtime/vllm.Dockerfile` |
+
+어떤 엔진을 선택하든 앱에서는 항상 같은 네트워크 별칭으로 접근합니다: `http://rag-runtime:8080`.
 
 ### 생성되는 설정 파일
 
+설정은 scope별로 분리되며, 신규 후보는 헬스체크를 통과해야만 활성 설정으로 원자적 교체됩니다.
+
 | 파일 | 설명 |
 |------|------|
-| `data/config/llm_runtime.json` | 런타임 스냅샷. 모델명, URL, 파라미터 전체 포함. |
-| `data/config/llama_rag.args` | llama.cpp 서버 실행 인자 (`--ctx-size`, `--parallel` 등) |
-| `data/config/vllm_rag.args` | vLLM 서버 실행 인자 (`--model`, `--quantization` 등) |
+| `data/config/runtime_scopes/<scope>/llm_runtime.json` | 현재 **활성** 런타임 스냅샷. 모델명, URL, 파라미터 전체 포함. |
+| `data/config/runtime_scopes/<scope>/runtime_status.json` | 마지막 헬스체크 결과와 실패 사유(`reason_code`). |
+| `data/config/runtime_scopes/<scope>/generations/<generation-id>/runtime.json` | 검증 대기 중인 **후보** 설정. |
+| `data/config/runtime_scopes/<scope>/generations/<generation-id>/runtime.args` | 후보 서버 실행 인자(엔진에 따라 `--ctx-size`/`--parallel` 또는 `--model`/`--quantization` 등). |
+
+> `detect_llm_runtime --write`(비대화형)는 generation 단계를 건너뛰고 `runtime_scopes/<scope>/llm_runtime.json`과 인자 파일(`llama_rag.args`/`vllm_rag.args`)을 즉시 기록합니다. 실패 시 자동 롤백이 필요하다면 `--interactive` 마법사를 사용하세요.
 
 ---
 
@@ -345,14 +359,23 @@ docker compose exec app python manage.py llm_model_catalog show <모델-id>
 
 ### 헬스체크 실패 후 서비스가 시작되지 않음
 
-```bash
-# 런타임 컨테이너 로그 확인
-docker compose logs llama-rag
-docker compose logs vllm-rag
+런타임 컨테이너는 docker-compose 서비스가 아니므로 `docker compose logs`/`restart`로 제어할 수 없습니다.
 
-# 수동으로 서비스 재시작
-docker compose restart llama-rag
+```bash
+# 런타임 컨테이너 로그 확인 (production scope)
+docker logs dotori-llm
+
+# development scope
+docker logs dotori-dev-rag-runtime
+
+# 현재 상태와 마지막 실패 사유 확인
+python install.py --status
+
+# 헬스체크를 거쳐 안전하게 재시도 (메모리를 확보한 뒤 권장)
+python install.py --retry-llm
 ```
+
+> 컨테이너를 `docker restart`로 직접 재시작하면 `RuntimeLifecycleManager`의 헬스체크·롤백 로직을 거치지 않습니다. 가능하면 `--retry-llm`을 사용하세요.
 
 ---
 
