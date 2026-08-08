@@ -15,7 +15,7 @@ from document_ai.management.commands.server_status import (
 )
 from llm_installation.catalog import get_catalog_entry
 from llm_installation.config_store import write_llm_runtime_config
-from llm_installation.runtime_probe import ServerRuntimeProfile
+from llm_installation.runtime_probe import EndpointStatus, ServerRuntimeProfile
 from llm_installation.router import resolve_server_rag_target
 from files.models import Node
 from files.services import storage as storage_service
@@ -91,53 +91,41 @@ class FileIOPipelineCheckTests(TestCase):
 
 
 @pytest.mark.parametrize(
-    "embedding_model_env,expected_enabled",
+    "operation_mode,expected_enabled",
     [
-        ("BAAI/bge-m3", True),
-        ("", False),
-        (None, False),
+        ("rag", True),
+        ("search", True),
+        ("basic", False),
     ],
 )
-def test_embedding_status_enabled_matches_env_presence(
-    monkeypatch, embedding_model_env, expected_enabled
+def test_embedding_status_enabled_matches_operation_mode(
+    monkeypatch, operation_mode, expected_enabled
 ):
-    if embedding_model_env is None:
-        monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
-    else:
-        monkeypatch.setenv("EMBEDDING_MODEL", embedding_model_env)
+    monkeypatch.setenv("DOTORI_OPERATION_MODE", operation_mode)
 
     status = _embedding_status()
 
     assert status["enabled"] is expected_enabled
-    # Detail fields always resolve via settings, even when disabled.
     assert status["model"]
 
 
-@pytest.mark.parametrize(
-    "query_llm_enabled_env,expected_enabled",
-    [
-        ("1", True),
-        (None, True),
-        ("0", False),
-        ("false", False),
-    ],
-)
-def test_rag_status_enabled_matches_query_llm_enabled_env(
-    monkeypatch, tmp_path, query_llm_enabled_env, expected_enabled
-):
+@pytest.mark.parametrize("query_llm_enabled_env", ["1", None, "0", "false"])
+def test_rag_status_enabled_ignores_query_llm_enabled_env(monkeypatch, tmp_path, query_llm_enabled_env):
+    # QUERY_UNDERSTANDING_LLM_ENABLED gates the unrelated (abandoned) query-understanding
+    # LLM step, not RAG generation — it must have no effect on rag_status.
     monkeypatch.setenv("LLM_RUNTIME_CONFIG_PATH", str(tmp_path / "missing.json"))
     if query_llm_enabled_env is None:
-        monkeypatch.delenv("QUERY_LLM_ENABLED", raising=False)
+        monkeypatch.delenv("QUERY_UNDERSTANDING_LLM_ENABLED", raising=False)
     else:
-        monkeypatch.setenv("QUERY_LLM_ENABLED", query_llm_enabled_env)
+        monkeypatch.setenv("QUERY_UNDERSTANDING_LLM_ENABLED", query_llm_enabled_env)
 
     status = _rag_status(timeout=1)
 
-    assert status["enabled"] is expected_enabled
+    assert status["enabled"] is False
     assert status["configured"] is False
 
 
-def test_rag_status_reads_persisted_config_without_live_probe(monkeypatch, tmp_path):
+def test_rag_status_probes_healthy_persisted_config(monkeypatch, tmp_path):
     profile = ServerRuntimeProfile(
         cpu_count=8,
         ram_mb=32768,
@@ -163,17 +151,24 @@ def test_rag_status_reads_persisted_config_without_live_probe(monkeypatch, tmp_p
     config_path = tmp_path / "llm_runtime.json"
     write_llm_runtime_config(target=target, profile=profile, catalog=catalog, path=config_path)
     monkeypatch.setenv("LLM_RUNTIME_CONFIG_PATH", str(config_path))
-    monkeypatch.setenv("QUERY_LLM_ENABLED", "0")
+    # Set even though it should no longer matter, to guard against the old bug
+    # where this unrelated flag suppressed the health probe.
+    monkeypatch.setenv("QUERY_UNDERSTANDING_LLM_ENABLED", "0")
     monkeypatch.setattr(
         "document_ai.management.commands.server_status.check_endpoint_health",
-        lambda *a, **k: pytest.fail("must not probe network when RAG is disabled"),
+        lambda base_url, timeout: EndpointStatus(base_url=base_url, ok=True, check_name="health"),
+    )
+    monkeypatch.setattr(
+        "document_ai.management.commands.server_status.check_openai_compatible_endpoint",
+        lambda base_url, expected_model, timeout: EndpointStatus(base_url=base_url, ok=True, check_name="models"),
     )
 
     status = _rag_status(timeout=1)
 
-    assert status["enabled"] is False
+    assert status["enabled"] is True
     assert status["configured"] is True
     assert status["runtime"] == target.runtime
+    assert status["health_status"]["ok"] is True
 
 
 def test_rag_status_reports_persisted_oom_without_live_probe(monkeypatch, tmp_path):
@@ -202,7 +197,6 @@ def test_rag_status_reports_persisted_oom_without_live_probe(monkeypatch, tmp_pa
         encoding="utf-8",
     )
     monkeypatch.setenv("LLM_RUNTIME_CONFIG_PATH", str(config_path))
-    monkeypatch.setenv("QUERY_LLM_ENABLED", "1")
     monkeypatch.setattr(
         "document_ai.management.commands.server_status.check_endpoint_health",
         lambda *a, **k: pytest.fail("must not probe an unavailable runtime"),

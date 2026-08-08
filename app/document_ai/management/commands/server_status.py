@@ -16,6 +16,10 @@ from document_ai.services.rag_runtime_config import (
     load_llm_runtime_status,
     target_from_persisted_config,
 )
+from document_ai.services.embedding_runtime_config import (
+    EmbeddingRuntimeConfigError,
+    load_embedding_runtime,
+)
 from llm_installation.cli import json_output
 from llm_installation.runtime_probe import (
     check_endpoint_health,
@@ -27,10 +31,6 @@ from files.services import storage as storage_service
 HEALTHCHECK_OWNER_EMAIL = "server-status-healthcheck@dotori.local"
 HEALTHCHECK_FILE_PREFIX = "__server_status_check__"
 HEALTHCHECK_PAYLOAD = b"dotori-server-status-check"
-
-
-def _truthy_env_flag(name: str, default: str) -> bool:
-    return os.environ.get(name, default).strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _get_or_create_healthcheck_owner():
@@ -108,21 +108,44 @@ def _file_io_status(*, skip: bool) -> dict:
 
 
 def _embedding_status() -> dict:
+    operation_mode = os.environ.get("DOTORI_OPERATION_MODE", "search").strip().lower()
+    enabled = operation_mode in {"rag", "search"}
+    try:
+        runtime = load_embedding_runtime()
+    except EmbeddingRuntimeConfigError as exc:
+        return {
+            "enabled": enabled,
+            "configured": False,
+            "available": False,
+            "message": str(exc),
+        }
     return {
-        "enabled": bool(os.environ.get("EMBEDDING_MODEL")),
-        "model": settings.EMBEDDING_MODEL,
-        "backend": settings.EMBEDDING_BACKEND,
-        "dimension": settings.EMBEDDING_DIMENSION,
-        "sparse_enabled": settings.EMBEDDING_SPARSE_ENABLED,
-        "store": settings.EMBEDDING_STORE,
-        "distance_strategy": settings.EMBEDDING_DISTANCE_STRATEGY,
+        "enabled": enabled,
+        "configured": True,
+        "available": enabled,
+        "catalog_id": runtime.catalog_id,
+        "generation_id": runtime.generation_id,
+        "runtime_fingerprint": runtime.runtime_fingerprint,
+        "model": runtime.model_id,
+        "model_revision": runtime.model_revision,
+        "backend": runtime.provider,
+        "dimension": runtime.dimension,
+        "sparse_enabled": runtime.supports_sparse,
+        "store": runtime.store,
+        "distance_strategy": runtime.distance_strategy,
     }
 
 
 def _rag_status(*, timeout: int) -> dict:
-    enabled = _truthy_env_flag("QUERY_LLM_ENABLED", "1")
+    # There's no reliable "operator wants RAG on" signal to read (the RAG
+    # operation mode isn't recorded in an env var), so "enabled" mirrors
+    # "configured": a runtime has been persisted via detect_llm_runtime.
+    # This used to read QUERY_UNDERSTANDING_LLM_ENABLED, an unrelated query-understanding
+    # toggle, which made a healthy RAG runtime silently report as disabled
+    # (and skipped its health check) whenever query-understanding was off.
     target = target_from_persisted_config()
     runtime_status = load_llm_runtime_status()
+    enabled = target is not None
 
     if target is None:
         return {
@@ -149,7 +172,7 @@ def _rag_status(*, timeout: int) -> dict:
         "retrieval_threshold": settings.RAG_RETRIEVAL_THRESHOLD,
     }
 
-    if enabled and detail["available"]:
+    if detail["available"]:
         health = check_endpoint_health(target.base_url, timeout=timeout)
         detail["health_status"] = asdict(health)
         if health.ok:
@@ -215,10 +238,14 @@ class Command(BaseCommand):
         self.stdout.write("")
 
         self.stdout.write("Feature detail")
-        self.stdout.write(
-            f"embedding: model={embedding['model']} backend={embedding['backend']} "
-            f"dimension={embedding['dimension']} sparse_enabled={embedding['sparse_enabled']}"
-        )
+        if embedding.get("configured"):
+            self.stdout.write(
+                f"embedding: model={embedding['model']} backend={embedding['backend']} "
+                f"dimension={embedding['dimension']} sparse_enabled={embedding['sparse_enabled']} "
+                f"generation={embedding['generation_id']}"
+            )
+        else:
+            self.stdout.write(f"embedding: {embedding.get('message')}")
         if rag.get("configured"):
             self.stdout.write(
                 f"rag: model={rag['model']} runtime={rag['runtime']} base_url={rag['base_url']} "
