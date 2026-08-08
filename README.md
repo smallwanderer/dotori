@@ -1,6 +1,6 @@
-# Dotori for Document
+# Dotori Documents
 
-Dotori is a self-hosted document workspace for private file management, hybrid search, and retrieval-augmented generation (RAG). It runs as an operator-managed Docker Compose stack and keeps documents, indexes, and local AI runtimes on your server.
+Dotori is a self-hosted document workspace for document management, hybrid search, and retrieval-augmented generation (RAG) on a single server. Documents, search indexes, and local AI runtimes remain in an operator-managed Docker Compose environment.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/263cba6d-04f6-49ba-9ccb-85481157539a" width="80%" alt="Dotori document workspace">
@@ -10,82 +10,54 @@ Dotori is a self-hosted document workspace for private file management, hybrid s
   <img src="https://github.com/user-attachments/assets/d240cf34-1dfb-462e-8366-3f0d3e4a435f" width="80%" alt="Dotori RAG workspace">
 </p>
 
-한국어 문서는 [README.ko.md](README.ko.md)를 참고하세요. Detailed installation and runtime operations are covered in [WALKTHROUGH.md](WALKTHROUGH.md).
+For Korean documentation, see [README.ko.md](README.ko.md). For detailed installation and operations, see the [installation guide](documents/installation-guide.md).
 
-## Highlights
+## Key Features
 
-- Private file and folder management with authentication, trash, favorites, and recent files.
-- Asynchronous parsing, chunking, and embedding for PDF, Office, HWP/HWPX, text, Markdown, HTML, and common image files.
-- Dense and sparse hybrid retrieval backed by PostgreSQL and pgvector.
-- RAG answers with source evidence, streaming output, cancellation, and job progress.
-- Server-wide local LLM selection based on detected CPU, RAM, GPU, VRAM, and disk capacity.
-- Automatic `llama.cpp` or vLLM runtime planning with `speed`, `balanced`, and `quality` presets.
-- Three installation modes, from file storage only to a complete local RAG stack.
-- Korean and English web interfaces and a sync API for external clients.
+- Multiple accounts with secure separation of files and document features
+- Folder and file management with authentication, trash, favorites, and recent files
+- Analysis of PDF, HWP, DOCX, and other text-based document formats
+- Natural-language document search
+- Local RAG that answers questions from document contents without sending data to an external provider
+- Guided installation and use of a local LLM selected for the server's hardware
+- Three installation modes, from file management only to a complete local RAG stack
+- Korean and English web interfaces, with support for external AI models
+
+> [!CAUTION]
+> The operator must select the local LLM. AI models and runtimes are managed as server-wide settings, not per-user settings.
+>
+> When an external LLM such as ChatGPT or Claude is selected, document content may be sent to the external provider.
 
 ## Installation Modes
 
-The installer asks for an operating mode. AI models and runtimes are configured for the server, not separately for each user.
+The included installation assistant, `start.bat`, lets operators set up the server without writing code. See the [installation guide](documents/installation-guide.md) for details.
 
-| Mode | Services |
-| --- | --- |
-| Full local AI RAG | File management, parsing, embeddings, hybrid search, query processing, and local RAG generation |
-| Hybrid/Search AI | File management, parsing, embeddings, and hybrid search without an answer-generation LLM |
-| Basic | File management only |
+The installer provides the following options:
 
-In Full mode, the operator selects only `speed`, `balanced`, or `quality`. Dotori derives the model, backend, quantization, context length, concurrency, and memory policy from the detected hardware. GGUF and RAM-offload configurations use `llama.cpp`; compatible NVIDIA GPU and cluster configurations can use vLLM.
+1. Optional feature activation, including enabling or disabling natural-language search and RAG
+2. Local LLM installation guidance
+3. Server environment configuration guidance
+4. External-access domain configuration
 
 ## Quick Start
 
 ### Requirements
 
 - Docker Engine or Docker Desktop
-- Docker Compose v2
-- Python 3
-- Git
+- Python 3.x
 - An NVIDIA driver and NVIDIA Container Toolkit when using the vLLM GPU runtime
-- A Hugging Face token when a selected model requires authentication
+- A Hugging Face token when the selected model requires authentication
 
 Docker Desktop with the WSL2 backend is recommended on Windows.
 
-### Run the installer
-
-```bash
-git clone https://github.com/smallwanderer/dotori.git
-cd dotori
-python install.py
-```
-
-The installer creates `.env`, detects the host hardware, lets you choose an operating mode, builds the required services with `docker-compose.yml`, and configures the selected RAG runtime. Open the service at:
+## System Architecture
 
 ```text
-http://localhost/
-```
-
-Create an administrator account after the containers are running:
-
-```bash
-docker compose -f docker-compose.yml exec app python manage.py createsuperuser
-```
-
-On later starts, use `python install.py --run` or `start.bat` on Windows. To change the local RAG model or runtime explicitly, run:
-
-```bash
-python install.py --change-llm
-```
-
-For domain, HTTPS, and environment-specific setup, follow [WALKTHROUGH.md](WALKTHROUGH.md).
-
-## How It Works
-
-```text
-Browser / sync client
-        |
       Nginx
         |
-   Django app -------------- PostgreSQL + pgvector
+     Web App -------------- Database
         |
-      Redis
+    Queue Server
         |
         +-- embedding-worker  [parse, embed]
         +-- search-worker     [search]
@@ -95,38 +67,20 @@ Browser / sync client
                                           `-- vllm-rag  (vLLM)
 ```
 
-Django handles the web application, APIs, and task submission. Parsing, embedding, retrieval, query processing, and answer generation run in dedicated Celery queues. Only the selected RAG runtime should remain active. Its resolved configuration is stored in `data/config/llm_runtime.json`, and normal RAG requests reuse that saved configuration without probing hardware or selecting a model again.
-
-## Common Commands
-
-```bash
-# Start or rebuild the installation stack
-docker compose -f docker-compose.yml up --build
-
-# Apply database migrations
-docker compose -f docker-compose.yml exec app python manage.py migrate
-
-# Follow one service's logs
-docker compose -f docker-compose.yml logs -f rag-worker
-
-# Inspect the saved LLM runtime configuration
-docker compose -f docker-compose.yml exec app \
-  python manage.py inspect_llm_runtime
-```
+The queue server and its workers process tasks asynchronously according to the configured concurrency.
 
 ## Data and Configuration
 
-- `.env` configures the installer-managed stack; `.env.dev` is reserved for development-only runs.
-- `data/uploads/`, `data/pgdata/`, `data/logs/`, and `data/config/` contain persistent local state and must not be committed.
-- `data/config/llm_runtime.json` is generated during local RAG setup and is the server-wide runtime source of truth.
-- The default embedding profile uses BGE-M3 with 1024-dimensional dense vectors and sparse lexical weights.
-- Advanced retrieval and worker settings are available in `.env.example`; start with the defaults unless you are evaluating a specific workload.
+- `.env.example` contains the primary operational settings. Copy it to `.env` and adjust it as needed.
+- `.env.example` also contains controls for advanced features.
+- All files saved through Dotori are stored on the local server filesystem. Dotori does not currently provide a separate backup feature.
+- `data/config/llm_runtime.json` is generated during local RAG setup and serves as the server-wide source of truth for the selected runtime.
 
 ## Development
 
-The repository keeps application ownership in `files`, `accounts`, and `document_ai`. Heavy AI work is separated into processing, embedding, query-understanding, search, RAG, and installation/runtime modules. The production-like application image intentionally excludes test dependencies, so tests use the `test` profile in the default Compose file.
+The repository's primary application boundaries are `files`, `accounts`, and `document_ai`. Heavy AI work is separated into processing, embedding, query-understanding, search, RAG, installation, and runtime modules.
 
-Before submitting a change, run focused tests for the affected module and then the full suite when practical:
+The repository includes tests for selected behavior:
 
 ```bash
 docker compose --profile test run --rm test python manage.py check
@@ -135,7 +89,7 @@ docker compose --profile test run --rm test python -m pytest
 
 ## Project Status
 
-Dotori is under active development. The current source includes the server-wide LLM installation service, hybrid retrieval, local and external RAG endpoint support, and the document workspace. Production operators should review their TLS, backup, monitoring, storage, model licensing, and hardware requirements before deployment.
+Dotori is under active development. The current source provides the features described above and includes experimental functionality. Please report bugs and feature requests through an issue or by email.
 
 ## License
 
