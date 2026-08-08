@@ -1,5 +1,6 @@
 from hwpx import HwpxDocument
 import subprocess
+import re
 from pathlib import Path
 
 """
@@ -88,6 +89,11 @@ def _normalize_extracted_text(text: str) -> str:
             blank_streak += 1
             if blank_streak <= 1:
                 normalized_lines.append("")
+            continue
+
+        # hwp5txt emits this standalone image sentinel. Captions containing
+        # meaningful text are intentionally preserved.
+        if re.fullmatch(r"<그림>", stripped):
             continue
 
         blank_streak = 0
