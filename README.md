@@ -3,7 +3,7 @@
 Dotori is a self-hosted document workspace for document management, hybrid search, and retrieval-augmented generation (RAG) on a single server. Documents, search indexes, and local AI runtimes remain in an operator-managed Docker Compose environment.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/1f711ecb-db68-4dd7-a6a2-435e523f3bb6" width="80%" alt="Dotori document workspace">
+  <img src="https://github.com/user-attachments/assets/54c7a4a6-39cd-49f9-b5ad-99fe4b24a438" width="80%" alt="Dotori document workspace">
 </p>
 
 
