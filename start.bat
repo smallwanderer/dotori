@@ -87,16 +87,18 @@ echo   [1] Restart Services            (no rebuild)
 echo   [2] Rebuild and Restart         (application + LLM runtime)
 echo   [3] Full Shutdown               (remove containers, keep data/cache)
 echo   [4] Remove LLM Runtime and Model Cache
-echo   [5] Back
+echo   [5] Toggle Login Requirement
+echo   [6] Back
 echo ============================================================
 set "maintenance_choice="
-set /p maintenance_choice="Select an option (1-5): "
+set /p maintenance_choice="Select an option (1-6): "
 
 if "%maintenance_choice%"=="1" goto restart
 if "%maintenance_choice%"=="2" goto rebuild
 if "%maintenance_choice%"=="3" goto shutdown
 if "%maintenance_choice%"=="4" goto remove_llm
-if "%maintenance_choice%"=="5" goto menu
+if "%maintenance_choice%"=="5" goto toggle_login
+if "%maintenance_choice%"=="6" goto menu
 echo.
 echo [ERROR] Invalid option: %maintenance_choice%
 pause
@@ -130,6 +132,21 @@ goto maintenance_menu
 python install.py --remove-llm
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to remove the LLM runtime and model cache.
+)
+pause
+goto maintenance_menu
+
+:toggle_login
+echo   [1] Require real sign-in (external/multi-user access)
+echo   [2] No login, auto sign-in as local admin (personal/local use)
+set "login_choice="
+set /p login_choice="Select an option (1-2): "
+if "%login_choice%"=="1" (
+    python install.py --login enable
+) else if "%login_choice%"=="2" (
+    python install.py --login disable
+) else (
+    echo [ERROR] Invalid option: %login_choice%
 )
 pause
 goto maintenance_menu

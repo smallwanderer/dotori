@@ -108,7 +108,10 @@ services:
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/logs:/data/logs
+      - ./data/config:/data/config:ro
       - huggingface-cache:/app/.cache/huggingface
+    environment:
+      RUNTIME_SCOPE: production
     depends_on:
       db:
         condition: service_healthy
@@ -125,7 +128,10 @@ services:
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/logs:/data/logs
+      - ./data/config:/data/config:ro
       - huggingface-cache:/app/.cache/huggingface
+    environment:
+      RUNTIME_SCOPE: production
     depends_on:
       db:
         condition: service_healthy

@@ -30,7 +30,7 @@ def _run(
 def _compose_prefix(*, external: bool) -> list[str]:
     command = ["docker", "compose", "-f", "docker-compose.yml", "--env-file", ".env"]
     if external:
-        command.extend(["--env-file", str(CONFIG_RELATIVE_PATH / PROVIDER_ENV_NAME)])
+        command.extend(["--env-file", (CONFIG_RELATIVE_PATH / PROVIDER_ENV_NAME).as_posix()])
     return command
 
 

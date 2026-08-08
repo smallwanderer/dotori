@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import os
 import sys
 import subprocess
@@ -6,9 +7,17 @@ import platform
 import shutil
 import re
 import json
+import secrets
 import time
 
 import requests
+
+try:
+    from rich.console import Console
+    from rich.table import Table
+except ImportError:
+    Console = None
+    Table = None
 
 
 def configure_console_output():
@@ -41,10 +50,15 @@ APP_URL = "http://127.0.0.1:8000/"
 if platform.system() == "Windows":
     os.system("")
 
+_console = Console() if Console else None
+
 def print_header(title):
-    print("\n" + "=" * 60)
-    print(f"{BOLD}{BLUE} {title} {RESET}")
-    print("=" * 60)
+    if _console:
+        _console.rule(f"[bold blue]{title}[/bold blue]")
+    else:
+        print("\n" + "=" * 60)
+        print(f"{BOLD}{BLUE} {title} {RESET}")
+        print("=" * 60)
 
 def run_command(cmd, shell=True, capture_output=True):
     try:
@@ -121,6 +135,70 @@ def select_rag_priority():
         "balanced",
     )
 
+
+def initialize_embedding_runtime_config(
+    priority_preset="balanced",
+    *,
+    scope="production",
+):
+    # Keep the host installer runnable with the Python standard library only.
+    # The container-side loader performs the full Pydantic catalog validation.
+    from types import SimpleNamespace
+    from llm_installation.embedding_config_store import (
+        commit_active_embedding_runtime,
+        write_embedding_runtime_generation,
+    )
+
+    catalog_root = (
+        os.path.dirname(__file__)
+        + "/app/llm_installation/embedding_catalog"
+    )
+    with open(
+        catalog_root + "/models/baai/bge-m3.json",
+        "r",
+        encoding="utf-8",
+    ) as model_file:
+        model = json.load(model_file)
+    with open(
+        catalog_root + "/profiles/bgem3_hybrid/bge-m3.json",
+        "r",
+        encoding="utf-8",
+    ) as profile_file:
+        profile = json.load(profile_file)
+
+    if (
+        profile.get("availability") != "supported"
+        or priority_preset not in profile.get("presets", [])
+        or profile.get("model_id") != model.get("id")
+        or profile.get("provider") != "bgem3_hybrid"
+        or profile.get("store") != "pgvector_chunk_1024"
+        or int(profile.get("dimension", 0)) != 1024
+        or int(model.get("dimension", 0)) != 1024
+    ):
+        raise RuntimeError(
+            "The checked-in embedding catalog has no valid supported "
+            f"entry for preset {priority_preset}."
+        )
+    resolved_entry = dict(model)
+    resolved_entry.update(
+        {
+            key: value
+            for key, value in profile.items()
+            if key != "model_id"
+        }
+    )
+    entry = SimpleNamespace(**resolved_entry)
+    generation_id = (
+        f"{scope}-embedding-{entry.id}-{entry.revision[:12]}"
+    )
+    write_embedding_runtime_generation(
+        scope=scope,
+        generation_id=generation_id,
+        entry=entry,
+    )
+    commit_active_embedding_runtime(scope, generation_id)
+    return entry
+
 def read_env_file(file_path):
     if not os.path.exists(file_path):
         return {}
@@ -165,7 +243,7 @@ def create_windows_launcher():
 
 def handle_network_access_cli(args):
     try:
-        if "--network-access-create" in args:
+        if args.network_access_create:
             result = create_configuration_files()
             print_header("External Access Configuration")
             for path in result["created"]:
@@ -174,7 +252,7 @@ def handle_network_access_cli(args):
                 print(f"{YELLOW}• Preserved existing file: {path}{RESET}")
             print("Edit these files before choosing Connect external access module.")
             return True
-        if "--network-access-open" in args:
+        if args.network_access_open:
             config_path = configuration_directory()
             if not config_path.exists():
                 create_configuration_files()
@@ -185,17 +263,17 @@ def handle_network_access_cli(args):
             else:
                 subprocess.Popen(["xdg-open", str(config_path)])
             return True
-        if "--network-access-connect" in args:
+        if args.network_access_connect:
             connect_external_access()
             print(f"{GREEN}• External access module connected.{RESET}")
             return True
-        if "--network-access-disconnect" in args:
+        if args.network_access_disconnect:
             disconnect_external_access()
             print(f"{GREEN}• External access module disconnected. Local access remains available at {APP_URL}{RESET}")
             return True
-        if "--network-access-status" in args:
+        if args.network_access_status:
             report = external_access_status()
-            if "--json-output" in args:
+            if args.json_output:
                 print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
             else:
                 print_header("External Access Status")
@@ -351,10 +429,20 @@ def _print_server_status_report(report):
     print_header("Connection")
     print(f"domain: {connection.get('domain') or '-'}")
     print(f"published_ports: {connection['published_ports']}")
-    print("docker_services:")
-    for service, state in connection["docker_services"].items():
-        color = GREEN if state.get("state") == "running" else RED
-        print(f"  {service}: {color}{state.get('state', 'unknown')}{RESET} ({state.get('status', '-')})")
+    if _console:
+        table = Table(title="docker_services")
+        table.add_column("service")
+        table.add_column("state")
+        table.add_column("status")
+        for service, state in connection["docker_services"].items():
+            state_style = "green" if state.get("state") == "running" else "red"
+            table.add_row(service, f"[{state_style}]{state.get('state', 'unknown')}[/{state_style}]", state.get("status", "-"))
+        _console.print(table)
+    else:
+        print("docker_services:")
+        for service, state in connection["docker_services"].items():
+            color = GREEN if state.get("state") == "running" else RED
+            print(f"  {service}: {color}{state.get('state', 'unknown')}{RESET} ({state.get('status', '-')})")
     probe = connection["external_probe"]
     probe_color = GREEN if probe.get("ok") else YELLOW
     print(f"external_probe: {probe_color}{probe.get('message', '-')}{RESET} ({probe.get('elapsed_ms', 0)}ms)")
@@ -480,8 +568,19 @@ def handle_server_status_cli(json_output=False, skip_file_io=False, scope="produ
 
 def _saved_operation_mode():
     env_settings = read_env_file(ENV_FILE)
-    if env_settings.get("QUERY_LLM_ENABLED", "1") != "0":
-        return "1"
+    configured_mode = env_settings.get("DOTORI_OPERATION_MODE", "").strip().lower()
+    mode_aliases = {"rag": "1", "search": "2", "basic": "3"}
+    if configured_mode in mode_aliases:
+        return mode_aliases[configured_mode]
+
+    deployment = read_deployment_plan("production")
+    if deployment and deployment.get("mode") in mode_aliases:
+        return mode_aliases[deployment["mode"]]
+
+    # Compatibility with configurations written before DOTORI_OPERATION_MODE.
+    # QUERY_UNDERSTANDING_LLM_ENABLED only gates the unrelated experimental
+    # query-understanding feature, so it can't be used to infer the mode here;
+    # fall back to whether an embedding model was configured at all.
     return "2" if env_settings.get("EMBEDDING_MODEL") else "3"
 
 
@@ -629,15 +728,157 @@ def run_services(
         return False
 
 
-def _scope_arg(args, default="production"):
-    if "--scope" not in args:
-        return default
-    index = args.index("--scope")
-    value = args[index + 1] if index + 1 < len(args) else default
-    if value not in SCOPE_CONFIG:
-        print(f"{RED}[ERROR] Unknown scope: {value}. Expected one of: {', '.join(SCOPE_CONFIG)}{RESET}")
-        sys.exit(1)
-    return value
+def _ensure_env_file_exists():
+    if os.path.exists(ENV_FILE):
+        return
+    if os.path.exists(ENV_TEMPLATE_FILE):
+        shutil.copy(ENV_TEMPLATE_FILE, ENV_FILE)
+    else:
+        with open(ENV_FILE, "w", encoding="utf-8") as f:
+            f.write("# Generated by install.py\n")
+
+    # First-time creation only: replace the placeholder secrets with random
+    # values so a fresh install is never left with change-me credentials.
+    write_env_file(ENV_FILE, ENV_FILE, {
+        "DJANGO_SECRET_KEY": secrets.token_urlsafe(50),
+        "POSTGRES_USER": "dotori",
+        "POSTGRES_PASSWORD": secrets.token_urlsafe(24),
+    })
+    print(f"{GREEN}• Generated {ENV_FILE} with a random Django secret key and PostgreSQL password.{RESET}")
+
+
+def handle_login_cli(mode, assume_yes=False):
+    _ensure_env_file_exists()
+    write_env_file(ENV_FILE, ENV_FILE, {"LOGIN_REQUIRED": "1" if mode == "enable" else "0"})
+    if mode == "enable":
+        print(f"{YELLOW}• Real sign-in will now be required for every request.{RESET}")
+    else:
+        print(f"{YELLOW}• Anonymous requests will auto-sign in to a local admin profile (created on first request).{RESET}")
+
+    if not assume_yes:
+        confirm = input("Restart Dotori services now to apply this change? (y/N): ").strip().lower()
+        if confirm not in ("y", "yes"):
+            print(f"{YELLOW}• Not restarted. Run 'python install.py --restart' when ready.{RESET}")
+            return True
+    paused = handle_pause_cli("production")
+    return paused and run_services(_saved_operation_mode())
+
+
+def handle_accounts_cli(mode):
+    if mode == "list":
+        ok, stdout, stderr = run_command(f"{COMPOSE_COMMAND} exec -T app python manage.py list_users")
+        if ok:
+            print(stdout)
+        else:
+            print(f"{RED}[ERROR] {stderr or 'Could not list accounts. Is the app service running?'}{RESET}")
+        return ok
+    return False
+
+
+def change_embedding_runtime_cli(
+    *,
+    priority_preset="balanced",
+    scope="production",
+):
+    if _saved_operation_mode() == "3":
+        print(
+            f"{YELLOW}• Embedding runtime is disabled in Basic mode.{RESET}"
+        )
+        return False
+
+    scope_cfg = SCOPE_CONFIG[scope]
+    compose_command = f"docker compose -f {scope_cfg.compose_file}"
+    print_header(f"Change Embedding Runtime ({scope})")
+
+    # Search intake is paused while the candidate corpus is built. The active
+    # pointer remains unchanged until the management command validates full
+    # coverage.
+    run_command(
+        f"{compose_command} stop embedding-worker search-worker"
+    )
+    command = (
+        f"{compose_command} run --rm app python manage.py "
+        f"change_embedding_runtime --scope {scope} "
+        f"--preset {priority_preset} --activate"
+    )
+    ok = run_interactive_command(command)
+
+    restart_ok, _stdout, restart_error = run_command(
+        f"{compose_command} up --no-build -d --force-recreate "
+        "app embedding-worker search-worker"
+    )
+    if not ok:
+        print(
+            f"{RED}[ERROR] Embedding candidate failed. The previous active "
+            f"runtime was preserved.{RESET}"
+        )
+        if not restart_ok:
+            print(f"{RED}[ERROR] Worker recovery failed: {restart_error}{RESET}")
+        return False
+    if not restart_ok:
+        print(f"{RED}[ERROR] Runtime activated but worker restart failed: {restart_error}{RESET}")
+        rollback_ok = run_interactive_command(
+            f"{compose_command} run --rm app python manage.py "
+            f"rollback_embedding_runtime --scope {scope}"
+        )
+        if rollback_ok:
+            run_command(
+                f"{compose_command} up --no-build -d --force-recreate "
+                "app embedding-worker search-worker"
+            )
+            print(
+                f"{YELLOW}• Previous embedding generation restored after "
+                f"worker restart failure.{RESET}"
+            )
+        return False
+
+    inspect_ok, stdout, stderr = run_command(
+        f"{compose_command} exec -T app python manage.py "
+        f"inspect_embedding_runtime --scope {scope}"
+    )
+    if inspect_ok:
+        print(stdout)
+    else:
+        print(f"{RED}[ERROR] Runtime inspection failed: {stderr}{RESET}")
+    return inspect_ok
+
+
+def build_arg_parser():
+    parser = argparse.ArgumentParser(description="Dotori installation and operations CLI")
+    parser.add_argument("--run", action="store_true", help="Start services using the saved configuration")
+    parser.add_argument("--restart", action="store_true", help="Pause and restart services")
+    parser.add_argument("--rebuild", action="store_true", help="Rebuild images and restart the active runtime")
+    parser.add_argument("--retry-llm", action="store_true", help="Retry starting the local LLM runtime")
+    parser.add_argument("--stop", action="store_true", help="Pause services (containers preserved)")
+    parser.add_argument("--shutdown", action="store_true", help="Fully remove containers and networks")
+    parser.add_argument("--status", action="store_true", help="Show server status")
+    parser.add_argument("--change-llm", action="store_true", help="Run the interactive LLM runtime selection wizard")
+    parser.add_argument("--change-embedding", action="store_true", help="Build and activate a verified embedding runtime generation")
+    parser.add_argument(
+        "--embedding-priority",
+        choices=["speed", "balanced", "quality"],
+        default="balanced",
+        help="Server-wide embedding catalog preset used with --change-embedding",
+    )
+    parser.add_argument("--remove-llm", action="store_true", help="Stop and remove the current LLM runtime")
+    parser.add_argument("--login", choices=["enable", "disable"], help="Require real sign-in, or return to no-login personal mode")
+    parser.add_argument("--accounts", choices=["list"], help="Manage local accounts")
+
+    parser.add_argument("--scope", choices=list(SCOPE_CONFIG), default="production", help="Runtime scope to target")
+    parser.add_argument("--json-output", action="store_true", help="Print machine-readable JSON output (--status, --network-access-status)")
+    parser.add_argument("--skip-file-io", action="store_true", help="Skip the file I/O pipeline check in --status")
+    parser.add_argument("--cluster-mode", action="store_true", help="Use cluster-mode detection with --change-llm")
+    parser.add_argument("--keep-weights", action="store_true", help="Keep cached model weights when switching runtimes")
+    parser.add_argument("--yes", action="store_true", help="Skip confirmation prompts (--remove-llm, --login)")
+
+    network = parser.add_argument_group("network access")
+    network.add_argument("--network-access-create", action="store_true", help="Create external access configuration files")
+    network.add_argument("--network-access-open", action="store_true", help="Open the external access configuration folder")
+    network.add_argument("--network-access-connect", action="store_true", help="Connect the external access module")
+    network.add_argument("--network-access-disconnect", action="store_true", help="Disconnect the external access module")
+    network.add_argument("--network-access-status", action="store_true", help="Show external access status")
+
+    return parser
 
 
 def handle_pause_cli(scope="production"):
@@ -701,58 +942,66 @@ def handle_shutdown_cli(scope="production"):
 
 
 def main():
-    has_run_flag = "--run" in sys.argv
-    has_retry_llm_flag = "--retry-llm" in sys.argv
-    network_result = handle_network_access_cli(sys.argv[1:])
+    args = build_arg_parser().parse_args()
+
+    network_result = handle_network_access_cli(args)
     if network_result is not None:
         if not network_result:
             sys.exit(1)
         return
-    if "--change-llm" in sys.argv:
+    if args.change_llm:
         initialize_llm_runtime_config(
             "1",
-            cluster_mode="--cluster-mode" in sys.argv,
-            keep_weights="--keep-weights" in sys.argv,
+            cluster_mode=args.cluster_mode,
+            keep_weights=args.keep_weights,
         )
         return
-    if "--remove-llm" in sys.argv:
-        remove_llm_runtime_cli(assume_yes="--yes" in sys.argv)
+    if args.change_embedding:
+        ok = change_embedding_runtime_cli(
+            priority_preset=args.embedding_priority,
+            scope=args.scope,
+        )
+        sys.exit(0 if ok else 1)
+    if args.remove_llm:
+        remove_llm_runtime_cli(assume_yes=args.yes)
         return
-    if "--shutdown" in sys.argv:
-        ok = handle_shutdown_cli(_scope_arg(sys.argv))
+    if args.shutdown:
+        ok = handle_shutdown_cli(args.scope)
         sys.exit(0 if ok else 1)
-    if "--stop" in sys.argv:
-        ok = handle_pause_cli(_scope_arg(sys.argv))
+    if args.stop:
+        ok = handle_pause_cli(args.scope)
         sys.exit(0 if ok else 1)
-    if "--status" in sys.argv:
+    if args.status:
         handle_server_status_cli(
-            json_output="--json-output" in sys.argv,
-            skip_file_io="--skip-file-io" in sys.argv,
-            scope=_scope_arg(sys.argv),
+            json_output=args.json_output,
+            skip_file_io=args.skip_file_io,
+            scope=args.scope,
         )
         return
 
-    if not os.path.exists(ENV_FILE):
-        if os.path.exists(ENV_TEMPLATE_FILE):
-            shutil.copy(ENV_TEMPLATE_FILE, ENV_FILE)
-        else:
-            # Create a blank one if nothing exists
-            with open(ENV_FILE, "w", encoding="utf-8") as f:
-                f.write("# Generated by install.py\n")
+    _ensure_env_file_exists()
 
-    if "--restart" in sys.argv:
+    if args.login:
+        ok = handle_login_cli(args.login, assume_yes=args.yes)
+        sys.exit(0 if ok else 1)
+
+    if args.accounts:
+        ok = handle_accounts_cli(args.accounts)
+        sys.exit(0 if ok else 1)
+
+    if args.restart:
         paused = handle_pause_cli("production")
         ok = paused and run_services(_saved_operation_mode())
         sys.exit(0 if ok else 1)
 
-    if has_retry_llm_flag:
+    if args.retry_llm:
         if _saved_operation_mode() != "1":
             print(f"{YELLOW}• Local LLM retry is available only in Full Local AI RAG mode.{RESET}")
             return
         ok = run_services(_saved_operation_mode())
         sys.exit(0 if ok else 1)
 
-    if "--rebuild" in sys.argv:
+    if args.rebuild:
         ok = run_services(
             _saved_operation_mode(),
             build_images=True,
@@ -762,7 +1011,7 @@ def main():
         sys.exit(0 if ok else 1)
 
     # A normal run reuses existing images and the active runtime generation.
-    if has_run_flag:
+    if args.run:
         ok = run_services(_saved_operation_mode())
         sys.exit(0 if ok else 1)
 
@@ -771,7 +1020,7 @@ def main():
 
     print_header("Select Operation Mode")
     print(f"{BOLD}[1] Full Local AI RAG Mode{RESET}")
-    print("    - Run local LLM answer generation, query analysis, and embeddings.")
+    print("    - Run local LLM answer generation and embeddings.")
     print()
     print(f"{BOLD}[2] Hybrid/Search AI Mode{RESET}")
     print("    - Run local embeddings and hybrid search without an answer-generation LLM.")
@@ -785,52 +1034,44 @@ def main():
         mode = "2"
 
     updates = {}
-    embedding_choice = "1"
     rag_priority = "balanced"
+    updates["DOTORI_OPERATION_MODE"] = {
+        "1": "rag",
+        "2": "search",
+        "3": "basic",
+    }[mode]
 
     if mode in ("1", "2"):
-        # Embedding Model Selection
+        # Optional: only needed for gated/access-restricted models on Hugging Face.
         print("\n" + "-" * 60)
-        print(f"{BOLD}Select an embedding model:{RESET}")
-        print("1) BAAI/bge-m3 (default: high-quality hybrid search, moderate resources)")
-        print("2) intfloat/multilingual-e5-small (fast and lightweight, recommended for CPU)")
-        embedding_choice = input("Select an option (default: 1): ").strip()
-        if not embedding_choice:
-            embedding_choice = "1"
-
-        if embedding_choice == "1":
-            updates["EMBEDDING_MODEL"] = "BAAI/bge-m3"
-            updates["EMBEDDING_BACKEND"] = "bgem3_hybrid"
-            updates["EMBEDDING_DIMENSION"] = "1024"
-            updates["EMBEDDING_SPARSE_ENABLED"] = "1"
-        else:
-            updates["EMBEDDING_MODEL"] = "intfloat/multilingual-e5-small"
-            updates["EMBEDDING_BACKEND"] = "huggingface"
-            updates["EMBEDDING_DIMENSION"] = "384"
-            updates["EMBEDDING_SPARSE_ENABLED"] = "0"
+        hf_token = input(
+            "Hugging Face token (optional, only needed for gated models — press Enter to skip): "
+        ).strip()
+        updates["HF_TOKEN"] = hf_token
 
     if mode == "1":
-        # Full RAG options
-        updates["QUERY_LLM_ENABLED"] = "1"
-        updates["QUERY_PIPELINE_ENABLED"] = "1"
-
         rag_priority = select_rag_priority()
 
-    else:
-        # Disable Query LLM & Pipeline for lower modes
-        updates["QUERY_LLM_ENABLED"] = "0"
-        updates["QUERY_PIPELINE_ENABLED"] = "0"
+    # Query understanding (QUERY_UNDERSTANDING_*) is an experimental, unfinished
+    # feature that's off by default in .env.example regardless of operation
+    # mode — the wizard no longer overrides it.
 
     # Write configs to the installation environment file.
     write_env_file(ENV_FILE, ENV_FILE, updates)
+    if mode in ("1", "2"):
+        embedding_entry = initialize_embedding_runtime_config(rag_priority)
+        print(
+            f"{GREEN}• Embedding runtime configured from catalog: "
+            f"{embedding_entry.display_name} ({embedding_entry.id}){RESET}"
+        )
     
     # Auto-generate Windows bat launcher
     create_windows_launcher()
 
     # Launch confirmation
     print("\n" + "-" * 60)
-    launch = input("Start the Dotori Docker services now? (Y/n): ").strip().lower()
-    if launch in ("", "y", "yes"):
+    launch = input("Start the Dotori Docker services now? (y/N): ").strip().lower()
+    if launch in ("y", "yes"):
         run_services(
             mode,
             initialize_llm=True,
