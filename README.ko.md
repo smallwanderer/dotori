@@ -3,12 +3,9 @@
 도토리는 문서 관리, 하이브리드 검색, 검색 증강 생성(RAG)을 한 서버에서 운영하는 셀프호스팅 문서 작업 공간입니다. 문서, 검색 인덱스, 로컬 AI 런타임을 운영자가 관리하는 Docker Compose 환경 안에 보관합니다.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/263cba6d-04f6-49ba-9ccb-85481157539a" width="80%" alt="도토리 문서 작업 공간">
+  <img src="https://github.com/user-attachments/assets/1f711ecb-db68-4dd7-a6a2-435e523f3bb6" width="80%" alt="Dotori document workspace">
 </p>
 
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/d240cf34-1dfb-462e-8366-3f0d3e4a435f" width="80%" alt="도토리 RAG 작업 공간">
-</p>
 
 영문 문서는 [README.md](README.md)를 참고하세요. 
 
