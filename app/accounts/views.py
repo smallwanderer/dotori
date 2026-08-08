@@ -1,8 +1,10 @@
 from pathlib import Path
 
 from django.contrib import messages
+from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView, LogoutView
+from django.core.exceptions import ValidationError
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.template.loader import get_template
@@ -12,7 +14,7 @@ from django.conf import settings
 
 from .forms import EmailAuthenticationForm, ResendVerificationEmailForm, UserRegistrationForm
 from .models import User, APIToken, SyncQuota
-from .services import send_account_activation_email
+from .services import create_local_profile, send_account_activation_email, update_account_email
 from .tokens import account_activation_token
 from document_ai.models import LLMEndpoint
 from document_ai.services.llm_endpoint_service import (
@@ -208,6 +210,40 @@ def verification_required_view(request):
     return render(request, "accounts/verification_required.html")
 
 
+def _switch_to(request, user):
+    user.backend = "django.contrib.auth.backends.ModelBackend"
+    login(request, user)
+    request.session["active_profile_id"] = user.id
+
+
+def switch_account_view(request):
+    """Password-less profile picker, only reachable while LOGIN_REQUIRED is off."""
+    if settings.LOGIN_REQUIRED:
+        raise Http404()
+
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action == "switch":
+            try:
+                target = User.objects.get(pk=request.POST.get("user_id"), is_active=True)
+            except (User.DoesNotExist, ValueError, TypeError):
+                messages.error(request, "선택한 계정을 찾을 수 없습니다.")
+                return redirect("accounts:switch")
+            _switch_to(request, target)
+            return redirect("files:index")
+        elif action == "create":
+            try:
+                new_user = create_local_profile(request.POST.get("display_name", ""))
+            except ValidationError as exc:
+                messages.error(request, exc.messages[0])
+                return redirect("accounts:switch")
+            _switch_to(request, new_user)
+            return redirect("files:index")
+
+    profiles = User.objects.filter(is_active=True).order_by("email")
+    return render(request, "accounts/switch.html", {"profiles": profiles})
+
+
 class SigninView(LoginView):
     template_name = "accounts/signin.html"
     authentication_form = EmailAuthenticationForm
@@ -223,7 +259,13 @@ def settings_view(request):
     new_token_key = None
     if request.method == "POST":
         action = request.POST.get("action")
-        if action == "create_token":
+        if action == "update_display_name":
+            display_name = request.POST.get("display_name", "").strip()[:50]
+            request.user.display_name = display_name
+            request.user.save(update_fields=["display_name"])
+            messages.success(request, "표시 이름이 변경되었습니다.")
+            return redirect("accounts:settings")
+        elif action == "create_token":
             name = request.POST.get("name", "").strip()
             if name:
                 token_obj = APIToken.objects.create(user=request.user, name=name)
@@ -247,11 +289,21 @@ def settings_view(request):
                 except APIToken.DoesNotExist:
                     pass
             return redirect("accounts:settings")
+        elif action == "change_email":
+            try:
+                update_account_email(request.user, request.POST.get("email", ""))
+            except ValidationError as exc:
+                messages.error(request, exc.messages[0])
+            else:
+                messages.success(request, "이메일이 변경되었습니다.")
+            return redirect("accounts:settings")
         elif action == "change_password":
             current_pw = request.POST.get("current_password", "")
             new_pw = request.POST.get("new_password", "")
             new_pw2 = request.POST.get("new_password2", "")
-            if not request.user.check_password(current_pw):
+            # A password-less profile (e.g. created via the no-login account
+            # switcher) has nothing to verify, so skip straight to setting one.
+            if request.user.has_usable_password() and not request.user.check_password(current_pw):
                 messages.error(request, "현재 비밀번호가 올바르지 않습니다.")
             elif len(new_pw) < 8:
                 messages.error(request, "새 비밀번호는 8자 이상이어야 합니다.")

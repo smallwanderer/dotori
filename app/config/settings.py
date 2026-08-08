@@ -81,6 +81,10 @@ LOGIN_URL = '/accounts/login/'
 LOGIN_REDIRECT_URL = '/files/'
 LOGOUT_REDIRECT_URL = '/accounts/login/'
 
+# 개인/로컬 배포 기본값: 로그인 없이 로컬 관리자 프로필로 자동 진입한다.
+# 외부 접속을 허용하는 배포에서는 1로 설정해 실제 로그인을 요구한다.
+LOGIN_REQUIRED = _env_bool("LOGIN_REQUIRED", False)
+
 MEDIA_URL = os.getenv("MEDIA_URL", "/media/")
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", str(BASE_DIR / "media")))
 
@@ -91,6 +95,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'accounts.middleware.LocalProfileMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -124,6 +129,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'files.context_processors.storage_usage',
+                'accounts.context_processors.login_mode',
             ],
         },
     },
