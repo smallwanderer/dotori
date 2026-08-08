@@ -54,7 +54,7 @@ class QueryPipeline:
                 source="query_pipeline_disabled",
                 warning={
                     "code": "query_pipeline_disabled",
-                    "message": "QUERY_PIPELINE_ENABLED is disabled. Original query was used as semantic query.",
+                    "message": "QUERY_UNDERSTANDING_PIPELINE_ENABLED is disabled. Original query was used as semantic query.",
                 },
             )
 
@@ -337,7 +337,7 @@ class QueryPipeline:
 
     def _confidence_direct_answer_threshold(self) -> float:
         try:
-            return max(0.0, min(1.0, float(os.getenv("QUERY_CONFIDENCE_DIRECT_ANSWER_THRESHOLD", "0.7"))))
+            return max(0.0, min(1.0, float(os.getenv("QUERY_UNDERSTANDING_CONFIDENCE_DIRECT_ANSWER_THRESHOLD", "0.7"))))
         except (TypeError, ValueError):
             return 0.7
 

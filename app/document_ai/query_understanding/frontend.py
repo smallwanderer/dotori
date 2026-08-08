@@ -125,7 +125,7 @@ def prepare_retrieval_query(raw_query: str, *, mode: str = "search", owner=None)
     remote query-understanding service when the deployment profile enables it.
     """
     normalized_query = normalize_extracted_text(raw_query or "").strip()
-    frontend_mode = os.getenv("QUERY_FRONTEND_MODE", "passthrough").strip().lower()
+    frontend_mode = os.getenv("QUERY_UNDERSTANDING_FRONTEND_MODE", "passthrough").strip().lower()
 
     if not normalized_query:
         return _passthrough_plan(raw_query, mode=mode, owner=owner, source="empty_query")
@@ -138,7 +138,7 @@ def prepare_retrieval_query(raw_query: str, *, mode: str = "search", owner=None)
             source="llm_query_frontend_disabled",
             warning={
                 "code": "llm_query_frontend_disabled",
-                "message": "QUERY_FRONTEND_MODE disabled LLM query understanding.",
+                "message": "QUERY_UNDERSTANDING_FRONTEND_MODE disabled LLM query understanding.",
             },
         )
 

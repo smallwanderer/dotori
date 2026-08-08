@@ -151,19 +151,19 @@ def _get_positive_int_env(name: str, default: int) -> int:
 
 def _get_query_parser_base_url() -> str:
     return os.getenv(
-        "QUERY_PARSER_BASE_URL",
-        os.getenv("QUERY_LLM_URL", "http://vllm-query-parser:8080"),
+        "QUERY_UNDERSTANDING_PARSER_BASE_URL",
+        os.getenv("QUERY_UNDERSTANDING_LLM_URL", "http://vllm-query-parser:8080"),
     ).rstrip("/")
 
 
 def _get_query_parser_model() -> str:
     return os.getenv(
-        "QUERY_PARSER_REQUEST_MODEL",
+        "QUERY_UNDERSTANDING_PARSER_REQUEST_MODEL",
         os.getenv(
-            "QUERY_PARSER_SERVED_MODEL_NAME",
+            "QUERY_UNDERSTANDING_PARSER_SERVED_MODEL_NAME",
             os.getenv(
-                "QUERY_PARSER_MODEL",
-                os.getenv("QUERY_LLM_MODEL", "meta-llama/Llama-3.2-3B-Instruct"),
+                "QUERY_UNDERSTANDING_PARSER_MODEL",
+                os.getenv("QUERY_UNDERSTANDING_LLM_MODEL", "meta-llama/Llama-3.2-3B-Instruct"),
             ),
         ),
     )
@@ -373,23 +373,23 @@ def parse_with_llm(query: str, mode: str) -> dict:
 
     llm_base_url = _get_query_parser_base_url()
     model = _get_query_parser_model()
-    redis_url = os.getenv("QUERY_REDIS_URL", os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"))
-    request_timeout = _get_positive_int_env("QUERY_REQUEST_TIMEOUT", 60)
-    semaphore_count = _get_positive_int_env("QUERY_SEMAPHORE_COUNT", 1)
-    semaphore_timeout = _get_positive_int_env("QUERY_SEMAPHORE_TIMEOUT", request_timeout)
-    max_tokens = _get_positive_int_env("QUERY_MAX_TOKENS", 512)
+    redis_url = os.getenv("QUERY_UNDERSTANDING_REDIS_URL", os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"))
+    request_timeout = _get_positive_int_env("QUERY_UNDERSTANDING_REQUEST_TIMEOUT", 60)
+    semaphore_count = _get_positive_int_env("QUERY_UNDERSTANDING_SEMAPHORE_COUNT", 1)
+    semaphore_timeout = _get_positive_int_env("QUERY_UNDERSTANDING_SEMAPHORE_TIMEOUT", request_timeout)
+    max_tokens = _get_positive_int_env("QUERY_UNDERSTANDING_MAX_TOKENS", 512)
     stale_lock_timeout = max(request_timeout + 60, 300)
     semaphore_namespace = os.getenv(
-        "QUERY_SEMAPHORE_NAMESPACE",
+        "QUERY_UNDERSTANDING_SEMAPHORE_NAMESPACE",
         "llm_query_parser_v1",
     )
-    pipeline_enabled = os.getenv("QUERY_PIPELINE_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
-    max_validation_passes = _get_positive_int_env("QUERY_PIPELINE_MAX_VALIDATION_PASSES", 2)
+    pipeline_enabled = os.getenv("QUERY_UNDERSTANDING_PIPELINE_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+    max_validation_passes = _get_positive_int_env("QUERY_UNDERSTANDING_PIPELINE_MAX_VALIDATION_PASSES", 2)
     query_pipeline = QueryPipeline(
         enabled=pipeline_enabled,
         max_validation_passes=max_validation_passes,
     )
-    include_metadata = os.getenv("QUERY_PARSER_INCLUDE_METADATA", "1").strip().lower() not in {
+    include_metadata = os.getenv("QUERY_UNDERSTANDING_PARSER_INCLUDE_METADATA", "1").strip().lower() not in {
         "0", "false", "no", "off"
     }
     system_prompt, user_prompt = _build_query_parser_prompt(query=query, include_metadata=include_metadata)
@@ -417,13 +417,13 @@ def parse_with_llm(query: str, mode: str) -> dict:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": float(os.getenv("QUERY_TEMPERATURE", "0.0")),
-            "top_p": float(os.getenv("QUERY_TOP_P", "1.0")),
+            "temperature": float(os.getenv("QUERY_UNDERSTANDING_TEMPERATURE", "0.0")),
+            "top_p": float(os.getenv("QUERY_UNDERSTANDING_TOP_P", "1.0")),
             "max_tokens": max_tokens,
             "stream": True,
             "response_format": {"type": "json_object"},
         }
-        reasoning_format = os.getenv("QUERY_REASONING_FORMAT", "").strip()
+        reasoning_format = os.getenv("QUERY_UNDERSTANDING_REASONING_FORMAT", "").strip()
         if reasoning_format:
             payload["reasoning_format"] = reasoning_format
         response = requests.post(
@@ -502,7 +502,7 @@ def parse_user_query_sync(query: str, mode: str = "search") -> dict:
     if not normalized_query:
         return _fallback_query_parse(query, mode)
 
-    llm_enabled = os.getenv("QUERY_LLM_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+    llm_enabled = os.getenv("QUERY_UNDERSTANDING_LLM_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
     if not llm_enabled:
         return _passthrough_query_parse(
             normalized_query,
@@ -510,7 +510,7 @@ def parse_user_query_sync(query: str, mode: str = "search") -> dict:
             source="llm_disabled",
             warning={
                 "code": "query_llm_disabled",
-                "message": "QUERY_LLM_ENABLED is disabled. Original query was used as semantic query.",
+                "message": "QUERY_UNDERSTANDING_LLM_ENABLED is disabled. Original query was used as semantic query.",
             },
         )
 

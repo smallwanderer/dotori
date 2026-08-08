@@ -181,19 +181,19 @@ def _get_positive_int_env(name: str, default: int) -> int:
 
 def _get_query_parser_base_url() -> str:
     return os.getenv(
-        "QUERY_PARSER_BASE_URL",
-        os.getenv("QUERY_LLM_URL", "http://vllm-query-parser:8080"),
+        "QUERY_UNDERSTANDING_PARSER_BASE_URL",
+        os.getenv("QUERY_UNDERSTANDING_LLM_URL", "http://vllm-query-parser:8080"),
     ).rstrip("/")
 
 
 def _get_query_parser_model() -> str:
     return os.getenv(
-        "QUERY_PARSER_REQUEST_MODEL",
+        "QUERY_UNDERSTANDING_PARSER_REQUEST_MODEL",
         os.getenv(
-            "QUERY_PARSER_SERVED_MODEL_NAME",
+            "QUERY_UNDERSTANDING_PARSER_SERVED_MODEL_NAME",
             os.getenv(
-                "QUERY_PARSER_MODEL",
-                os.getenv("QUERY_LLM_MODEL", "meta-llama/Llama-3.2-3B-Instruct"),
+                "QUERY_UNDERSTANDING_PARSER_MODEL",
+                os.getenv("QUERY_UNDERSTANDING_LLM_MODEL", "meta-llama/Llama-3.2-3B-Instruct"),
             ),
         ),
     )

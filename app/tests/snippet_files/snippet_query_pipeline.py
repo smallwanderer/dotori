@@ -134,17 +134,17 @@ def run_direct_parser(query: str, *, mode: str) -> tuple[dict[str, Any], float]:
 
 def run_once(query: str, *, args, owner) -> dict[str, Any]:
     if args.frontend_mode:
-        os.environ["QUERY_FRONTEND_MODE"] = args.frontend_mode
+        os.environ["QUERY_UNDERSTANDING_FRONTEND_MODE"] = args.frontend_mode
     if args.query_timeout is not None:
-        os.environ["QUERY_REQUEST_TIMEOUT"] = str(args.query_timeout)
+        os.environ["QUERY_UNDERSTANDING_REQUEST_TIMEOUT"] = str(args.query_timeout)
     if args.max_tokens is not None:
-        os.environ["QUERY_MAX_TOKENS"] = str(args.max_tokens)
+        os.environ["QUERY_UNDERSTANDING_MAX_TOKENS"] = str(args.max_tokens)
     if args.query_url:
-        os.environ["QUERY_PARSER_BASE_URL"] = args.query_url
-        os.environ["QUERY_LLM_URL"] = args.query_url
+        os.environ["QUERY_UNDERSTANDING_PARSER_BASE_URL"] = args.query_url
+        os.environ["QUERY_UNDERSTANDING_LLM_URL"] = args.query_url
     if args.query_model:
-        os.environ["QUERY_PARSER_MODEL"] = args.query_model
-        os.environ["QUERY_LLM_MODEL"] = args.query_model
+        os.environ["QUERY_UNDERSTANDING_PARSER_MODEL"] = args.query_model
+        os.environ["QUERY_UNDERSTANDING_LLM_MODEL"] = args.query_model
 
     if args.direct_parser:
         payload, elapsed_ms = run_direct_parser(query, mode=args.mode)
@@ -222,14 +222,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--frontend-mode",
         choices=["llm", "passthrough", "off", "disabled"],
-        help="Override QUERY_FRONTEND_MODE for this run.",
+        help="Override QUERY_UNDERSTANDING_FRONTEND_MODE for this run.",
     )
     parser.add_argument("--owner-email", help="Save QueryUnderstandingLog as this user.")
     parser.add_argument("--direct-parser", action="store_true", help="Call parse_user_query directly.")
-    parser.add_argument("--query-timeout", type=int, help="Override QUERY_REQUEST_TIMEOUT for this run.")
-    parser.add_argument("--max-tokens", type=int, help="Override QUERY_MAX_TOKENS for this run.")
-    parser.add_argument("--query-url", help="Override QUERY_LLM_URL for this run.")
-    parser.add_argument("--query-model", help="Override QUERY_LLM_MODEL for this run.")
+    parser.add_argument("--query-timeout", type=int, help="Override QUERY_UNDERSTANDING_REQUEST_TIMEOUT for this run.")
+    parser.add_argument("--max-tokens", type=int, help="Override QUERY_UNDERSTANDING_MAX_TOKENS for this run.")
+    parser.add_argument("--query-url", help="Override QUERY_UNDERSTANDING_LLM_URL for this run.")
+    parser.add_argument("--query-model", help="Override QUERY_UNDERSTANDING_LLM_MODEL for this run.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     parser.add_argument("--stress", type=int, default=0, help="Run N requests for a lightweight stress test.")
     parser.add_argument("--workers", type=int, default=4, help="Worker threads for --stress.")

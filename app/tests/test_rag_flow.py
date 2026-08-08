@@ -65,7 +65,7 @@ class RAGFlowTests(TestCase):
             email_verified=True,
         )
         self.client.force_login(self.user)
-        self.query_frontend_env = patch.dict("os.environ", {"QUERY_FRONTEND_MODE": "passthrough"})
+        self.query_frontend_env = patch.dict("os.environ", {"QUERY_UNDERSTANDING_FRONTEND_MODE": "passthrough"})
         self.query_frontend_env.start()
         self.addCleanup(self.query_frontend_env.stop)
         self.server_target_patch = patch(
@@ -145,7 +145,7 @@ class RAGFlowTests(TestCase):
         apply_async.assert_not_called()
 
     def test_rag_request_does_not_call_query_parser_even_when_frontend_mode_is_llm(self):
-        with patch.dict("os.environ", {"QUERY_FRONTEND_MODE": "llm"}), patch(
+        with patch.dict("os.environ", {"QUERY_UNDERSTANDING_FRONTEND_MODE": "llm"}), patch(
             "document_ai.tasks.parse_user_query"
         ) as parse_user_query, patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
             apply_async.return_value = SimpleNamespace(id="search-task-id")
@@ -915,7 +915,7 @@ class RAGFlowTests(TestCase):
             "orm": {"filter_kwargs": {}, "exclude_kwargs": {}, "order_by": []},
         }
 
-        with patch.dict("os.environ", {"QUERY_FRONTEND_MODE": "llm"}), patch(
+        with patch.dict("os.environ", {"QUERY_UNDERSTANDING_FRONTEND_MODE": "llm"}), patch(
             "document_ai.tasks.parse_user_query", return_value=parsed_query
         ):
             plan = prepare_retrieval_query("안녕 너 뭐 할 수 있어?", mode="rag", owner=self.user)
