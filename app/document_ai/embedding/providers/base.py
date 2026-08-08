@@ -8,10 +8,14 @@ from typing import Protocol
 class EmbeddingProviderSpec:
     backend: str
     model_name: str
+    model_revision: str
     dimension: int | None
     supports_sparse: bool
     supports_dense: bool = True
     default_distance: str = "inner_product"
+    normalize_embeddings: bool = True
+    query_prefix: str = ""
+    document_prefix: str = ""
 
 
 @dataclass

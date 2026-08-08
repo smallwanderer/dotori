@@ -11,36 +11,51 @@ if TYPE_CHECKING:
 
 
 def get_embedding_model():
-    return getattr(settings, "EMBEDDING_MODEL", "BAAI/bge-m3")
+    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+
+    return get_active_embedding_runtime().model_id
 
 def get_embedding_backend() -> str:
-    return getattr(settings, "EMBEDDING_BACKEND", "bgem3_hybrid")
+    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+
+    return get_active_embedding_runtime().provider
 
 def get_embedding_dimension() -> int | None:
-    value = getattr(settings, "EMBEDDING_DIMENSION", None)
-    if value in {None, ""}:
-        return None
-    return int(value)
+    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+
+    return get_active_embedding_runtime().dimension
 
 def get_embedding_sparse_enabled() -> bool:
-    return bool(getattr(settings, "EMBEDDING_SPARSE_ENABLED", True))
+    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+
+    return get_active_embedding_runtime().supports_sparse
 
 def get_embedding_store() -> str:
-    return getattr(settings, "EMBEDDING_STORE", "pgvector_chunk_1024")
+    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
 
-def get_chunk_max_tokens() -> int:
-    return getattr(settings, "CHUNK_MAX_TOKENS", getattr(settings, "MAX_TOKENS", 1024))
+    return get_active_embedding_runtime().store
+
+def get_parser_tokenizer_id() -> str:
+    return getattr(settings, "PARSER_TOKENIZER_ID", "BAAI/bge-m3")
+
+def get_parser_tokenizer_revision() -> str | None:
+    value = getattr(settings, "PARSER_TOKENIZER_REVISION", "5617a9f")
+    return value if value and value != "legacy" else None
 
 def get_embedding_token_headroom() -> int:
-    return getattr(settings, "EMBEDDING_TOKEN_HEADROOM", 256)
+    return getattr(settings, "EMBEDDING_TOKEN_HEADROOM", 128)
 
 def get_embedding_max_tokens() -> int:
-    explicit_max = getattr(settings, "EMBEDDING_MAX_TOKENS", None)
-    if explicit_max is not None:
-        return explicit_max
+    return getattr(settings, "EMBEDDING_MAX_TOKENS", 1280)
 
-    # The parser/chunker may add section/page/file context before embedding.
-    return get_chunk_max_tokens() + get_embedding_token_headroom()
+def get_chunk_max_tokens() -> int:
+    chunk_max_tokens = get_embedding_max_tokens() - get_embedding_token_headroom()
+    if chunk_max_tokens <= 0:
+        raise ValueError(
+            "EMBEDDING_MAX_TOKENS must be greater than "
+            "EMBEDDING_TOKEN_HEADROOM."
+        )
+    return chunk_max_tokens
 
 def get_max_tokens() -> int:
     return get_chunk_max_tokens()
@@ -49,8 +64,18 @@ def get_max_tokens() -> int:
 @lru_cache(maxsize=1)
 def get_raw_tokenizer():
     from transformers import AutoTokenizer
+    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
 
-    return AutoTokenizer.from_pretrained(get_embedding_model())
+    runtime = get_active_embedding_runtime()
+    revision = (
+        runtime.tokenizer_revision
+        if runtime.tokenizer_revision not in {"", "legacy", "main"}
+        else None
+    )
+    return AutoTokenizer.from_pretrained(
+        runtime.tokenizer_id,
+        revision=revision,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -59,7 +84,10 @@ def get_hf_tokenizer() -> "HuggingFaceTokenizer":
     from transformers import AutoTokenizer
 
     return HuggingFaceTokenizer(
-        tokenizer=AutoTokenizer.from_pretrained(get_embedding_model()),
+        tokenizer=AutoTokenizer.from_pretrained(
+            get_parser_tokenizer_id(),
+            revision=get_parser_tokenizer_revision(),
+        ),
         max_tokens=get_chunk_max_tokens(),
     )
 

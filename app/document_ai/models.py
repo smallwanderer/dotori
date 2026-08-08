@@ -192,6 +192,35 @@ class DocumentChunk(models.Model):
         }
 
 
+class EmbeddingGeneration(models.Model):
+    generation_id = models.CharField(max_length=96, unique=True)
+    scope = models.CharField(max_length=32, default="production", db_index=True)
+    runtime_fingerprint = models.CharField(max_length=64, blank=True, db_index=True)
+    catalog_id = models.CharField(max_length=96, blank=True)
+    model_id = models.CharField(max_length=128)
+    model_revision = models.CharField(max_length=64, blank=True)
+    provider = models.CharField(max_length=64)
+    store = models.CharField(max_length=64)
+    dimension = models.PositiveIntegerField(default=1024)
+    supports_sparse = models.BooleanField(default=True)
+    status = models.CharField(max_length=32, default="READY", db_index=True)
+    expected_chunks = models.PositiveIntegerField(default=0)
+    completed_chunks = models.PositiveIntegerField(default=0)
+    failed_chunks = models.PositiveIntegerField(default=0)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["scope", "status"]),
+            models.Index(fields=["model_id", "model_revision"]),
+        ]
+
+    def __str__(self):
+        return f"{self.scope}:{self.generation_id} ({self.status})"
+
+
 class ChunkEmbedding(models.Model):
     """
     bge-m3 embedding 결과 저장 모델
@@ -206,6 +235,16 @@ class ChunkEmbedding(models.Model):
 
     model_name = models.CharField(max_length=128, default="BAAI/bge-m3")
     model_version = models.CharField(max_length=32, blank=True)
+    model_revision = models.CharField(max_length=64, default="legacy")
+    provider = models.CharField(max_length=64, default="bgem3_hybrid")
+    generation = models.ForeignKey(
+        "document_ai.EmbeddingGeneration",
+        to_field="generation_id",
+        db_column="generation_id",
+        on_delete=models.PROTECT,
+        related_name="chunk_embeddings",
+        default="legacy-bge-m3",
+    )
 
     # dimension ?? 
     vector = VectorField(dimensions=1024, null=True, blank=True)
@@ -230,12 +269,13 @@ class ChunkEmbedding(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["chunk", "model_name", "model_version"],
-                name="uniq_embedding_per_chunk_model_version",
+                fields=["chunk", "generation"],
+                name="uniq_embedding_per_chunk_generation",
             )
         ]
         indexes = [
             models.Index(fields=["model_name"]),
+            models.Index(fields=["generation", "status"]),
             HnswIndex(
                 name='chunk_embedding_vector_hnsw_idx',
                 fields=['vector'],
@@ -272,6 +312,14 @@ class ChunkSentenceEmbedding(models.Model):
     sentence_index = models.PositiveIntegerField()
     text = models.TextField()
     token_count = models.PositiveIntegerField(null=True, blank=True)
+    generation = models.ForeignKey(
+        "document_ai.EmbeddingGeneration",
+        to_field="generation_id",
+        db_column="generation_id",
+        on_delete=models.PROTECT,
+        related_name="sentence_embeddings",
+        default="legacy-bge-m3",
+    )
     
     # dimensions=1024 for BGE-M3 dense embedding
     vector = VectorField(dimensions=1024, null=True, blank=True)
@@ -282,8 +330,8 @@ class ChunkSentenceEmbedding(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["chunk", "sentence_index"],
-                name="uniq_sentence_emb_per_chunk_index",
+                fields=["chunk", "generation", "sentence_index"],
+                name="uniq_sentence_emb_per_chunk_generation_index",
             )
         ]
         indexes = [
@@ -317,6 +365,14 @@ class ChunkSegmentEmbedding(models.Model):
     text = models.TextField()
     char_start = models.PositiveIntegerField(default=0)
     char_end = models.PositiveIntegerField(default=0)
+    generation = models.ForeignKey(
+        "document_ai.EmbeddingGeneration",
+        to_field="generation_id",
+        db_column="generation_id",
+        on_delete=models.PROTECT,
+        related_name="segment_embeddings",
+        default="legacy-bge-m3",
+    )
 
     vector = VectorField(dimensions=1024, null=True, blank=True)
     sparse_vector = models.JSONField(default=dict, blank=True)
@@ -329,8 +385,8 @@ class ChunkSegmentEmbedding(models.Model):
         ordering = ["chunk", "window_size", "segment_index"]
         constraints = [
             models.UniqueConstraint(
-                fields=["chunk", "window_size", "segment_index"],
-                name="uniq_segment_emb_per_chunk_window_index",
+                fields=["chunk", "generation", "window_size", "segment_index"],
+                name="uniq_segment_emb_per_chunk_generation_window_index",
             )
         ]
         indexes = [

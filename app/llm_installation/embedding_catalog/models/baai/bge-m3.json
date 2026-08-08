@@ -1,0 +1,13 @@
+{
+  "id": "bge-m3",
+  "display_name": "BGE-M3",
+  "description": "Multilingual dense and sparse embedding model used by Dotori hybrid retrieval.",
+  "license": "mit",
+  "repo_id": "BAAI/bge-m3",
+  "revision": "5617a9f",
+  "tokenizer_id": "BAAI/bge-m3",
+  "tokenizer_revision": "5617a9f",
+  "dimension": 1024,
+  "model_input_max_tokens": 8192,
+  "languages": ["multilingual"]
+}

@@ -226,26 +226,20 @@ CELERY_BEAT_SCHEDULE = {
 
 
 # Document AI — Parser & Chunker
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
-EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "bgem3_hybrid")
-_embedding_dimension_raw = os.getenv("EMBEDDING_DIMENSION", "1024")
-EMBEDDING_DIMENSION = None
-if _embedding_dimension_raw:
-    EMBEDDING_DIMENSION = int(_embedding_dimension_raw)
-EMBEDDING_SPARSE_ENABLED = _env_bool("EMBEDDING_SPARSE_ENABLED", True)
-EMBEDDING_STORE = os.getenv("EMBEDDING_STORE", "pgvector_chunk_1024")
-CHUNK_MAX_TOKENS = int(os.getenv("CHUNK_MAX_TOKENS", "1024"))
-EMBEDDING_TOKEN_HEADROOM = int(os.getenv("EMBEDDING_TOKEN_HEADROOM", "256"))
-# EMBEDDING_MAX_TOKENS: 미설정 시 config.py 가 CHUNK_MAX_TOKENS + HEADROOM 으로 계산
-_embedding_max_tokens_raw = os.getenv("EMBEDDING_MAX_TOKENS")
-if _embedding_max_tokens_raw:
-    EMBEDDING_MAX_TOKENS = int(_embedding_max_tokens_raw)
-_query_embedding_max_tokens_raw = os.getenv("QUERY_EMBEDDING_MAX_TOKENS")
-if _query_embedding_max_tokens_raw:
-    QUERY_EMBEDDING_MAX_TOKENS = int(_query_embedding_max_tokens_raw)
+PARSER_TOKENIZER_ID = os.getenv("PARSER_TOKENIZER_ID", "BAAI/bge-m3")
+PARSER_TOKENIZER_REVISION = os.getenv("PARSER_TOKENIZER_REVISION", "5617a9f")
+EMBEDDING_MAX_TOKENS = int(os.getenv("EMBEDDING_MAX_TOKENS", "1280"))
+EMBEDDING_TOKEN_HEADROOM = int(os.getenv("EMBEDDING_TOKEN_HEADROOM", "128"))
+if EMBEDDING_MAX_TOKENS <= EMBEDDING_TOKEN_HEADROOM:
+    raise ValueError(
+        "EMBEDDING_MAX_TOKENS must be greater than EMBEDDING_TOKEN_HEADROOM."
+    )
+CHUNK_MAX_TOKENS = EMBEDDING_MAX_TOKENS - EMBEDDING_TOKEN_HEADROOM
+_search_query_embedding_max_tokens_raw = os.getenv("SEARCH_QUERY_EMBEDDING_MAX_TOKENS")
+if _search_query_embedding_max_tokens_raw:
+    SEARCH_QUERY_EMBEDDING_MAX_TOKENS = int(_search_query_embedding_max_tokens_raw)
 
 # Document AI — Retriever (Hybrid Search)
-EMBEDDING_DISTANCE_STRATEGY = os.getenv("EMBEDDING_DISTANCE_STRATEGY", "inner_product")
 EMBEDDING_DOC_POOLING_METHOD = os.getenv("EMBEDDING_DOC_POOLING_METHOD", "normalized_logsumexp")
 EMBEDDING_HYBRID_DENSE_WEIGHT = float(os.getenv("EMBEDDING_HYBRID_DENSE_WEIGHT", "0.3"))
 EMBEDDING_HYBRID_SPARSE_WEIGHT = float(os.getenv("EMBEDDING_HYBRID_SPARSE_WEIGHT", "0.7"))

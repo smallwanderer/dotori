@@ -12,9 +12,11 @@ from document_ai.parsers.config import (
 
 from .registry import get_embedding_provider
 from .store_registry import get_embedding_store_instance
+from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
 
 
 def get_active_embedding_config() -> dict:
+    runtime = get_active_embedding_runtime()
     provider = get_embedding_provider()
     store = get_embedding_store_instance()
     return {
@@ -27,6 +29,9 @@ def get_active_embedding_config() -> dict:
         "supports_sparse": provider.spec.supports_sparse,
         "sparse_enabled": get_embedding_sparse_enabled(),
         "default_distance": provider.spec.default_distance,
+        "generation_id": runtime.generation_id,
+        "model_revision": runtime.model_revision,
+        "runtime_fingerprint": runtime.runtime_fingerprint,
     }
 
 
@@ -56,6 +61,7 @@ def get_pgvector_column_dimension(table_name: str, column_name: str) -> int | No
 
 
 def validate_active_embedding_provider(*, validate_db_schema: bool = True) -> dict:
+    runtime = get_active_embedding_runtime()
     provider = get_embedding_provider()
     store = get_embedding_store_instance()
     result = provider.embed_query("embedding healthcheck", max_length=32)
@@ -96,4 +102,7 @@ def validate_active_embedding_provider(*, validate_db_schema: bool = True) -> di
         "store_dimension": store.spec.dimension,
         "db_dimension": db_dimension,
         "supports_sparse": bool(result.sparse_vector),
+        "generation_id": runtime.generation_id,
+        "model_revision": runtime.model_revision,
+        "runtime_fingerprint": runtime.runtime_fingerprint,
     }

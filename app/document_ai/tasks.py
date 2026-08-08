@@ -21,6 +21,7 @@ from document_ai.parsers.config import (
     get_embedding_backend,
     get_embedding_max_tokens,
     get_embedding_model,
+    get_parser_tokenizer_id,
 )
 from document_ai.parsers.text_utils import normalize_extracted_text, serialize_meta
 
@@ -439,7 +440,7 @@ def save_parse_result(node, pr: ParseResult) -> DocumentParseResult:
     """
     metadata = {
         "parser_version": pr.parser_version,
-        "tokenizer_name": get_embedding_model(),
+        "tokenizer_name": get_parser_tokenizer_id(),
         "chunk_max_tokens": get_chunk_max_tokens(),
         "embedding_max_tokens": get_embedding_max_tokens(),
         "embedding_backend": get_embedding_backend(),

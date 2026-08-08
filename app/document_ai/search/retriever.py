@@ -8,10 +8,10 @@ from django.conf import settings
 
 from document_ai.embedding.store_registry import get_embedding_store_instance
 from document_ai.models import ChunkEmbedding, DocumentChunk
-from document_ai.parsers.config import get_embedding_backend, get_embedding_model
 from document_ai.parsers.text_utils import normalize_extracted_text
 from document_ai.performance import elapsed_ms, put_metric
 from document_ai.search.compression import EmbeddingContextualCompressor
+from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -101,17 +101,15 @@ class VectorRetriever:
         distance_strategy: str | None = None,
         embedding_backend: str | None = None,
     ):
-        self.model_name = model_name or get_embedding_model()
-        self.distance_strategy = distance_strategy or getattr(
-            settings,
-            "EMBEDDING_DISTANCE_STRATEGY",
-            "inner_product",
-        )
-        self.embedding_backend = embedding_backend or get_embedding_backend()
+        runtime = get_active_embedding_runtime()
+        self.model_name = model_name or runtime.model_id
+        self.distance_strategy = distance_strategy or runtime.distance_strategy
+        self.embedding_backend = embedding_backend or runtime.provider
         self.store = get_embedding_store_instance(
             model_name=self.model_name,
             backend=self.embedding_backend,
             distance_strategy=self.distance_strategy,
+            runtime=runtime,
         )
         self.pooling_method = getattr(
             settings,

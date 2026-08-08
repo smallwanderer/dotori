@@ -30,8 +30,9 @@ def clear_cuda_cache() -> None:
             torch.cuda.ipc_collect()
 
 
-def get_bgem3_model(model_name: str):
-    model = _MODEL_CACHE.get(model_name)
+def get_bgem3_model(model_name: str, model_revision: str = ""):
+    cache_key = f"{model_name}@{model_revision or 'default'}"
+    model = _MODEL_CACHE.get(cache_key)
     if model is None:
         try:
             from FlagEmbedding import BGEM3FlagModel
@@ -40,12 +41,21 @@ def get_bgem3_model(model_name: str):
                 "FlagEmbedding is required for bgem3_hybrid embeddings."
             ) from exc
 
+        resolved_model_path = model_name
+        if model_revision and model_revision not in {"legacy", "main"}:
+            from huggingface_hub import snapshot_download
+
+            resolved_model_path = snapshot_download(
+                repo_id=model_name,
+                revision=model_revision,
+            )
+
         model = BGEM3FlagModel(
-            model_name,
+            resolved_model_path,
             use_fp16=(_DEVICE is not None and _DEVICE.type == "cuda"),
             normalize_embeddings=True,
         )
-        _MODEL_CACHE[model_name] = model
+        _MODEL_CACHE[cache_key] = model
     return model
 
 
@@ -114,20 +124,35 @@ def coerce_dense_vector(raw_dense) -> list[float]:
 class BGEM3HybridProvider:
     backend = "bgem3_hybrid"
 
-    def __init__(self, *, model_name: str, dimension: int | None = None):
+    def __init__(
+        self,
+        *,
+        model_name: str,
+        model_revision: str = "",
+        dimension: int | None = None,
+        normalize_embeddings: bool = True,
+        query_prefix: str = "",
+        document_prefix: str = "",
+    ):
         self.spec = EmbeddingProviderSpec(
             backend=self.backend,
             model_name=model_name,
+            model_revision=model_revision,
             dimension=dimension,
             supports_sparse=True,
             default_distance="inner_product",
+            normalize_embeddings=normalize_embeddings,
+            query_prefix=query_prefix,
+            document_prefix=document_prefix,
         )
 
     def embed_document(self, text: str, *, max_length: int | None = None) -> EmbeddingResult:
-        return self._embed(text, max_length=max_length)
+        return self._embed(
+            f"{self.spec.document_prefix}{text}", max_length=max_length
+        )
 
     def embed_query(self, text: str, *, max_length: int | None = None) -> EmbeddingResult:
-        return self._embed(text, max_length=max_length)
+        return self._embed(f"{self.spec.query_prefix}{text}", max_length=max_length)
 
     def healthcheck(self) -> dict:
         result = self.embed_query("embedding healthcheck", max_length=32)
@@ -141,7 +166,10 @@ class BGEM3HybridProvider:
     def _embed(self, text: str, *, max_length: int | None = None) -> EmbeddingResult:
         normalized_text = validate_text(text)
         resolved_max_length = max_length or get_embedding_max_tokens()
-        model = get_bgem3_model(self.spec.model_name)
+        model = get_bgem3_model(
+            self.spec.model_name,
+            self.spec.model_revision,
+        )
 
         try:
             output = model.encode(

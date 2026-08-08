@@ -49,6 +49,7 @@ def _make_embedding_row(
     )
     return SimpleNamespace(
         chunk=chunk,
+        generation_id="legacy-bge-m3",
         model_name="BAAI/bge-m3",
         model_version=model_version,
         status=status,
@@ -71,6 +72,10 @@ class FakeQuerySet:
         for key, value in kwargs.items():
             if key == "model_name":
                 filtered = [row for row in filtered if row.model_name == value]
+            elif key == "generation_id":
+                filtered = [
+                    row for row in filtered if row.generation_id == value
+                ]
             elif key == "status":
                 filtered = [row for row in filtered if row.status == value]
             elif key == "model_version":

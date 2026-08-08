@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from document_ai.parsers.config import (
-    get_embedding_backend,
-    get_embedding_dimension,
-    get_embedding_model,
-    get_embedding_sparse_enabled,
-    get_embedding_store,
-)
-
 from .stores import EmbeddingStore, PgVectorChunkEmbeddingStore
+from document_ai.services.embedding_runtime_config import (
+    EmbeddingRuntimeSnapshot,
+    get_active_embedding_runtime,
+)
 
 _STORE_FACTORIES = {
     PgVectorChunkEmbeddingStore.name: PgVectorChunkEmbeddingStore,
@@ -23,28 +19,24 @@ def get_embedding_store_instance(
     dimension: int | None = None,
     supports_sparse: bool | None = None,
     distance_strategy: str | None = None,
+    runtime: EmbeddingRuntimeSnapshot | None = None,
 ) -> EmbeddingStore:
-    """
-    This function instantiates the appropriate embedding store based on configuration.
-    It reads the following configuration values (in order of precedence):
-
-    1. Configured via arguments (store_name, model_name, backend, etc.)
-    2. Environment variables (EMBEDDING_STORE, EMBEDDING_MODEL, etc.)
-    3. Hardcoded defaults (in module-level defaults and internal logic)
-
-    The default store is defined in settings.py via EMBEDDING_STORE_DEFAULT,
-    with PgVectorChunkEmbeddingStore as the fallback used when EMBEDDING_STORE is not set.
-    """
-    resolved_store_name = store_name or get_embedding_store()
-    resolved_model_name = model_name or get_embedding_model()
-    resolved_backend = backend or get_embedding_backend()
-    resolved_dimension = dimension if dimension is not None else get_embedding_dimension()
+    """Build a store from explicit candidate values or the active runtime."""
+    resolved_runtime = runtime or get_active_embedding_runtime()
+    resolved_store_name = store_name or resolved_runtime.store
+    resolved_model_name = model_name or resolved_runtime.model_id
+    resolved_backend = backend or resolved_runtime.provider
+    resolved_dimension = (
+        dimension if dimension is not None else resolved_runtime.dimension
+    )
     resolved_supports_sparse = (
-        supports_sparse if supports_sparse is not None else get_embedding_sparse_enabled()
+        supports_sparse
+        if supports_sparse is not None
+        else resolved_runtime.supports_sparse
     )
 
     if resolved_dimension is None:
-        raise ValueError("EMBEDDING_DIMENSION is required for embedding store selection.")
+        raise ValueError("Embedding dimension is required for store selection.")
 
     try:
         factory = _STORE_FACTORIES[resolved_store_name]
@@ -56,7 +48,12 @@ def get_embedding_store_instance(
         backend=resolved_backend,
         dimension=resolved_dimension,
         supports_sparse=resolved_supports_sparse,
-        distance_strategy=distance_strategy,
+        distance_strategy=distance_strategy or resolved_runtime.distance_strategy,
+        generation_id=resolved_runtime.generation_id,
+        model_revision=resolved_runtime.model_revision,
+        runtime_fingerprint=resolved_runtime.runtime_fingerprint,
+        scope=resolved_runtime.scope,
+        catalog_id=resolved_runtime.catalog_id,
     )
 
 

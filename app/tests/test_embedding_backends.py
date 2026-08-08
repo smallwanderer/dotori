@@ -15,23 +15,29 @@ from document_ai.parsers import config
 from document_ai.processing import embedding as embedding_processing
 
 
-def test_embedding_token_budget_uses_chunk_budget_plus_headroom():
-    settings.CHUNK_MAX_TOKENS = 1024
+def test_chunk_token_budget_is_embedding_budget_minus_headroom(settings):
+    settings.EMBEDDING_MAX_TOKENS = 1216
     settings.EMBEDDING_TOKEN_HEADROOM = 192
-    if hasattr(settings, "EMBEDDING_MAX_TOKENS"):
-        delattr(settings, "EMBEDDING_MAX_TOKENS")
 
     assert config.get_chunk_max_tokens() == 1024
     assert config.get_embedding_token_headroom() == 192
     assert config.get_embedding_max_tokens() == 1216
 
 
-def test_embedding_max_tokens_respects_explicit_override():
-    settings.CHUNK_MAX_TOKENS = 1024
+def test_embedding_max_tokens_is_fixed_independently_of_chunk_budget(settings):
     settings.EMBEDDING_TOKEN_HEADROOM = 256
     settings.EMBEDDING_MAX_TOKENS = 1536
 
     assert config.get_embedding_max_tokens() == 1536
+    assert config.get_chunk_max_tokens() == 1280
+
+
+def test_chunk_token_budget_rejects_headroom_at_or_above_embedding_limit(settings):
+    settings.EMBEDDING_MAX_TOKENS = 256
+    settings.EMBEDDING_TOKEN_HEADROOM = 256
+
+    with pytest.raises(ValueError, match="must be greater"):
+        config.get_chunk_max_tokens()
 
 
 def test_embedding_input_preparation_truncates_overflow(monkeypatch, settings):
@@ -108,7 +114,7 @@ def test_document_and_query_entrypoints_share_embedder_policy(monkeypatch):
         return EmbeddingResult(dense_vector=[1.0], sparse_vector={})
 
     monkeypatch.setattr(embeding_models, "bge_m3_embedder", fake_embedder)
-    settings.QUERY_EMBEDDING_MAX_TOKENS = 64
+    settings.SEARCH_QUERY_EMBEDDING_MAX_TOKENS = 64
 
     embeding_models.embed_document(
         text="document chunk",
@@ -144,7 +150,13 @@ def test_embedding_store_rejects_dimension_mismatch(settings):
     settings.EMBEDDING_STORE = "pgvector_chunk_1024"
     settings.EMBEDDING_SPARSE_ENABLED = True
 
-    store = get_embedding_store_instance()
+    store = get_embedding_store_instance(
+        store_name="pgvector_chunk_1024",
+        model_name="dummy-model",
+        backend="bgem3_hybrid",
+        dimension=1024,
+        supports_sparse=True,
+    )
     embedding = EmbeddingResult(
         dense_vector=[0.1, 0.2],
         sparse_vector={"101": 1.0},
@@ -158,19 +170,19 @@ def test_embedding_store_rejects_dimension_mismatch(settings):
 
 
 def test_embedding_store_accepts_active_model_backend_and_dimension(settings):
-    settings.EMBEDDING_MODEL = "dummy-model"
-    settings.EMBEDDING_BACKEND = "bgem3_hybrid"
-    settings.EMBEDDING_DIMENSION = 2
-    settings.EMBEDDING_STORE = "pgvector_chunk_1024"
-    settings.EMBEDDING_SPARSE_ENABLED = True
-
-    store = get_embedding_store_instance()
-    embedding = EmbeddingResult(
-        dense_vector=[0.1, 0.2],
-        sparse_vector={"101": 1.0},
-        model_name="dummy-model",
+    store = get_embedding_store_instance(
+        store_name="pgvector_chunk_1024",
+        model_name="BAAI/bge-m3",
         backend="bgem3_hybrid",
-        dimension=2,
+        dimension=1024,
+        supports_sparse=True,
+    )
+    embedding = EmbeddingResult(
+        dense_vector=[0.1] * 1024,
+        sparse_vector={"101": 1.0},
+        model_name="BAAI/bge-m3",
+        backend="bgem3_hybrid",
+        dimension=1024,
     )
 
     store.validate_embedding(embedding)

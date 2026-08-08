@@ -15,6 +15,8 @@ class EmbeddingStoreSpec:
     supports_sparse: bool
     model_name: str
     backend: str
+    generation_id: str
+    model_revision: str
     distance_strategy: str = "inner_product"
 
 

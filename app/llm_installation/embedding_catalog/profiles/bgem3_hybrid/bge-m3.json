@@ -1,0 +1,15 @@
+{
+  "id": "bge-m3-hybrid",
+  "model_id": "bge-m3",
+  "provider": "bgem3_hybrid",
+  "store": "pgvector_chunk_1024",
+  "dimension": 1024,
+  "supports_sparse": true,
+  "normalize_embeddings": true,
+  "distance_strategy": "inner_product",
+  "query_prefix": "",
+  "document_prefix": "",
+  "availability": "supported",
+  "priority": 100,
+  "presets": ["speed", "balanced", "quality"]
+}

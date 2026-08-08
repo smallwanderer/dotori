@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from django.conf import settings
 from django.utils import timezone
 from pgvector.django import CosineDistance, L2Distance, MaxInnerProduct
 
 from config.enums import AIStatus
 from document_ai.embedding.providers.base import EmbeddingResult
-from document_ai.models import ChunkEmbedding
+from document_ai.models import ChunkEmbedding, EmbeddingGeneration
 
 from .base import EmbeddingStoreSpec
 
@@ -22,7 +21,15 @@ class PgVectorChunkEmbeddingStore:
         dimension: int,
         supports_sparse: bool,
         distance_strategy: str | None = None,
+        generation_id: str = "legacy-bge-m3",
+        model_revision: str = "legacy",
+        runtime_fingerprint: str = "",
+        scope: str = "production",
+        catalog_id: str = "",
     ):
+        self.runtime_fingerprint = runtime_fingerprint
+        self.scope = scope
+        self.catalog_id = catalog_id
         self.spec = EmbeddingStoreSpec(
             name=self.name,
             dimension=dimension,
@@ -31,8 +38,9 @@ class PgVectorChunkEmbeddingStore:
             supports_sparse=supports_sparse,
             model_name=model_name,
             backend=backend,
-            distance_strategy=distance_strategy
-            or getattr(settings, "EMBEDDING_DISTANCE_STRATEGY", "inner_product"),
+            generation_id=generation_id,
+            model_revision=model_revision,
+            distance_strategy=distance_strategy or "inner_product",
         )
 
     def validate_embedding(self, embedding: EmbeddingResult) -> None:
@@ -57,11 +65,36 @@ class PgVectorChunkEmbeddingStore:
 
     def save_chunk_embedding(self, *, chunk, embedding: EmbeddingResult, status: str = AIStatus.COMPLETED) -> None:
         self.validate_embedding(embedding)
+        generation, created = EmbeddingGeneration.objects.get_or_create(
+            generation_id=self.spec.generation_id,
+            defaults={
+                "scope": self.scope,
+                "runtime_fingerprint": self.runtime_fingerprint,
+                "catalog_id": self.catalog_id,
+                "model_id": self.spec.model_name,
+                "model_revision": self.spec.model_revision,
+                "provider": self.spec.backend,
+                "store": self.spec.name,
+                "dimension": self.spec.dimension,
+                "supports_sparse": self.spec.supports_sparse,
+                "status": "ACTIVE",
+            },
+        )
+        if created:
+            EmbeddingGeneration.objects.filter(
+                scope=self.scope,
+                status="ACTIVE",
+            ).exclude(pk=generation.pk).update(status="RETIRED")
         ChunkEmbedding.objects.update_or_create(
             chunk=chunk,
-            model_name=self.spec.model_name,
-            model_version=self.spec.backend,
+            generation=generation,
             defaults={
+                "model_name": self.spec.model_name,
+                # Preserve the legacy/admin meaning of model_version as the
+                # backend identifier. Pinned revision has its own field.
+                "model_version": self.spec.backend,
+                "model_revision": self.spec.model_revision,
+                "provider": self.spec.backend,
                 self.spec.dense_field: embedding.dense_vector,
                 self.spec.sparse_field or "sparse_vector": embedding.sparse_vector or {},
                 "embedded_at": timezone.now(),
@@ -71,11 +104,29 @@ class PgVectorChunkEmbeddingStore:
         )
 
     def mark_chunk_embedding_failed(self, *, chunk, error_message: str, status: str = AIStatus.FAILED) -> None:
+        generation, _ = EmbeddingGeneration.objects.get_or_create(
+            generation_id=self.spec.generation_id,
+            defaults={
+                "scope": self.scope,
+                "runtime_fingerprint": self.runtime_fingerprint,
+                "catalog_id": self.catalog_id,
+                "model_id": self.spec.model_name,
+                "model_revision": self.spec.model_revision,
+                "provider": self.spec.backend,
+                "store": self.spec.name,
+                "dimension": self.spec.dimension,
+                "supports_sparse": self.spec.supports_sparse,
+                "status": "FAILED",
+            },
+        )
         ChunkEmbedding.objects.update_or_create(
             chunk=chunk,
-            model_name=self.spec.model_name,
-            model_version=self.spec.backend,
+            generation=generation,
             defaults={
+                "model_name": self.spec.model_name,
+                "model_version": self.spec.backend,
+                "model_revision": self.spec.model_revision,
+                "provider": self.spec.backend,
                 self.spec.dense_field: None,
                 self.spec.sparse_field or "sparse_vector": {},
                 "embedded_at": None,
@@ -87,15 +138,13 @@ class PgVectorChunkEmbeddingStore:
     def completed_embedding_exists(self, *, chunk_id_ref):
         return ChunkEmbedding.objects.filter(
             chunk_id=chunk_id_ref,
-            model_name=self.spec.model_name,
-            model_version=self.spec.backend,
+            generation_id=self.spec.generation_id,
             status=AIStatus.COMPLETED,
         )
 
     def completed_chunk_ids(self):
         return ChunkEmbedding.objects.filter(
-            model_name=self.spec.model_name,
-            model_version=self.spec.backend,
+            generation_id=self.spec.generation_id,
             status=AIStatus.COMPLETED,
         ).values_list("chunk_id", flat=True)
 
@@ -107,8 +156,7 @@ class PgVectorChunkEmbeddingStore:
                 "chunk__parse_result__node",
             )
             .filter(
-                model_name=self.spec.model_name,
-                model_version=self.spec.backend,
+                generation_id=self.spec.generation_id,
                 status=AIStatus.COMPLETED,
                 chunk__parse_result__node__trashed=False,
             )
