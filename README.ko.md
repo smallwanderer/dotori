@@ -7,9 +7,7 @@
 </p>
 
 
-영문 문서는 [README.md](README.md)를 참고하세요. 
-
-상세 내용은 [Walkthrough](./documents/WALKTHROUGH.md)을 참고하세요.
+영문 문서는 [README.md](README.md)를 참고하세요.  상세 내용은 [Walkthrough](./documents/WALKTHROUGH.md)을 참고하세요.
 
 ## 주요 기능
 
