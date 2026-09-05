@@ -54,7 +54,7 @@ QUERY_DSL_SCHEMA_NOTUSING_NOW = {
     },
     "user_storage": {
         "model": "files.UserStorage",
-        "prefix": "owner__storage__",
+        "prefix": "workspace__storage__",
         "fields": {},
         "sortable_fields": set(),
     },

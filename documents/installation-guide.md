@@ -114,6 +114,8 @@ python install.py --run
 |------|------|
 | `LOGIN_REQUIRED` | 기본값은 `0`(로그인 없이 로컬 관리자로 자동 접속)입니다. 외부에서 접속 가능하게 만들 계획이라면 `1`로 전환해야 합니다 — [6장](#6-외부-접속-설정-선택)과 [운영 가이드 4장](./operation-guide.md#4-관리자-계정-및-사용자-관리)을 참고하세요. |
 | 그 외 `EMBEDDING_*`, `RAG_*`, `QUERY_*` 값들 | 설치 마법사가 운영 모드에 맞춰 채워주는 기본값으로 시작 가능하며, 검색/RAG 품질을 튜닝할 때만 조정하면 됩니다. |
+| `CONTEXTUAL_COMPRESSION_*` (8개) | 검색 결과를 압축해 RAG 컨텍스트를 줄이는 기능의 세부 파라미터입니다. `.env.example`에 기본값이 이미 채워져 있고 `CONTEXTUAL_COMPRESSION_ENABLED=0`(비활성)이 기본값입니다. 켜는 방법과 각 값의 의미는 [운영 가이드 6.3장](./operation-guide.md#63-contextual-compression-설정)을 참고하세요. |
+| `DOCUMENT_AI_WORKER_CONCURRENCY`, `EMBEDDING_HTTP_THREADS` | 문서 파싱·임베딩 처리 동시성입니다. 기본값 그대로 시작해도 되며, 대기열이 계속 쌓일 때 조정하는 방법은 [운영 가이드 5.4장](./operation-guide.md#54-처리-큐-튜닝)을 참고하세요. |
 
 `.env`를 직접 수정한 뒤에는 컨테이너 재시작이 있어야 반영됩니다(`python install.py --restart`).
 
@@ -146,8 +148,38 @@ python install.py --network-access-status   # 현재 상태 확인
 > **외부 접속을 연결하기 전**에 `python install.py --login enable`로 `LOGIN_REQUIRED=1`을 설정하세요. 
 > - 기본값(`0`)은 외부 접속이 없는 개인/로컬 사용을 전제로, 접속 시 로그인 없이 로컬 관리자 권한이 자동으로 부여되는 모드입니다. 
 
+### 6.1 설정 파일에 입력해야 하는 값
+
+`--network-access-create`는 `data/config/network_access/provider.env`를 빈 값으로 생성하고, `--network-access-open`은 그 폴더를 열어줄 뿐입니다. 실제 값은 아래 표를 참고해 직접 입력해야 하며, 비어 있으면 `--network-access-connect`가 오류로 거부합니다.
+
+| 키 | 설명 |
+|---|---|
+| `DOTORI_EXTERNAL_DOMAIN` | 외부에서 접속할 실제 도메인(예: `dotori.example.com`). DNS가 이미 이 서버의 IP를 가리키고 있어야 합니다. |
+| `DOTORI_CERTIFICATE_EMAIL` | Let's Encrypt 인증서 발급·만료 알림을 받을 이메일 주소. |
+| `DOTORI_DJANGO_ALLOWED_HOSTS` | Django가 허용할 호스트명. 위 도메인을 포함해야 하며, 빠지면 `DisallowedHost` 오류로 모든 요청이 거부됩니다. |
+| `DOTORI_DJANGO_CSRF_TRUSTED_ORIGINS` | CSRF 검증을 통과시킬 origin. `https://` + 위 도메인 형식으로 적습니다. |
+| `DOTORI_DJANGO_SECURE_PROXY_SSL_HEADER`, `_SECURE_SSL_REDIRECT`, `_SESSION_COOKIE_SECURE`, `_CSRF_COOKIE_SECURE` | 모두 HTTPS 사용을 전제로 기본값 `1`(켜짐)입니다. 이 값을 직접 낮추지 마세요 — HTTPS 없이 외부에 노출하는 구성은 지원하지 않습니다. |
+
+### 6.2 Let's Encrypt 인증서 발급 (최초 1회 필수)
+
+위 파일을 채우는 것만으로는 HTTPS가 동작하지 않습니다. `--network-access-connect`는 인증서가 **이미 존재한다고 가정**하고 Nginx를 실행하므로, 인증서가 없으면 Nginx가 아예 시작되지 않습니다. 인증서는 별도 스크립트로 발급합니다(Linux/macOS 또는 Windows의 Git Bash·WSL에서 실행).
+
+```bash
+bash scripts/init-letsencrypt.sh
+```
+
+이 스크립트가 순서대로 처리합니다: 임시 자체 서명 인증서로 Nginx를 먼저 띄움 → ACME 챌린지 경로가 응답하는지 확인 → 실제 Let's Encrypt 인증서 발급 → Nginx에 반영. 완료 후 `python install.py --network-access-status`로 상태를 확인하세요.
+
+Let's Encrypt 인증서는 90일마다 만료되며, **자동 갱신은 설정되어 있지 않습니다.** 아래 스크립트를 주기적으로(예: 매월 1회) 직접 실행하거나 cron 등으로 예약해야 합니다.
+
+```bash
+bash scripts/renew-letsencrypt.sh
+```
+
+### 6.3 연결 및 해제
+
 외부 접속을 해제하려면 `python install.py --network-access-disconnect`를 실행합니다. 
-자세한 내용은 `start.bat` → `[7] Advanced Network Settings` 메뉴에서도 동일하게 접근할 수 있습니다.
+자세한 내용은 `start.bat` → `[7] Advanced Network Settings` 메뉴에서도 동일하게 접근할 수 있습니다(단, `init-letsencrypt.sh`/`renew-letsencrypt.sh`는 셸 스크립트라 `start.bat` 메뉴에는 포함되어 있지 않으며 Git Bash나 WSL에서 직접 실행해야 합니다).
 
 ---
 

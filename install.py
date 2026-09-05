@@ -166,14 +166,23 @@ def initialize_embedding_runtime_config(
     ) as profile_file:
         profile = json.load(profile_file)
 
+    known_providers = {"bgem3_hybrid", "sentence_transformers", "openai_compatible"}
+    known_stores = {
+        "pgvector_chunk_1024": 1024,
+        "pgvector_chunk_640": 640,
+        "pgvector_chunk_768": 768,
+        "pgvector_chunk_1536": 1536,
+        "pgvector_chunk_384": 384,
+    }
+
     if (
         profile.get("availability") != "supported"
         or priority_preset not in profile.get("presets", [])
         or profile.get("model_id") != model.get("id")
-        or profile.get("provider") != "bgem3_hybrid"
-        or profile.get("store") != "pgvector_chunk_1024"
-        or int(profile.get("dimension", 0)) != 1024
-        or int(model.get("dimension", 0)) != 1024
+        or profile.get("provider") not in known_providers
+        or profile.get("store") not in known_stores
+        or int(profile.get("dimension", 0)) != int(model.get("dimension", 0))
+        or known_stores.get(profile.get("store")) != int(profile.get("dimension", 0))
     ):
         raise RuntimeError(
             "The checked-in embedding catalog has no valid supported "
@@ -601,8 +610,6 @@ def run_services(
 
     manager = RuntimeLifecycleManager()
 
-    # RAG workers are intentionally excluded from the initial plan. They are
-    # started only after a resolved runtime has passed lifecycle validation.
     initial_plan = build_deployment_plan(mode, scope="production")
     services = list(initial_plan.enabled_services)
     if initial_plan.disabled_worker_services:
@@ -686,7 +693,7 @@ def run_services(
 
         if initial_plan.mode == "rag" and not runtime_ready:
             print(
-                f"{YELLOW}[WARN] Dotori core and search services are healthy, but the "
+                f"{YELLOW}[WARN] Dotori core services are healthy, but the "
                 f"local LLM is unavailable. RAG answer generation remains disabled.{RESET}"
             )
             print(
@@ -696,18 +703,6 @@ def run_services(
                 f"{YELLOW}• Retry after freeing memory: "
                 f"python3 install.py --retry-llm{RESET}"
             )
-
-        runtime_workers = [
-            worker.compose_service
-            for worker in final_plan.enabled_workers
-            if worker.requires_runtime
-        ]
-        if runtime_workers:
-            worker_cmd = f"{COMPOSE_COMMAND} up --no-build -d " + " ".join(runtime_workers)
-            worker_ok, _stdout, worker_error = run_command(worker_cmd)
-            if not worker_ok:
-                print(f"{RED}[ERROR] Runtime is healthy, but the RAG worker failed to start: {worker_error}{RESET}")
-                return False
 
         print_header("Startup Complete")
         print(f"• {BOLD}Web application:{RESET} {GREEN}{APP_URL}{RESET}")
@@ -728,8 +723,26 @@ def run_services(
         return False
 
 
+def _ensure_embedding_internal_token():
+    # Backfill for installs whose .env predates EMBEDDING_INTERNAL_TOKEN, and
+    # for fresh installs whose copied .env still has the .env.example
+    # placeholder. Idempotent: never touches an already-generated token, so
+    # this is safe to call on every install.py run.
+    if not os.path.exists(ENV_FILE):
+        return
+    with open(ENV_FILE, "r", encoding="utf-8") as f:
+        content = f.read()
+    match = re.search(r"^EMBEDDING_INTERNAL_TOKEN=(.*)$", content, re.MULTILINE)
+    current = match.group(1).strip() if match else ""
+    if current and current != "change-me":
+        return
+    write_env_file(ENV_FILE, ENV_FILE, {"EMBEDDING_INTERNAL_TOKEN": secrets.token_urlsafe(32)})
+    print(f"{GREEN}• Generated EMBEDDING_INTERNAL_TOKEN for app <-> dotori-document authentication.{RESET}")
+
+
 def _ensure_env_file_exists():
     if os.path.exists(ENV_FILE):
+        _ensure_embedding_internal_token()
         return
     if os.path.exists(ENV_TEMPLATE_FILE):
         shutil.copy(ENV_TEMPLATE_FILE, ENV_FILE)
@@ -743,8 +756,9 @@ def _ensure_env_file_exists():
         "DJANGO_SECRET_KEY": secrets.token_urlsafe(50),
         "POSTGRES_USER": "dotori",
         "POSTGRES_PASSWORD": secrets.token_urlsafe(24),
+        "EMBEDDING_INTERNAL_TOKEN": secrets.token_urlsafe(32),
     })
-    print(f"{GREEN}• Generated {ENV_FILE} with a random Django secret key and PostgreSQL password.{RESET}")
+    print(f"{GREEN}• Generated {ENV_FILE} with a random Django secret key, PostgreSQL password, and embedding service token.{RESET}")
 
 
 def handle_login_cli(mode, assume_yes=False):
@@ -790,11 +804,11 @@ def change_embedding_runtime_cli(
     compose_command = f"docker compose -f {scope_cfg.compose_file}"
     print_header(f"Change Embedding Runtime ({scope})")
 
-    # Search intake is paused while the candidate corpus is built. The active
+    # Document processing is paused while the candidate corpus is built. The active
     # pointer remains unchanged until the management command validates full
     # coverage.
     run_command(
-        f"{compose_command} stop embedding-worker search-worker"
+        f"{compose_command} stop dotori-document"
     )
     command = (
         f"{compose_command} run --rm app python manage.py "
@@ -805,7 +819,7 @@ def change_embedding_runtime_cli(
 
     restart_ok, _stdout, restart_error = run_command(
         f"{compose_command} up --no-build -d --force-recreate "
-        "app embedding-worker search-worker"
+        "app dotori-document"
     )
     if not ok:
         print(
@@ -824,7 +838,7 @@ def change_embedding_runtime_cli(
         if rollback_ok:
             run_command(
                 f"{compose_command} up --no-build -d --force-recreate "
-                "app embedding-worker search-worker"
+                "app dotori-document"
             )
             print(
                 f"{YELLOW}• Previous embedding generation restored after "
@@ -887,7 +901,7 @@ def handle_pause_cli(scope="production"):
     compose_command = f"docker compose -f {scope_cfg.compose_file}"
 
     ok, _stdout, stderr = run_command(
-        f"{compose_command} --profile direct-https --profile managed-rag stop"
+        f"{compose_command} --profile direct-https stop"
     )
     runtime_ok = RuntimeLifecycleManager().stop(scope, remove_container=False)
 
@@ -920,7 +934,7 @@ def handle_shutdown_cli(scope="production"):
     run_command(f"{compose_command} stop " + " ".join(worker_services))
     runtime_ok = RuntimeLifecycleManager().stop(scope, remove_container=True)
     ok, _stdout, stderr = run_command(
-        f"{compose_command} --profile direct-https --profile managed-rag down"
+        f"{compose_command} --profile direct-https down"
     )
 
     inspect_ok, count_out, _ = run_command(

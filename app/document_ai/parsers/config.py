@@ -35,6 +35,9 @@ def get_embedding_store() -> str:
 
     return get_active_embedding_runtime().store
 
+def get_parser_backend() -> str:
+    return getattr(settings, "DOCUMENT_PARSER_BACKEND", "docling")
+
 def get_parser_tokenizer_id() -> str:
     return getattr(settings, "PARSER_TOKENIZER_ID", "BAAI/bge-m3")
 
@@ -47,6 +50,12 @@ def get_embedding_token_headroom() -> int:
 
 def get_embedding_max_tokens() -> int:
     return getattr(settings, "EMBEDDING_MAX_TOKENS", 1280)
+
+def get_embedding_document_batch_max_chunks() -> int:
+    return getattr(settings, "EMBEDDING_DOCUMENT_BATCH_MAX_CHUNKS", 4)
+
+def get_embedding_document_batch_max_tokens() -> int:
+    return getattr(settings, "EMBEDDING_DOCUMENT_BATCH_MAX_TOKENS", 3200)
 
 def get_chunk_max_tokens() -> int:
     chunk_max_tokens = get_embedding_max_tokens() - get_embedding_token_headroom()

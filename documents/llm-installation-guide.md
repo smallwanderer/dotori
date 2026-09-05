@@ -62,9 +62,7 @@ python install.py
 
 2. **임베딩 모델** 선택 (모드 1, 2)
 
-3. **쿼리 파서 백엔드** 선택 (모드 1)
-
-4. **RAG 우선순위** 선택 (모드 1)
+3. **RAG 우선순위** 선택 (모드 1)
    - `[1] 속도 우선`, `[2] 균형 (기본값)`, `[3] 품질 우선`
 
 Docker 서비스 구동 후 마법사가 컨테이너 안에서 자동으로 LLM 런타임을 감지하고 설정합니다.
@@ -225,10 +223,11 @@ base_url: http://rag-runtime:8080
 model: qwen2.5-7b-instruct-q4_k_m
 runtime: llama.cpp
 priority_preset: balanced
-serving_profile: {'context_length': 16384, 'concurrency': 4, ...}
+serving_profile: {'context_length': 8192, 'safe_concurrency_ceiling': 4, 'serving_concurrency': 1, 'calibration_status': 'pending', ...}
 ```
 
-> 경로는 scope별로 분리됩니다. `docker-compose.dev.yml` 개발 스택은 `runtime_scopes/development/llm_runtime.json`을 사용합니다. `base_url`은 선택된 엔진과 무관하게 항상 같은 네트워크 별칭(`rag-runtime`)을 가리킵니다.
+> 런타임 설정은 `runtime_scopes/production/llm_runtime.json`에 저장됩니다. `base_url`은 선택된 엔진과 무관하게 항상 같은 네트워크 별칭(`rag-runtime`)을 가리킵니다.
+> `safe_concurrency_ceiling`은 선택한 우선순위와 메모리 계산으로 확인한 calibration 상한입니다. `serving_concurrency`는 실제 runtime과 RAG admission에 적용되는 값이며, 성능 calibration 전에는 안전한 기본값 `1`을 사용합니다.
 
 ### 현재 서버 상태와 함께 확인 (라이브 탐지)
 
@@ -259,8 +258,7 @@ docker compose exec app python manage.py detect_llm_runtime --interactive
 2. 단일 런타임 컨테이너(`dotori-llm`)를 새 이미지/인자로 재생성하고 헬스체크를 통과할 때까지 대기 — docker-compose 서비스가 아니라 Docker CLI로 직접 관리됩니다
 3. 헬스체크를 통과해야만 `runtime_scopes/<scope>/llm_runtime.json`을 새 설정으로 원자적으로 교체
 4. 헬스체크에 실패하면 이전 컨테이너로 롤백하고 기존 설정을 그대로 유지
-5. `rag-worker` 재시작
-6. 이전에 선택했던 모델과 다른 모델로 바꾼 경우, 이전 모델의 다운로드된 가중치 파일을 캐시에서 삭제
+5. 이전에 선택했던 모델과 다른 모델로 바꾼 경우, 이전 모델의 다운로드된 가중치 파일을 캐시에서 삭제
 
 기존 모델을 다시 쓸 계획이 있어 가중치를 남겨두고 싶다면 `--keep-weights` 옵션을 추가합니다:
 
@@ -288,7 +286,6 @@ Dotori는 런타임 컨테이너를 **하나만** 운영합니다. llama.cpp와 
 | scope | 컨테이너 이름 | 네트워크 | 사용 시점 |
 |-------|--------------|---------|----------|
 | `production` | `dotori-llm` | `dotori-runtime` | `python install.py`(기본 배포, `docker-compose.yml`) |
-| `development` | `dotori-dev-rag-runtime` | `dotori-dev-runtime` | `docker-compose.dev.yml` 개발 스택 |
 
 이 컨테이너는 `docker-compose.yml`의 서비스가 아니라, `RuntimeLifecycleManager`(`app/llm_installation/runtime_lifecycle.py`)가 Docker CLI(`docker run`/`rm`/`update`)로 직접 생성·교체·삭제합니다. **`docker compose` 명령으로는 이 컨테이너를 제어할 수 없으므로, 반드시 `python install.py` 명령을 사용하세요.** 컨테이너에는 `com.dotori.*` 라벨(managed/component/scope/runtime/generation)이 붙어 있어, 이름이 같아도 다른 배포가 소유한 컨테이너는 건드리지 않습니다.
 
@@ -320,16 +317,17 @@ Dotori는 런타임 컨테이너를 **하나만** 운영합니다. llama.cpp와 
 
 | 우선순위 | 선택 기준 | 주요 효과 |
 |---------|-----------|----------|
-| `speed` | 응답 속도 최우선 | 동시 처리 수 증가, 컨텍스트 감소 |
-| `balanced` | 속도/품질/메모리 균형 (기본값) | 중간 설정 |
-| `quality` | 답변 품질 최우선 | 컨텍스트 최대화, 더 큰 모델 선호 |
+| `speed` | 개별 응답 지연 우선 | 컨텍스트 감소, 엄격한 latency 기준 |
+| `balanced` | 속도/품질/메모리 균형 (기본값) | 중간 컨텍스트, 처리량과 latency 균형 |
+| `quality` | 답변 품질 최우선 | 컨텍스트 최대화, 더 큰 모델과 메모리 여유 우선 |
 
 > [!TIP]
 > **처음 설치라면 `balanced`를 권장합니다.**  
 > 하드웨어에 여유가 있는 경우에만 `quality`를 선택하세요.
 
-우선순위는 모델 자체를 바꾸기보다, 선택된 모델의 **실행 파라미터**를 조정하는 역할을 합니다.
-동일한 모델을 선택하더라도 우선순위에 따라 컨텍스트 길이와 동시 처리 수가 달라집니다.
+우선순위는 모델 선택과 선택된 모델의 **실행 파라미터**에 함께 반영됩니다.
+설치 시 우선순위에 따라 컨텍스트 길이와 메모리 안전 동시성 상한을 계산하지만,
+실제 운용 동시성은 성능 calibration 전까지 `1`로 유지합니다.
 
 ---
 
@@ -364,9 +362,6 @@ docker compose exec app python manage.py llm_model_catalog show <모델-id>
 ```bash
 # 런타임 컨테이너 로그 확인 (production scope)
 docker logs dotori-llm
-
-# development scope
-docker logs dotori-dev-rag-runtime
 
 # 현재 상태와 마지막 실패 사유 확인
 python install.py --status

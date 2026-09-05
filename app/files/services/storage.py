@@ -35,7 +35,7 @@ class UploadValidationResult:
     duplicate: bool = False
 
 
-def validate_upload(owner: AbstractBaseUser, uploaded_file: File) -> UploadValidationResult:
+def validate_upload(workspace, owner: AbstractBaseUser, uploaded_file: File) -> UploadValidationResult:
     warnings = []
     errors = []
 
@@ -51,7 +51,10 @@ def validate_upload(owner: AbstractBaseUser, uploaded_file: File) -> UploadValid
             errors=["The file exceeds the 2 GB upload limit."],
         )
 
-    storage, _ = UserStorage.objects.get_or_create(user=owner)
+    storage, _ = UserStorage.objects.get_or_create(
+        workspace=workspace,
+        defaults={"user": workspace.created_by},
+    )
     if storage.used_size + uploaded_file.size > storage.total_size:
         remaining_mb = round(storage.remaining_size / 1024 / 1024, 2)
         return UploadValidationResult(
@@ -71,7 +74,7 @@ def validate_upload(owner: AbstractBaseUser, uploaded_file: File) -> UploadValid
         warnings.append("The file MIME type could not be verified.")
 
     sha256 = calculate_sha256(uploaded_file)
-    duplicate = FileBlob.objects.filter(node__owner=owner, sha256=sha256).exists()
+    duplicate = FileBlob.objects.filter(node__workspace=workspace, sha256=sha256).exists()
     if duplicate:
         warnings.append("A file with the same content already exists.")
 
@@ -83,12 +86,13 @@ def validate_upload(owner: AbstractBaseUser, uploaded_file: File) -> UploadValid
     )
 
 
-def save_file(owner: AbstractBaseUser, file: File, description: str, parent=None, ai_processing_enabled: bool = True) -> Node:
+def save_file(workspace, owner: AbstractBaseUser, file: File, description: str, parent=None, ai_processing_enabled: bool = True) -> Node:
     sha256 = calculate_sha256(file)
     file.seek(0)
 
     with transaction.atomic():
         node = Node.objects.create(
+            workspace=workspace,
             owner=owner,
             parent=parent,
             name=file.name,
@@ -157,5 +161,5 @@ def get_file(file_or_node):
     return _coerce_node(file_or_node)
 
 
-def get_files(user):
-    return Node.objects.filter(owner=user, node_type=NodeType.FILE, trashed=False).order_by("-created_at")
+def get_files(workspace):
+    return Node.objects.filter(workspace=workspace, node_type=NodeType.FILE, trashed=False).order_by("-created_at")

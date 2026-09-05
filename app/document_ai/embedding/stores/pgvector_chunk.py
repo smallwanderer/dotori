@@ -10,6 +10,15 @@ from document_ai.models import ChunkEmbedding, EmbeddingGeneration
 from .base import EmbeddingStoreSpec
 
 
+DIMENSION_FIELD_MAP: dict[int, str] = {
+    1024: "vector",
+    640: "vector_640",
+    768: "vector_768",
+    1536: "vector_1536",
+    384: "vector_384",
+}
+
+
 class PgVectorChunkEmbeddingStore:
     name = "pgvector_chunk_1024"
 
@@ -26,15 +35,18 @@ class PgVectorChunkEmbeddingStore:
         runtime_fingerprint: str = "",
         scope: str = "production",
         catalog_id: str = "",
+        store_name: str | None = None,
     ):
         self.runtime_fingerprint = runtime_fingerprint
         self.scope = scope
         self.catalog_id = catalog_id
+        resolved_name = store_name or (f"pgvector_chunk_{dimension}" if dimension != 1024 else self.name)
+        dense_field = DIMENSION_FIELD_MAP.get(dimension, "vector")
         self.spec = EmbeddingStoreSpec(
-            name=self.name,
+            name=resolved_name,
             dimension=dimension,
-            dense_field="vector",
-            sparse_field="sparse_vector",
+            dense_field=dense_field,
+            sparse_field="sparse_vector" if supports_sparse else None,
             supports_sparse=supports_sparse,
             model_name=model_name,
             backend=backend,

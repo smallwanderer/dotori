@@ -21,7 +21,7 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--scope",
-            choices=("production", "development"),
+            choices=("production",),
             default="production",
         )
         parser.add_argument(

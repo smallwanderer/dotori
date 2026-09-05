@@ -15,8 +15,14 @@ CATALOG_DIR = Path(__file__).parent
 MODELS_DIR = CATALOG_DIR / "models"
 PROFILES_DIR = CATALOG_DIR / "profiles"
 
-KNOWN_PROVIDERS = {"bgem3_hybrid"}
-KNOWN_STORES = {"pgvector_chunk_1024": 1024}
+KNOWN_PROVIDERS = {"bgem3_hybrid", "sentence_transformers", "openai_compatible"}
+KNOWN_STORES = {
+    "pgvector_chunk_1024": 1024,
+    "pgvector_chunk_640": 640,
+    "pgvector_chunk_768": 768,
+    "pgvector_chunk_1536": 1536,
+    "pgvector_chunk_384": 384,
+}
 
 
 def _load_entries(directory: Path, schema):

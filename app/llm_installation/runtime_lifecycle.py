@@ -61,12 +61,6 @@ SCOPE_CONFIG = {
         network_name="dotori-runtime",
         container_name="dotori-llm",
     ),
-    "development": ScopeConfig(
-        compose_file="docker-compose.dev.yml",
-        env_file=".env.dev",
-        network_name="dotori-dev-runtime",
-        container_name="dotori-dev-rag-runtime",
-    ),
 }
 
 
@@ -181,7 +175,7 @@ class RuntimeLifecycleManager:
     """Owns the Docker lifecycle of the single, scope-scoped RAG runtime
     container. Never selects a model/backend/runtime itself -- it only
     applies an already-resolved RuntimeSpec. See
-    dev-docs/agent/rag_runtime_container_lifecycle.md for the full contract.
+    dev-docs/agent/rag-runtime-container-lifecycle.md for the full contract.
     """
 
     def __init__(
@@ -466,8 +460,6 @@ class RuntimeLifecycleManager:
         if not self.ensure_network(spec.scope):
             return ApplyResult(ok=False, messages=["Failed to prepare runtime network."])
 
-        self._compose(spec.scope, "stop", "rag-worker")
-
         current = self.inspect(spec.scope)
         if current.exists:
             if not current.owned:
@@ -626,7 +618,9 @@ class RuntimeLifecycleManager:
             ],
         )
 
-    def apply(self, spec: RuntimeSpec) -> ApplyResult:
+    def apply(
+        self, spec: RuntimeSpec, *, rebuild_image: bool = True
+    ) -> ApplyResult:
         from llm_installation.config_store import commit_active_runtime_config
 
         messages: list[str] = []
@@ -635,11 +629,20 @@ class RuntimeLifecycleManager:
 
         self.ensure_network(spec.scope)
 
-        built, revision = self.build(spec)
-        if not built:
-            return ApplyResult(ok=False, messages=["Failed to build runtime image."])
-
-        self._compose(spec.scope, "stop", "rag-worker")
+        if rebuild_image:
+            built, revision = self.build(spec)
+            if not built:
+                return ApplyResult(ok=False, messages=["Failed to build runtime image."])
+        else:
+            revision = self._image_revision(spec.image)
+            if revision is None:
+                return ApplyResult(
+                    ok=False,
+                    messages=[
+                        f"Runtime image '{spec.image}' is not available; calibration "
+                        "cannot change concurrency without the active image."
+                    ],
+                )
 
         current = self.inspect(spec.scope)
         previous_runtime_status = load_runtime_status(
@@ -679,7 +682,6 @@ class RuntimeLifecycleManager:
             commit_active_runtime_config(spec.scope, spec.generation_id, repo_root=self.repo_root)
             if has_previous:
                 self._docker("rm", "-f", previous_name)
-            self._compose(spec.scope, "start", "rag-worker")
             self._write_runtime_status(
                 spec,
                 "healthy",
@@ -712,7 +714,6 @@ class RuntimeLifecycleManager:
                 else "Could not restart previous runtime container; manual recovery needed."
             )
         if rolled_back:
-            self._compose(spec.scope, "start", "rag-worker")
             self._restore_runtime_status(spec.scope, previous_runtime_status)
         else:
             self._write_runtime_status(

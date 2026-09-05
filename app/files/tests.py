@@ -10,9 +10,9 @@ from django.utils import timezone
 from unittest.mock import patch
 
 from accounts.models import APIToken
-from config.enums import AIStatus, NodeType
+from config.enums import AIStatus, FileOperation, NodeType
 from document_ai.models import DocumentChunk, DocumentParseResult
-from files.models import FileBlob, Node
+from files.models import FileBlob, FileOperationLog, Node
 from files.services import file_service
 from files.services import storage as storage_service
 
@@ -29,21 +29,22 @@ class NodeModelTests(TestCase):
             is_active=True,
             email_verified=True,
         )
+        self.workspace = self.user.workspace_memberships.get(workspace__kind="personal").workspace
 
     def test_build_path(self):
-        root = Node.objects.create(owner=self.user, name="root", ext="", node_type=NodeType.FOLDER)
-        parent = Node.objects.create(owner=self.user, name="parent", ext="", node_type=NodeType.FOLDER, parent=root)
-        file_node = Node.objects.create(owner=self.user, name="file.txt", ext=".txt", node_type=NodeType.FILE, parent=parent)
+        root = Node.objects.create(owner=self.user, workspace=self.workspace, name="root", ext="", node_type=NodeType.FOLDER)
+        parent = Node.objects.create(owner=self.user, workspace=self.workspace, name="parent", ext="", node_type=NodeType.FOLDER, parent=root)
+        file_node = Node.objects.create(owner=self.user, workspace=self.workspace, name="file.txt", ext=".txt", node_type=NodeType.FILE, parent=parent)
 
         self.assertEqual(root.path, "/root")
         self.assertEqual(parent.path, "/root/parent")
         self.assertEqual(file_node.path, "/root/parent/file.txt")
 
     def test_move_folder_updates_child_paths(self):
-        root = Node.objects.create(owner=self.user, name="root", ext="", node_type=NodeType.FOLDER)
-        parent = Node.objects.create(owner=self.user, name="parent", ext="", node_type=NodeType.FOLDER, parent=root)
-        folder = Node.objects.create(owner=self.user, name="folder", ext="", node_type=NodeType.FOLDER, parent=root)
-        child = Node.objects.create(owner=self.user, name="child.txt", ext=".txt", node_type=NodeType.FILE, parent=folder)
+        root = Node.objects.create(owner=self.user, workspace=self.workspace, name="root", ext="", node_type=NodeType.FOLDER)
+        parent = Node.objects.create(owner=self.user, workspace=self.workspace, name="parent", ext="", node_type=NodeType.FOLDER, parent=root)
+        folder = Node.objects.create(owner=self.user, workspace=self.workspace, name="folder", ext="", node_type=NodeType.FOLDER, parent=root)
+        child = Node.objects.create(owner=self.user, workspace=self.workspace, name="child.txt", ext=".txt", node_type=NodeType.FILE, parent=folder)
 
         folder.move(new_parent=parent)
 
@@ -53,8 +54,8 @@ class NodeModelTests(TestCase):
         self.assertEqual(child.path, "/root/parent/folder/child.txt")
 
     def test_move_folder_to_descendant_raises_error(self):
-        root = Node.objects.create(owner=self.user, name="root", ext="", node_type=NodeType.FOLDER)
-        child = Node.objects.create(owner=self.user, name="child", ext="", node_type=NodeType.FOLDER, parent=root)
+        root = Node.objects.create(owner=self.user, workspace=self.workspace, name="root", ext="", node_type=NodeType.FOLDER)
+        child = Node.objects.create(owner=self.user, workspace=self.workspace, name="child", ext="", node_type=NodeType.FOLDER, parent=root)
 
         with self.assertRaises(ValueError):
             root.move(new_parent=child)
@@ -68,9 +69,10 @@ class FileServiceTests(TestCase):
             is_active=True,
             email_verified=True,
         )
-        self.root = Node.objects.create(owner=self.user, name="root", ext="", node_type=NodeType.FOLDER)
+        self.workspace = self.user.workspace_memberships.get(workspace__kind="personal").workspace
+        self.root = Node.objects.create(owner=self.user, workspace=self.workspace, name="root", ext="", node_type=NodeType.FOLDER)
         self.file_node = Node.objects.create(
-            owner=self.user,
+            owner=self.user, workspace=self.workspace,
             name="doc.txt",
             ext=".txt",
             node_type=NodeType.FILE,
@@ -78,7 +80,7 @@ class FileServiceTests(TestCase):
         )
 
     def test_create_folder_sets_empty_extension(self):
-        folder = file_service.create_folder(self.user, "reports", parent=self.root)
+        folder = file_service.create_folder(self.workspace, self.user, "reports", parent=self.root)
 
         self.assertEqual(folder.ext, "")
         self.assertEqual(folder.node_type, NodeType.FOLDER)
@@ -101,8 +103,8 @@ class FileServiceTests(TestCase):
         self.assertIsNone(self.file_node.deleted_at)
 
     def test_move_to_trash_marks_descendants(self):
-        folder = Node.objects.create(owner=self.user, name="folder", ext="", node_type=NodeType.FOLDER, parent=self.root)
-        child = Node.objects.create(owner=self.user, name="child.txt", ext=".txt", node_type=NodeType.FILE, parent=folder)
+        folder = Node.objects.create(owner=self.user, workspace=self.workspace, name="folder", ext="", node_type=NodeType.FOLDER, parent=self.root)
+        child = Node.objects.create(owner=self.user, workspace=self.workspace, name="child.txt", ext=".txt", node_type=NodeType.FILE, parent=folder)
 
         file_service.move_to_trash(folder)
         folder.refresh_from_db()
@@ -127,7 +129,7 @@ class FileServiceTests(TestCase):
 
     def test_get_trashed_files_purges_expired_items(self):
         expired = Node.objects.create(
-            owner=self.user,
+            owner=self.user, workspace=self.workspace,
             name="expired.txt",
             ext=".txt",
             node_type=NodeType.FILE,
@@ -135,7 +137,7 @@ class FileServiceTests(TestCase):
             deleted_at=timezone.now() - timedelta(days=8),
         )
         active = Node.objects.create(
-            owner=self.user,
+            owner=self.user, workspace=self.workspace,
             name="active.txt",
             ext=".txt",
             node_type=NodeType.FILE,
@@ -143,7 +145,7 @@ class FileServiceTests(TestCase):
             deleted_at=timezone.now() - timedelta(days=2),
         )
 
-        trashed_files = list(file_service.get_trashed_files(self.user))
+        trashed_files = list(file_service.get_trashed_files(self.workspace))
 
         self.assertIn(active, trashed_files)
         self.assertNotIn(expired, trashed_files)
@@ -168,8 +170,9 @@ class FileAIStatusTests(TestCase):
             is_active=True,
             email_verified=True,
         )
+        self.workspace = self.user.workspace_memberships.get(workspace__kind="personal").workspace
         self.file_node = Node.objects.create(
-            owner=self.user,
+            owner=self.user, workspace=self.workspace,
             name="notes.txt",
             ext=".txt",
             node_type=NodeType.FILE,
@@ -242,9 +245,11 @@ class StorageServiceTests(TestCase):
             is_active=True,
             email_verified=True,
         )
+        self.workspace = self.user.workspace_memberships.get(workspace__kind="personal").workspace
         upload = SimpleUploadedFile("report.txt", b"hello storage", content_type="text/plain")
         with patch("document_ai.signals.parse_document_with_docling.delay"):
             self.node = storage_service.save_file(
+                workspace=self.workspace,
                 owner=self.user,
                 file=upload,
                 description="storage test",
@@ -255,10 +260,10 @@ class StorageServiceTests(TestCase):
         self.assertEqual(resolved.id, self.node.id)
 
     def test_get_files_returns_only_active_file_nodes(self):
-        folder = Node.objects.create(owner=self.user, name="folder", ext="", node_type=NodeType.FOLDER)
-        Node.objects.create(owner=self.user, name="old.txt", ext=".txt", node_type=NodeType.FILE, trashed=True)
+        folder = Node.objects.create(owner=self.user, workspace=self.workspace, name="folder", ext="", node_type=NodeType.FOLDER)
+        Node.objects.create(owner=self.user, workspace=self.workspace, name="old.txt", ext=".txt", node_type=NodeType.FILE, trashed=True)
 
-        files = list(storage_service.get_files(self.user))
+        files = list(storage_service.get_files(self.workspace))
 
         self.assertIn(self.node, files)
         self.assertNotIn(folder, files)
@@ -286,6 +291,7 @@ class SyncApiUploadTests(TestCase):
             is_active=True,
             email_verified=True,
         )
+        self.workspace = self.user.workspace_memberships.get(workspace__kind="personal").workspace
         self.token = APIToken.objects.create(user=self.user, name="test token")
 
     def post_upload(self, file_obj, data=None):
@@ -315,11 +321,11 @@ class SyncApiUploadTests(TestCase):
         delay.assert_not_called()
 
     def test_sync_update_preserves_existing_ai_setting_when_omitted(self):
-        sync_root = Node.objects.create(owner=self.user, name="sync", ext="", node_type=NodeType.FOLDER)
-        sync_folder = Node.objects.create(owner=self.user, name="local", ext="", node_type=NodeType.FOLDER, parent=sync_root)
-        parent = Node.objects.create(owner=self.user, name="docs", ext="", node_type=NodeType.FOLDER, parent=sync_folder)
+        sync_root = Node.objects.create(owner=self.user, workspace=self.workspace, name="sync", ext="", node_type=NodeType.FOLDER)
+        sync_folder = Node.objects.create(owner=self.user, workspace=self.workspace, name="local", ext="", node_type=NodeType.FOLDER, parent=sync_root)
+        parent = Node.objects.create(owner=self.user, workspace=self.workspace, name="docs", ext="", node_type=NodeType.FOLDER, parent=sync_folder)
         node = Node.objects.create(
-            owner=self.user,
+            owner=self.user, workspace=self.workspace,
             name="report.txt",
             ext=".txt",
             node_type=NodeType.FILE,
@@ -341,6 +347,156 @@ class SyncApiUploadTests(TestCase):
         node.refresh_from_db()
         self.assertFalse(node.ai_processing_enabled)
 
+    def test_sync_update_disables_ai_before_new_blob_signal(self):
+        sync_root = Node.objects.create(owner=self.user, workspace=self.workspace, name="sync", ext="", node_type=NodeType.FOLDER)
+        sync_folder = Node.objects.create(owner=self.user, workspace=self.workspace, name="local", ext="", node_type=NodeType.FOLDER, parent=sync_root)
+        parent = Node.objects.create(owner=self.user, workspace=self.workspace, name="docs", ext="", node_type=NodeType.FOLDER, parent=sync_folder)
+        node = Node.objects.create(
+            owner=self.user, workspace=self.workspace,
+            name="report.txt",
+            ext=".txt",
+            node_type=NodeType.FILE,
+            parent=parent,
+            ai_processing_enabled=False,
+        )
+        FileBlob.objects.create(
+            node=node,
+            file=SimpleUploadedFile("old.txt", b"old", content_type="text/plain"),
+            original_name="report.txt",
+            size=3,
+            mime_type="text/plain",
+            sha256="old",
+        )
+        node.ai_processing_enabled = True
+        node.save(update_fields=["ai_processing_enabled", "updated_at"])
+
+        with patch("document_ai.signals.parse_document_with_docling.delay") as delay:
+            response = self.post_upload(
+                SimpleUploadedFile("report.txt", b"new", content_type="text/plain"),
+                {"ai_processing_enabled": "0"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        node.refresh_from_db()
+        self.assertFalse(node.ai_processing_enabled)
+        self.assertEqual(
+            node.blob.sha256,
+            "11507a0e2f5e69d5dfa40a62a1bd7b6ee57e6bcd85c67c9b8431b36fff21c437",
+        )
+        delay.assert_not_called()
+
+
+@override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
+class FileOperationLogInstrumentationTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="upload-metrics@example.com",
+            password="password",
+            is_active=True,
+            email_verified=True,
+        )
+        self.workspace = self.user.workspace_memberships.get(workspace__kind="personal").workspace
+        self.client.force_login(self.user)
+
+    def _last_log(self, operation):
+        return FileOperationLog.objects.filter(owner=self.user, operation=operation).latest("created_at")
+
+    def test_successful_upload_records_completed_log_with_timing(self):
+        upload = SimpleUploadedFile("report.txt", b"hello", content_type="text/plain")
+        with patch("document_ai.signals.parse_document_with_docling.delay"):
+            response = self.client.post("/files/api/v1/upload/", data={"file": upload})
+
+        self.assertEqual(response.status_code, 200)
+        log = self._last_log(FileOperation.UPLOAD)
+        self.assertEqual(log.status, AIStatus.COMPLETED)
+        self.assertEqual(log.detail["original_name"], "report.txt")
+        self.assertEqual(log.detail["size_bytes"], len(b"hello"))
+        self.assertIsNotNone(log.node)
+        self.assertIn("total_ms", log.performance_metrics)
+        self.assertGreaterEqual(log.performance_metrics["total_ms"], 0)
+
+    def test_missing_file_records_failed_upload_log(self):
+        response = self.client.post("/files/api/v1/upload/", data={})
+
+        self.assertEqual(response.status_code, 400)
+        log = self._last_log(FileOperation.UPLOAD)
+        self.assertEqual(log.status, AIStatus.FAILED)
+        self.assertEqual(log.error_message, "No file provided.")
+        self.assertIsNone(log.node)
+
+    def test_validation_failure_records_failed_upload_log_with_reason(self):
+        upload = SimpleUploadedFile("virus.exe", b"x", content_type="application/octet-stream")
+        response = self.client.post("/files/api/v1/upload/", data={"file": upload})
+
+        self.assertEqual(response.status_code, 400)
+        log = self._last_log(FileOperation.UPLOAD)
+        self.assertEqual(log.status, AIStatus.FAILED)
+        self.assertIn("not supported", log.error_message)
+        self.assertIsNone(log.node)
+
+    def test_rename_records_completed_log_with_old_and_new_name(self):
+        node = Node.objects.create(owner=self.user, workspace=self.workspace, name="old.txt", ext=".txt", node_type=NodeType.FILE)
+
+        response = self.client.post(f"/files/api/v1/{node.uid}/rename/", data=json.dumps({"name": "new.txt"}), content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        log = self._last_log(FileOperation.RENAME)
+        self.assertEqual(log.status, AIStatus.COMPLETED)
+        self.assertEqual(log.node_id, node.id)
+        self.assertEqual(log.detail, {"old_name": "old.txt", "new_name": "new.txt"})
+
+    def test_move_records_completed_log_with_target_parent(self):
+        folder = Node.objects.create(owner=self.user, workspace=self.workspace, name="folder", ext="", node_type=NodeType.FOLDER)
+        node = Node.objects.create(owner=self.user, workspace=self.workspace, name="file.txt", ext=".txt", node_type=NodeType.FILE)
+
+        response = self.client.post(f"/files/api/v1/{node.uid}/move/", data=json.dumps({"parent_id": str(folder.uid)}), content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        log = self._last_log(FileOperation.MOVE)
+        self.assertEqual(log.status, AIStatus.COMPLETED)
+        self.assertEqual(log.node_id, node.id)
+        self.assertEqual(log.detail["target_parent_uid"], str(folder.uid))
+
+    def test_single_delete_records_completed_log(self):
+        node = Node.objects.create(owner=self.user, workspace=self.workspace, name="file.txt", ext=".txt", node_type=NodeType.FILE)
+
+        response = self.client.post(f"/files/api/v1/{node.uid}/delete/")
+
+        self.assertEqual(response.status_code, 200)
+        log = self._last_log(FileOperation.DELETE)
+        self.assertEqual(log.status, AIStatus.COMPLETED)
+        self.assertEqual(log.node_id, node.id)
+
+    def test_bulk_delete_records_one_log_with_count(self):
+        nodes = [
+            Node.objects.create(owner=self.user, workspace=self.workspace, name=f"file{i}.txt", ext=".txt", node_type=NodeType.FILE)
+            for i in range(3)
+        ]
+
+        response = self.client.post(
+            "/files/api/v1/bulk/delete/",
+            data=json.dumps({"uids": [str(n.uid) for n in nodes]}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        log = self._last_log(FileOperation.DELETE)
+        self.assertEqual(log.status, AIStatus.COMPLETED)
+        self.assertIsNone(log.node)
+        self.assertEqual(log.detail["count"], 3)
+
+    def test_permanent_delete_records_log_with_original_name(self):
+        node = Node.objects.create(
+            owner=self.user, workspace=self.workspace, name="gone.txt", ext=".txt", node_type=NodeType.FILE, trashed=True,
+        )
+
+        response = self.client.post(f"/files/api/v1/{node.uid}/permanent_delete/")
+
+        self.assertEqual(response.status_code, 200)
+        log = self._last_log(FileOperation.PERMANENT_DELETE)
+        self.assertEqual(log.status, AIStatus.COMPLETED)
+        self.assertEqual(log.detail["original_name"], "gone.txt")
+
 
 @override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
 class FileBulkApiTests(TestCase):
@@ -351,11 +507,12 @@ class FileBulkApiTests(TestCase):
             is_active=True,
             email_verified=True,
         )
+        self.workspace = self.user.workspace_memberships.get(workspace__kind="personal").workspace
         self.client.force_login(self.user)
-        self.folder = Node.objects.create(owner=self.user, name="folder", ext="", node_type=NodeType.FOLDER)
-        self.target = Node.objects.create(owner=self.user, name="target", ext="", node_type=NodeType.FOLDER)
+        self.folder = Node.objects.create(owner=self.user, workspace=self.workspace, name="folder", ext="", node_type=NodeType.FOLDER)
+        self.target = Node.objects.create(owner=self.user, workspace=self.workspace, name="target", ext="", node_type=NodeType.FOLDER)
         self.file_node = Node.objects.create(
-            owner=self.user,
+            owner=self.user, workspace=self.workspace,
             name="doc.txt",
             ext=".txt",
             node_type=NodeType.FILE,
@@ -371,7 +528,7 @@ class FileBulkApiTests(TestCase):
 
     def create_file_with_blob(self, name):
         node = Node.objects.create(
-            owner=self.user,
+            owner=self.user, workspace=self.workspace,
             name=name,
             ext=".txt",
             node_type=NodeType.FILE,
@@ -467,7 +624,7 @@ class FileBulkApiTests(TestCase):
     def test_rag_scope_nodes_returns_files_and_folders(self):
         file_node = self.create_file_with_blob("scope-doc.txt")
         folder = Node.objects.create(
-            owner=self.user,
+            owner=self.user, workspace=self.workspace,
             name="scope-folder",
             ext="",
             node_type=NodeType.FOLDER,
@@ -506,7 +663,8 @@ class FileBulkApiTests(TestCase):
         response = self.post_json(f"/files/api/v1/{self.file_node.uid}/ai/retry/", {})
 
         self.assertEqual(response.status_code, 200)
-        delay_mock.assert_called_once_with(self.file_node.id)
+        delay_mock.assert_called_once()
+        self.assertEqual(delay_mock.call_args.args, (self.file_node.id,))
         self.file_node.parse_result.refresh_from_db()
         self.assertEqual(self.file_node.parse_result.status, AIStatus.PENDING)
 
@@ -528,7 +686,8 @@ class FileBulkApiTests(TestCase):
         response = self.post_json(f"/files/api/v1/{self.file_node.uid}/ai/retry/", {})
 
         self.assertEqual(response.status_code, 200)
-        delay_mock.assert_called_once_with(self.file_node.id)
+        delay_mock.assert_called_once()
+        self.assertEqual(delay_mock.call_args.args, (self.file_node.id,))
         chunk.refresh_from_db()
         self.assertEqual(chunk.status, AIStatus.PENDING)
         self.assertEqual(chunk.error_message, {})

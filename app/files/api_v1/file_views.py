@@ -1,7 +1,7 @@
 import json
 import logging
+from time import perf_counter
 
-from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, F, Q
 from django.http import FileResponse, Http404, JsonResponse
@@ -10,12 +10,19 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 
 from accounts.decorators import email_verification_required
-from config.enums import AIStatus
+from accounts.api_responses import api_error_response
+from config.enums import AIStatus, FileOperation
+from config.tracing import get_trace_id
 from document_ai.models import DocumentChunk, DocumentParseResult, RAGJob
+from document_ai.performance import elapsed_ms, put_metric
 from document_ai.tasks import enqueue_embedding_tasks, parse_document_with_docling
-from files.models import Node, NodeType, UserStorage
+from document_ai.tracing_utils import enqueue_kwargs
+from files.models import FileOperationLog, Node, NodeType, UserStorage
 from files.services import file_service
+from files.services.access import can_modify_node, can_modify_subtree
 from files.services.storage import save_file, validate_upload
+from workspaces.models import WorkspaceMembership
+from workspaces.decorators import workspace_member_required as login_required
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +34,27 @@ def _json_body(request):
         return {}
 
 
-def _node_queryset_for_uids(user, uids, *, trashed=None):
-    qs = Node.objects.filter(owner=user, uid__in=uids)
+def _node_queryset_for_uids(workspace, uids, *, trashed=None):
+    qs = Node.objects.filter(workspace=workspace, uid__in=uids)
     if trashed is not None:
         qs = qs.filter(trashed=trashed)
     return qs
+
+
+def _can_edit_node(request, node):
+    return can_modify_node(
+        actor=request.user,
+        membership=request.workspace_membership,
+        node=node,
+    )
+
+
+def _can_edit_subtree(request, node):
+    return can_modify_subtree(
+        actor=request.user,
+        membership=request.workspace_membership,
+        node=node,
+    )
 
 
 def _bool_from_request(value, *, default=True):
@@ -55,12 +78,12 @@ def file_list(request):
         tag = q[1:]
         q = ""
 
-    qs = file_service.get_user_files(request.user, q, parent_id, tag=tag)
+    qs = file_service.get_workspace_files(request.workspace, q, parent_id, tag=tag)
 
     try:
-        limit = int(limit)
-        page = int(page)
-    except ValueError:
+        limit = min(max(int(limit), 1), 100)
+        page = max(int(page), 1)
+    except (TypeError, ValueError):
         limit = 50
         page = 1
 
@@ -68,15 +91,39 @@ def file_list(request):
     try:
         page_obj = paginator.page(page)
     except Exception:
-        return JsonResponse({"ok": True, "files": [], "page": page, "has_next": False})
+        return JsonResponse({
+            "ok": True,
+            "files": [],
+            "page": page,
+            "limit": limit,
+            "total": paginator.count,
+            "has_next": False,
+        })
 
     data = [node.to_dict() for node in page_obj]
     return JsonResponse({
         "ok": True,
         "files": data,
         "page": page,
+        "limit": limit,
+        "total": paginator.count,
         "has_next": page_obj.has_next(),
     })
+
+
+def _record_file_operation(user, node, operation, *, started, ok, error_message="", detail=None):
+    metrics = {}
+    put_metric(metrics, "total_ms", elapsed_ms(started))
+    put_metric(metrics, "trace_id", get_trace_id())
+    FileOperationLog.objects.create(
+        owner=user,
+        node=node,
+        operation=operation,
+        detail=detail or {},
+        status=AIStatus.COMPLETED if ok else AIStatus.FAILED,
+        error_message=error_message,
+        performance_metrics=metrics,
+    )
 
 
 @login_required
@@ -84,26 +131,39 @@ def file_list(request):
 @require_http_methods(["POST"])
 def upload_file(request):
     logger.info("API upload file view")
-    if "file" not in request.FILES:
+    started = perf_counter()
+    uploaded_file = request.FILES.get("file")
+
+    def upload_detail():
+        return {
+            "original_name": getattr(uploaded_file, "name", ""),
+            "size_bytes": getattr(uploaded_file, "size", None),
+        }
+
+    if uploaded_file is None:
+        _record_file_operation(request.user, None, FileOperation.UPLOAD, started=started, ok=False, error_message="No file provided.")
         return JsonResponse({"ok": False, "status": "error", "errors": ["No file provided."]}, status=400)
 
-    result = validate_upload(request.user, request.FILES["file"])
+    result = validate_upload(request.workspace, request.user, uploaded_file)
     if not result.ok:
+        _record_file_operation(request.user, None, FileOperation.UPLOAD, started=started, ok=False, error_message="; ".join(result.errors), detail=upload_detail())
         return JsonResponse({"ok": False, "status": "error", "errors": result.errors}, status=400)
 
     try:
         parent_id = request.POST.get("parent_id")
         parent = None
         if parent_id:
-            parent = get_object_or_404(Node, uid=parent_id, owner=request.user, node_type=NodeType.FOLDER)
+            parent = get_object_or_404(Node, uid=parent_id, workspace=request.workspace, node_type=NodeType.FOLDER)
 
         node = save_file(
+            workspace=request.workspace,
             owner=request.user,
-            file=request.FILES["file"],
+            file=uploaded_file,
             description=request.POST.get("description", ""),
             parent=parent,
             ai_processing_enabled=_bool_from_request(request.POST.get("ai_processing_enabled"), default=True),
         )
+        _record_file_operation(request.user, node, FileOperation.UPLOAD, started=started, ok=True, detail=upload_detail())
         return JsonResponse({
             "ok": True,
             "status": "duplicate" if result.duplicate else "done",
@@ -112,6 +172,7 @@ def upload_file(request):
         })
     except Exception as e:
         logger.exception("uploading file failed")
+        _record_file_operation(request.user, None, FileOperation.UPLOAD, started=started, ok=False, error_message=str(e), detail=upload_detail())
         return JsonResponse({"ok": False, "status": "error", "errors": [str(e)]}, status=500)
 
 
@@ -129,10 +190,11 @@ def create_folder(request):
 
         parent = None
         if parent_id:
-            parent = get_object_or_404(Node, uid=parent_id, owner=request.user, node_type=NodeType.FOLDER)
+            parent = get_object_or_404(Node, uid=parent_id, workspace=request.workspace, node_type=NodeType.FOLDER)
 
         node = file_service.create_folder(
-            user=request.user,
+            workspace=request.workspace,
+            owner=request.user,
             name=name,
             parent=parent,
         )
@@ -146,7 +208,15 @@ def create_folder(request):
 @email_verification_required
 @require_http_methods(["POST"])
 def rename_file(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user)
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace)
+    if not _can_edit_subtree(request, node):
+        return api_error_response(
+            "PERMISSION_DENIED",
+            "Only the document owner or a workspace admin can modify this file.",
+            status=403,
+        )
+    started = perf_counter()
+    old_name = node.name
     try:
         data = json.loads(request.body)
         new_name = data.get("name", "").strip()
@@ -154,14 +224,17 @@ def rename_file(request, uid):
         new_name = request.POST.get("name", "").strip()
 
     if not new_name:
+        _record_file_operation(request.user, node, FileOperation.RENAME, started=started, ok=False, error_message="A new name is required.", detail={"old_name": old_name})
         return JsonResponse({"ok": False, "status": "error", "errors": ["A new name is required."]}, status=400)
 
     try:
         node.move(new_name=new_name)
     except Exception as e:
         logger.exception("file rename failed")
+        _record_file_operation(request.user, node, FileOperation.RENAME, started=started, ok=False, error_message=str(e), detail={"old_name": old_name, "new_name": new_name})
         return JsonResponse({"ok": False, "status": "error", "errors": [str(e)]}, status=500)
 
+    _record_file_operation(request.user, node, FileOperation.RENAME, started=started, ok=True, detail={"old_name": old_name, "new_name": new_name})
     return JsonResponse({"ok": True, "file": node.to_dict()})
 
 
@@ -169,25 +242,36 @@ def rename_file(request, uid):
 @email_verification_required
 @require_http_methods(["POST"])
 def move_file(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user)
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace)
+    if not _can_edit_subtree(request, node):
+        return api_error_response(
+            "PERMISSION_DENIED",
+            "Only the document owner or a workspace admin can modify this file.",
+            status=403,
+        )
+    started = perf_counter()
     data = _json_body(request)
     parent_id = data.get("parent_id", request.POST.get("parent_id"))
 
     if parent_id is None:
+        _record_file_operation(request.user, node, FileOperation.MOVE, started=started, ok=False, error_message="A destination folder must be specified.")
         return JsonResponse({"ok": False, "status": "error", "errors": ["A destination folder must be specified."]}, status=400)
 
     try:
         if parent_id == "" or parent_id == "root":
             node.move(to_root=True)
         else:
-            target_parent = get_object_or_404(Node, uid=parent_id, owner=request.user, node_type=NodeType.FOLDER)
+            target_parent = get_object_or_404(Node, uid=parent_id, workspace=request.workspace, node_type=NodeType.FOLDER)
             node.move(new_parent=target_parent)
     except ValueError as e:
+        _record_file_operation(request.user, node, FileOperation.MOVE, started=started, ok=False, error_message=str(e), detail={"target_parent_uid": parent_id})
         return JsonResponse({"ok": False, "status": "error", "errors": [str(e)]}, status=400)
     except Exception as e:
         logger.exception("file move failed")
+        _record_file_operation(request.user, node, FileOperation.MOVE, started=started, ok=False, error_message=str(e), detail={"target_parent_uid": parent_id})
         return JsonResponse({"ok": False, "status": "error", "errors": [str(e)]}, status=500)
 
+    _record_file_operation(request.user, node, FileOperation.MOVE, started=started, ok=True, detail={"target_parent_uid": parent_id})
     return JsonResponse({"ok": True, "file": node.to_dict()})
 
 
@@ -195,30 +279,46 @@ def move_file(request, uid):
 @email_verification_required
 @require_http_methods(["POST"])
 def bulk_delete(request):
+    started = perf_counter()
     data = _json_body(request)
     uids = data.get("uids") or []
     if not isinstance(uids, list) or not uids:
+        _record_file_operation(request.user, None, FileOperation.DELETE, started=started, ok=False, error_message="At least one item must be selected.")
         return JsonResponse({"ok": False, "errors": ["At least one item must be selected."]}, status=400)
 
-    nodes = list(_node_queryset_for_uids(request.user, uids, trashed=False))
+    candidates = list(_node_queryset_for_uids(request.workspace, uids, trashed=False))
+    nodes = [node for node in candidates if _can_edit_subtree(request, node)]
+    skipped = len(candidates) - len(nodes)
     for node in nodes:
         file_service.move_to_trash(node)
 
-    return JsonResponse({"ok": True, "count": len(nodes), "message": "Moved selected items to trash."})
+    errors = ["Some items were skipped because you are not the owner or a workspace admin."] if skipped else []
+    _record_file_operation(request.user, None, FileOperation.DELETE, started=started, ok=True, detail={"count": len(nodes), "skipped": skipped})
+    return JsonResponse({
+        "ok": True,
+        "count": len(nodes),
+        "errors": errors,
+        "message": "Moved selected items to trash.",
+    })
 
 
 @login_required
 @email_verification_required
 @require_http_methods(["POST"])
 def bulk_restore(request):
+    started = perf_counter()
     data = _json_body(request)
     uids = data.get("uids") or []
     if not isinstance(uids, list) or not uids:
+        _record_file_operation(request.user, None, FileOperation.RESTORE, started=started, ok=False, error_message="At least one item must be selected.")
         return JsonResponse({"ok": False, "errors": ["At least one item must be selected."]}, status=400)
 
     restored = 0
     errors = []
-    for node in _node_queryset_for_uids(request.user, uids, trashed=True):
+    for node in _node_queryset_for_uids(request.workspace, uids, trashed=True):
+        if not _can_edit_subtree(request, node):
+            errors.append(f"{node.name}: only the owner or a workspace admin can restore this item.")
+            continue
         try:
             file_service.restore_file(node)
             restored += 1
@@ -226,6 +326,7 @@ def bulk_restore(request):
             errors.append(str(exc))
 
     status = 207 if errors else 200
+    _record_file_operation(request.user, None, FileOperation.RESTORE, started=started, ok=not errors, error_message="; ".join(errors), detail={"count": restored, "error_count": len(errors)})
     return JsonResponse({"ok": not errors, "count": restored, "errors": errors}, status=status)
 
 
@@ -233,22 +334,28 @@ def bulk_restore(request):
 @email_verification_required
 @require_http_methods(["POST"])
 def bulk_move(request):
+    started = perf_counter()
     data = _json_body(request)
     uids = data.get("uids") or []
     parent_id = data.get("parent_id")
     if not isinstance(uids, list) or not uids:
+        _record_file_operation(request.user, None, FileOperation.MOVE, started=started, ok=False, error_message="At least one item must be selected.")
         return JsonResponse({"ok": False, "errors": ["At least one item must be selected."]}, status=400)
     if parent_id is None:
+        _record_file_operation(request.user, None, FileOperation.MOVE, started=started, ok=False, error_message="A destination folder must be specified.")
         return JsonResponse({"ok": False, "errors": ["A destination folder must be specified."]}, status=400)
 
     target_parent = None
     to_root = parent_id in {"", "root"}
     if not to_root:
-        target_parent = get_object_or_404(Node, uid=parent_id, owner=request.user, node_type=NodeType.FOLDER, trashed=False)
+        target_parent = get_object_or_404(Node, uid=parent_id, workspace=request.workspace, node_type=NodeType.FOLDER, trashed=False)
 
     moved = 0
     errors = []
-    for node in _node_queryset_for_uids(request.user, uids, trashed=False):
+    for node in _node_queryset_for_uids(request.workspace, uids, trashed=False):
+        if not _can_edit_subtree(request, node):
+            errors.append(f"{node.name}: only the owner or a workspace admin can move this item.")
+            continue
         try:
             if to_root:
                 node.move(to_root=True)
@@ -259,6 +366,7 @@ def bulk_move(request):
             errors.append(f"{node.name}: {exc}")
 
     status = 207 if errors else 200
+    _record_file_operation(request.user, None, FileOperation.MOVE, started=started, ok=not errors, error_message="; ".join(errors), detail={"count": moved, "target_parent_uid": parent_id, "error_count": len(errors)})
     return JsonResponse({"ok": not errors, "count": moved, "errors": errors}, status=status)
 
 
@@ -266,7 +374,13 @@ def bulk_move(request):
 @email_verification_required
 @require_http_methods(["POST"])
 def toggle_star(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user)
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace)
+    if not _can_edit_node(request, node):
+        return api_error_response(
+            "PERMISSION_DENIED",
+            "Only the document owner or a workspace admin can modify this file.",
+            status=403,
+        )
     is_starred = file_service.toggle_star_status(node)
     return JsonResponse({"ok": True, "starred": is_starred})
 
@@ -275,15 +389,15 @@ def toggle_star(request, uid):
 @email_verification_required
 @require_http_methods(["GET"])
 def file_detail(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user)
-    return JsonResponse({"ok": True, "file": node.to_dict()})
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace)
+    return JsonResponse({"ok": True, "file": node.to_dict(include_ai_meta=True)})
 
 
 @login_required
 @email_verification_required
 @require_http_methods(["GET"])
 def get_parsed_text(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user, node_type=NodeType.FILE)
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace, node_type=NodeType.FILE)
     if not hasattr(node, "parse_result"):
         return JsonResponse({"ok": False, "errors": ["No AI parse result found for this file."]}, status=404)
     
@@ -300,7 +414,13 @@ def get_parsed_text(request, uid):
 @email_verification_required
 @require_http_methods(["POST"])
 def update_meta(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user, node_type=NodeType.FILE)
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace, node_type=NodeType.FILE)
+    if not _can_edit_node(request, node):
+        return api_error_response(
+            "PERMISSION_DENIED",
+            "Only the document owner or a workspace admin can modify this file.",
+            status=403,
+        )
     data = _json_body(request)
     
     if hasattr(node, "parse_result"):
@@ -318,14 +438,14 @@ def update_meta(request, uid):
     else:
         return JsonResponse({"ok": False, "errors": ["Parse result not found for this file."]}, status=400)
     
-    return JsonResponse({"ok": True, "file": node.to_dict()})
+    return JsonResponse({"ok": True, "file": node.to_dict(include_ai_meta=True)})
 
 
 @login_required
 @email_verification_required
 @require_http_methods(["GET"])
 def all_folders(request):
-    qs = Node.objects.filter(owner=request.user, node_type=NodeType.FOLDER, trashed=False).order_by("path")
+    qs = Node.objects.filter(workspace=request.workspace, node_type=NodeType.FOLDER, trashed=False).order_by("path")
     data = [{"uid": str(node.uid), "name": node.name, "path": node.path} for node in qs]
     return JsonResponse({"ok": True, "folders": data})
 
@@ -342,7 +462,7 @@ def rag_scope_nodes(request):
 
     qs = (
         Node.objects.filter(
-            owner=request.user,
+            workspace=request.workspace,
             trashed=False,
         )
         .filter(Q(node_type=NodeType.FOLDER) | Q(node_type=NodeType.FILE, blob__isnull=False))
@@ -379,7 +499,7 @@ def rag_scope_nodes(request):
     folder_paths = [node.path.rstrip("/") for node in nodes if node.node_type == NodeType.FOLDER]
     for folder_path in folder_paths:
         folder_file_counts[folder_path] = Node.objects.filter(
-            owner=request.user,
+            workspace=request.workspace,
             node_type=NodeType.FILE,
             trashed=False,
             blob__isnull=False,
@@ -413,7 +533,10 @@ def rag_scope_nodes(request):
 @email_verification_required
 @require_http_methods(["GET"])
 def get_storage_usage(request):
-    storage, _ = UserStorage.objects.get_or_create(user=request.user)
+    storage, _ = UserStorage.objects.get_or_create(
+        workspace=request.workspace,
+        defaults={"user": request.workspace.created_by},
+    )
     return JsonResponse({
         "ok": True,
         "used_size": storage.used_size,
@@ -430,7 +553,7 @@ def get_storage_usage(request):
 @require_http_methods(["GET"])
 def ai_readiness(request):
     file_qs = Node.objects.filter(
-        owner=request.user,
+        workspace=request.workspace,
         node_type=NodeType.FILE,
         trashed=False,
         blob__isnull=False,
@@ -438,7 +561,7 @@ def ai_readiness(request):
     total_files = file_qs.distinct().count()
 
     parse_counts = DocumentParseResult.objects.filter(
-        node__owner=request.user,
+        node__workspace=request.workspace,
         node__node_type=NodeType.FILE,
         node__trashed=False,
         node__blob__isnull=False,
@@ -531,7 +654,7 @@ def ai_readiness(request):
 @require_http_methods(["GET"])
 @xframe_options_sameorigin
 def file_download(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user, node_type=NodeType.FILE)
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace, node_type=NodeType.FILE)
     if not hasattr(node, "blob") or not node.blob.file:
         raise Http404("File not found.")
 
@@ -544,8 +667,16 @@ def file_download(request, uid):
 @email_verification_required
 @require_http_methods(["DELETE", "POST"])
 def file_delete(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user)
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace)
+    if not _can_edit_subtree(request, node):
+        return api_error_response(
+            "PERMISSION_DENIED",
+            "Only the document owner or a workspace admin can modify this file.",
+            status=403,
+        )
+    started = perf_counter()
     file_service.move_to_trash(node)
+    _record_file_operation(request.user, node, FileOperation.DELETE, started=started, ok=True)
     return JsonResponse({"ok": True, "message": "Moved to trash."})
 
 
@@ -553,7 +684,13 @@ def file_delete(request, uid):
 @email_verification_required
 @require_http_methods(["POST"])
 def retry_ai_processing(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user, node_type=NodeType.FILE, trashed=False)
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace, node_type=NodeType.FILE, trashed=False)
+    if not _can_edit_node(request, node):
+        return api_error_response(
+            "PERMISSION_DENIED",
+            "Only the document owner or a workspace admin can modify this file.",
+            status=403,
+        )
     if not node.ai_processing_enabled:
         node.ai_processing_enabled = True
         node.save(update_fields=["ai_processing_enabled", "updated_at"])
@@ -569,7 +706,7 @@ def retry_ai_processing(request, uid):
             node.parse_result.status = AIStatus.PENDING
             node.parse_result.errors = []
             node.parse_result.save(update_fields=["status", "errors", "updated_at"])
-        parse_document_with_docling.delay(node.id)
+        parse_document_with_docling.delay(node.id, **enqueue_kwargs())
         return JsonResponse({"ok": True, "action": "parse_requeued", "message": "Parsing retry has been queued."})
 
     if embedding_status == AIStatus.FAILED:
@@ -577,7 +714,7 @@ def retry_ai_processing(request, uid):
             parse_result=node.parse_result,
             status=AIStatus.FAILED,
         ).update(status=AIStatus.PENDING, error_message={})
-        enqueue_embedding_tasks.delay(node.id)
+        enqueue_embedding_tasks.delay(node.id, **enqueue_kwargs())
         return JsonResponse({
             "ok": True,
             "action": "embedding_requeued",
@@ -592,7 +729,13 @@ def retry_ai_processing(request, uid):
 @email_verification_required
 @require_http_methods(["POST"])
 def set_ai_processing(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user, trashed=False)
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace, trashed=False)
+    if not _can_edit_subtree(request, node):
+        return api_error_response(
+            "PERMISSION_DENIED",
+            "Only the document owner or a workspace admin can modify this file.",
+            status=403,
+        )
     data = _json_body(request)
     enabled = _bool_from_request(data.get("enabled"), default=True)
     qs = file_service._subtree_queryset(node)  # Reuse the same folder-subtree semantics as trash.
@@ -610,7 +753,7 @@ def set_ai_processing(request, uid):
 @email_verification_required
 @require_http_methods(["GET"])
 def recent_files(request):
-    qs = file_service.get_recent_files(request.user)
+    qs = file_service.get_recent_files(request.workspace)
     data = [node.to_dict() for node in qs]
     return JsonResponse({"ok": True, "files": data})
 
@@ -619,7 +762,7 @@ def recent_files(request):
 @email_verification_required
 @require_http_methods(["GET"])
 def starred_files(request):
-    qs = file_service.get_starred_files(request.user)
+    qs = file_service.get_starred_files(request.workspace)
     data = [node.to_dict() for node in qs]
     return JsonResponse({"ok": True, "files": data})
 
@@ -628,7 +771,7 @@ def starred_files(request):
 @email_verification_required
 @require_http_methods(["GET"])
 def trash_files(request):
-    qs = file_service.get_trashed_files(request.user)
+    qs = file_service.get_trashed_files(request.workspace)
     data = [node.to_dict() for node in qs]
     return JsonResponse({"ok": True, "files": data})
 
@@ -637,11 +780,20 @@ def trash_files(request):
 @email_verification_required
 @require_http_methods(["POST"])
 def restore_file(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user, trashed=True)
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace, trashed=True)
+    if not _can_edit_subtree(request, node):
+        return api_error_response(
+            "PERMISSION_DENIED",
+            "Only the document owner or a workspace admin can modify this file.",
+            status=403,
+        )
+    started = perf_counter()
     try:
         file_service.restore_file(node)
     except ValueError as exc:
+        _record_file_operation(request.user, node, FileOperation.RESTORE, started=started, ok=False, error_message=str(exc))
         return JsonResponse({"ok": False, "errors": [str(exc)]}, status=400)
+    _record_file_operation(request.user, node, FileOperation.RESTORE, started=started, ok=True)
     return JsonResponse({"ok": True, "message": "Restored."})
 
 
@@ -649,8 +801,17 @@ def restore_file(request, uid):
 @email_verification_required
 @require_http_methods(["DELETE", "POST"])
 def permanent_delete(request, uid):
-    node = get_object_or_404(Node, uid=uid, owner=request.user, trashed=True)
+    node = get_object_or_404(Node, uid=uid, workspace=request.workspace, trashed=True)
+    if not _can_edit_subtree(request, node):
+        return api_error_response(
+            "PERMISSION_DENIED",
+            "Only the document owner or a workspace admin can modify this file.",
+            status=403,
+        )
+    started = perf_counter()
+    original_name = node.name
     file_service.permanent_delete(node)
+    _record_file_operation(request.user, None, FileOperation.PERMANENT_DELETE, started=started, ok=True, detail={"original_name": original_name})
     return JsonResponse({"ok": True, "message": "Permanently deleted."})
 
 
@@ -658,7 +819,20 @@ def permanent_delete(request, uid):
 @email_verification_required
 @require_http_methods(["DELETE", "POST"])
 def empty_trash(request):
-    file_service.empty_trash(request.user)
+    started = perf_counter()
+    is_admin = (
+        request.workspace_membership is not None
+        and request.workspace_membership.role == WorkspaceMembership.ROLE_ADMIN
+    )
+    # Non-admins only purge their own trashed items; admins may purge the
+    # whole workspace's trash.
+    trashed_qs = Node.objects.filter(workspace=request.workspace, trashed=True)
+    if not is_admin:
+        trashed_qs = trashed_qs.filter(owner=request.user)
+    purged = file_service._delete_nodes_with_blobs(
+        trashed_qs, reason="empty_trash", workspace_id=request.workspace.id
+    )
+    _record_file_operation(request.user, None, FileOperation.EMPTY_TRASH, started=started, ok=True, detail={"count": purged})
     return JsonResponse({"ok": True, "message": "Trash emptied."})
 
 
@@ -666,9 +840,18 @@ def empty_trash(request):
 @email_verification_required
 @require_http_methods(["GET"])
 def recent_search_history(request):
-    limit = min(int(request.GET.get("limit", 10)), 20)
+    try:
+        limit = int(request.GET.get("limit", 10))
+    except (TypeError, ValueError):
+        return api_error_response(
+            "INVALID_REQUEST",
+            "limit must be an integer.",
+            status=400,
+            details={"limit": ["Enter an integer from 1 to 20."]},
+        )
+    limit = max(1, min(limit, 20))
     rag_jobs = (
-        RAGJob.objects.filter(owner=request.user, status=AIStatus.COMPLETED)
+        RAGJob.objects.filter(workspace=request.workspace, status=AIStatus.COMPLETED)
         .select_related("search_job")
         .order_by("-completed_at")[:limit]
     )
@@ -682,6 +865,10 @@ def recent_search_history(request):
             "answer": job.answer,
             "citations": job.citations,
             "result_count": result_count,
+            "language": job.language,
+            "node_ids": job.node_ids,
+            "llm_model": job.llm_model,
+            "performance_metrics": job.performance_metrics,
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
             "created_at": job.created_at.isoformat(),
         })

@@ -48,6 +48,11 @@ def build_embedding_runtime_payload(
         "distance_strategy": _entry_value(entry, "distance_strategy"),
         "query_prefix": _entry_value(entry, "query_prefix"),
         "document_prefix": _entry_value(entry, "document_prefix"),
+        "languages": (
+            _entry_value(entry, "languages")
+            if (isinstance(entry, Mapping) and "languages" in entry) or hasattr(entry, "languages")
+            else []
+        ),
         "resolved_at": datetime.now(timezone.utc).isoformat(),
     }
 

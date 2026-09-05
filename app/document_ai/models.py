@@ -66,6 +66,10 @@ class DocumentParseResult(models.Model):
     # Execution Result
     timings = models.JSONField(default=dict, blank=True)
     errors = models.JSONField(default=list, blank=True)
+
+    # trace_id, queue_wait_ms, parse_processing_ms 등 앱 레벨 성능 계측치.
+    # `timings`(Docling 자체 내부 프로파일링)과는 별개.
+    performance_metrics = models.JSONField(default=dict, blank=True)
     
     # Optional Debug / Reproducibility Metadata
     metadata = models.JSONField(default=dict, blank=True)
@@ -115,6 +119,7 @@ class DocumentParseResult(models.Model):
             "chunk_count": self.chunk_count,
             "timings": self.timings,
             "errors": self.errors,
+            "performance_metrics": self.performance_metrics,
             "metadata": self.metadata,
             "summary": self.summary,
             "auto_tags": self.auto_tags,
@@ -147,6 +152,9 @@ class DocumentChunk(models.Model):
         db_index=True,
     )
     error_message = models.JSONField(default=dict, blank=True)
+
+    # trace_id, queue_wait_ms, embedding_processing_ms 등 앱 레벨 성능 계측치.
+    performance_metrics = models.JSONField(default=dict, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -188,6 +196,7 @@ class DocumentChunk(models.Model):
             "page_to": self.page_to,
             "token_count": self.token_count,
             "chunk_meta": self.chunk_meta,
+            "performance_metrics": self.performance_metrics,
             "created_at": self.created_at.isoformat(),
         }
 
@@ -246,8 +255,13 @@ class ChunkEmbedding(models.Model):
         default="legacy-bge-m3",
     )
 
-    # dimension ?? 
+    # Multi-dimension vector fields for different embedding models
+    # BGE-M3 (1024), Harrier (640), Granite-278m (768), Qwen/OpenAI (1536), Granite-107m/MiniLM (384)
     vector = VectorField(dimensions=1024, null=True, blank=True)
+    vector_640 = VectorField(dimensions=640, null=True, blank=True)
+    vector_768 = VectorField(dimensions=768, null=True, blank=True)
+    vector_1536 = VectorField(dimensions=1536, null=True, blank=True)
+    vector_384 = VectorField(dimensions=384, null=True, blank=True)
     sparse_vector = models.JSONField(default=dict, blank=True)
 
     # Status
@@ -282,7 +296,35 @@ class ChunkEmbedding(models.Model):
                 m=16,
                 ef_construction=64,
                 opclasses=['vector_ip_ops']
-            )
+            ),
+            HnswIndex(
+                name='chunk_emb_vec_640_hnsw_idx',
+                fields=['vector_640'],
+                m=16,
+                ef_construction=64,
+                opclasses=['vector_ip_ops']
+            ),
+            HnswIndex(
+                name='chunk_emb_vec_768_hnsw_idx',
+                fields=['vector_768'],
+                m=16,
+                ef_construction=64,
+                opclasses=['vector_ip_ops']
+            ),
+            HnswIndex(
+                name='chunk_emb_vec_1536_hnsw_idx',
+                fields=['vector_1536'],
+                m=16,
+                ef_construction=64,
+                opclasses=['vector_ip_ops']
+            ),
+            HnswIndex(
+                name='chunk_emb_vec_384_hnsw_idx',
+                fields=['vector_384'],
+                m=16,
+                ef_construction=64,
+                opclasses=['vector_ip_ops']
+            ),
         ]
 
     def __str__(self):
@@ -398,10 +440,30 @@ class ChunkSegmentEmbedding(models.Model):
         return f"{self.chunk_id} - Segment {self.segment_index} (w={self.window_size})"
 
 
+def _ensure_workspace_from_owner(instance):
+    if instance.workspace_id or not instance.owner_id:
+        return
+    from workspaces.models import WorkspaceMembership
+
+    instance.workspace_id = WorkspaceMembership.objects.filter(
+        user_id=instance.owner_id,
+        status=WorkspaceMembership.STATUS_ACTIVE,
+        workspace__kind="personal",
+    ).values_list("workspace_id", flat=True).first()
+    if not instance.workspace_id:
+        raise ValueError("A workspace is required.")
+
+
 class QueryUnderstandingLog(models.Model):
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        on_delete=models.CASCADE,
+        related_name="query_understanding_logs",
+    )
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
         related_name="document_ai_query_understanding_logs",
     )
     mode = models.CharField(max_length=32, default="search", db_index=True)
@@ -434,6 +496,7 @@ class QueryUnderstandingLog(models.Model):
 
     class Meta:
         indexes = [
+            models.Index(fields=["workspace", "mode", "-created_at"], name="docai_qu_ws_mode_created_idx"),
             models.Index(fields=["owner", "mode", "-created_at"]),
             models.Index(fields=["intent", "-created_at"]),
             models.Index(fields=["retrieval_required", "-created_at"]),
@@ -443,11 +506,21 @@ class QueryUnderstandingLog(models.Model):
     def __str__(self):
         return f"QueryUnderstandingLog({self.id}) {self.intent}: {self.raw_query[:40]}"
 
+    def save(self, *args, **kwargs):
+        _ensure_workspace_from_owner(self)
+        return super().save(*args, **kwargs)
+
 
 class SearchJob(models.Model):
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        on_delete=models.CASCADE,
+        related_name="search_jobs",
+    )
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
         related_name="document_ai_search_jobs",
     )
     query_log = models.ForeignKey(
@@ -482,12 +555,19 @@ class SearchJob(models.Model):
 
     class Meta:
         indexes = [
+            models.Index(fields=["workspace", "status", "-created_at"], name="docai_se_ws_status_created_idx"),
             models.Index(fields=["owner", "status", "-created_at"]),
         ]
         ordering = ["-created_at"]
 
     def __str__(self):
         return f"SearchJob({self.id}) {self.status}: {self.query[:40]}"
+
+    def save(self, *args, **kwargs):
+        _ensure_workspace_from_owner(self)
+        if self.query_log_id and self.query_log.workspace_id != self.workspace_id:
+            raise ValueError("Search job and query log must belong to the same workspace.")
+        return super().save(*args, **kwargs)
 
 
 class LLMEndpoint(models.Model):
@@ -507,6 +587,12 @@ class LLMEndpoint(models.Model):
 
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="document_ai_llm_endpoints",
+    )
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
         on_delete=models.CASCADE,
         related_name="llm_endpoints",
     )
@@ -533,16 +619,21 @@ class LLMEndpoint(models.Model):
         ordering = ["name"]
         constraints = [
             models.UniqueConstraint(
-                fields=["owner", "name"],
-                name="uniq_llm_endpoint_name_per_owner",
+                fields=["workspace", "name"],
+                name="uniq_llm_endpoint_name_per_workspace",
             )
         ]
         indexes = [
             models.Index(fields=["owner", "is_active"]),
+            models.Index(fields=["workspace", "is_active"], name="llmendpoint_ws_active_idx"),
         ]
 
+    def save(self, *args, **kwargs):
+        _ensure_workspace_from_owner(self)
+        return super().save(*args, **kwargs)
+
     def __str__(self):
-        return f"{self.name} ({self.owner})"
+        return f"{self.name} ({self.owner or 'deleted user'})"
 
     @property
     def normalized_base_url(self) -> str:
@@ -561,10 +652,22 @@ class LLMEndpoint(models.Model):
 
 
 class UserLLMPreference(models.Model):
-    """Per-user defaults for LLM-backed document AI tasks."""
+    """Workspace-wide defaults for LLM-backed document AI tasks.
 
-    user = models.OneToOneField(
+    `user` is kept only as a legacy audit reference to whoever originally
+    configured the preference; `workspace` is the sole scope going forward
+    so team members share one RAG default.
+    """
+
+    user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="legacy_llm_preference",
+    )
+    workspace = models.OneToOneField(
+        "workspaces.Workspace",
         on_delete=models.CASCADE,
         related_name="llm_preference",
     )
@@ -579,8 +682,21 @@ class UserLLMPreference(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        if not self.workspace_id and self.user_id:
+            from workspaces.models import WorkspaceMembership
+
+            self.workspace_id = WorkspaceMembership.objects.filter(
+                user_id=self.user_id,
+                status=WorkspaceMembership.STATUS_ACTIVE,
+                workspace__kind="personal",
+            ).values_list("workspace_id", flat=True).first()
+        if not self.workspace_id:
+            raise ValueError("A workspace is required.")
+        return super().save(*args, **kwargs)
+
     def __str__(self):
-        return f"LLM preferences for {self.user}"
+        return f"LLM preferences for {self.workspace}"
 
     def get_rag_model(self) -> str:
         if self.rag_model:
@@ -591,9 +707,15 @@ class UserLLMPreference(models.Model):
 
 
 class RAGJob(models.Model):
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        on_delete=models.CASCADE,
+        related_name="rag_jobs",
+    )
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
         related_name="document_ai_rag_jobs",
     )
     search_job = models.ForeignKey(
@@ -669,9 +791,51 @@ class RAGJob(models.Model):
 
     class Meta:
         indexes = [
+            models.Index(fields=["workspace", "status", "-created_at"], name="docai_ra_ws_status_created_idx"),
             models.Index(fields=["owner", "status", "-created_at"]),
         ]
         ordering = ["-created_at"]
 
     def __str__(self):
         return f"RAGJob({self.id}) {self.status}: {self.question[:40]}"
+
+    def save(self, *args, **kwargs):
+        _ensure_workspace_from_owner(self)
+        if self.search_job_id and self.search_job.workspace_id != self.workspace_id:
+            raise ValueError("RAG and search jobs must belong to the same workspace.")
+        if self.query_log_id and self.query_log.workspace_id != self.workspace_id:
+            raise ValueError("RAG job and query log must belong to the same workspace.")
+        return super().save(*args, **kwargs)
+
+
+class ResourceSnapshot(models.Model):
+    """
+    운영자가 수동으로 실행하는 `collect_resource_snapshot` 명령이 남기는
+    자원 사용량 한 줄 기록. 상시 수집(cron)은 하지 않으므로 row 수가 적어
+    별도 보존정책이 필요 없다 (performance-and-reliability.md 참고).
+
+    `service`는 `app`/`dotori-document`/`db`/`redis`/`dotori-llm` 같은
+    컨테이너 식별자이거나, 디스크 여유 공간처럼 컨테이너 단위가 아닌
+    항목은 `disk:uploads`/`disk:logs`/`disk:config`처럼 구분한다.
+
+    현재는 docker.sock 마운트 없이 수집 가능한 항목(DB connection 수,
+    디스크 여유 공간)만 채워진다. `cpu_percent`/`mem_mb`/`gpu_mem_mb`는
+    컨테이너별 `docker stats`/`nvidia-smi` 연동 전까지는 비워둔다.
+    """
+
+    service = models.CharField(max_length=64, db_index=True)
+    cpu_percent = models.FloatField(null=True, blank=True)
+    mem_mb = models.FloatField(null=True, blank=True)
+    gpu_mem_mb = models.FloatField(null=True, blank=True)
+    db_connections = models.PositiveIntegerField(null=True, blank=True)
+    disk_free_mb = models.FloatField(null=True, blank=True)
+    collected_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["service", "-collected_at"]),
+        ]
+        ordering = ["-collected_at"]
+
+    def __str__(self):
+        return f"ResourceSnapshot({self.service}) at {self.collected_at.isoformat()}"

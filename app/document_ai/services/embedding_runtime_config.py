@@ -33,6 +33,7 @@ class EmbeddingRuntimeSnapshot(BaseModel):
     distance_strategy: str
     query_prefix: str = ""
     document_prefix: str = ""
+    languages: list[str] = Field(default_factory=list)
     runtime_fingerprint: str = ""
     resolved_at: str | None = None
 
@@ -83,6 +84,7 @@ def _legacy_runtime_snapshot(scope: str) -> EmbeddingRuntimeSnapshot:
         dimension=1024,
         supports_sparse=True,
         distance_strategy="inner_product",
+        languages=["multilingual"],
     )
 
 

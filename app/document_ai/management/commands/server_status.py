@@ -49,6 +49,7 @@ def check_file_io_pipeline() -> dict:
     """Exercise the real save_file -> open_file -> delete_file pipeline and clean up after itself."""
     started = time.monotonic()
     owner = _get_or_create_healthcheck_owner()
+    workspace = owner.workspace_memberships.get(workspace__kind="personal").workspace
 
     for stale in Node.objects.filter(owner=owner, name__startswith=HEALTHCHECK_FILE_PREFIX):
         try:
@@ -61,6 +62,7 @@ def check_file_io_pipeline() -> dict:
     node = None
     try:
         node = storage_service.save_file(
+            workspace=workspace,
             owner=owner,
             file=upload,
             description="server_status healthcheck",

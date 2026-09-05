@@ -52,18 +52,22 @@ Docker Desktop with the WSL2 backend is recommended on Windows.
       Nginx
         |
      Web App -------------- Database
-        |
-    Queue Server
-        |
-        +-- embedding-worker  [parse, embed]
-        +-- search-worker     [search]
-        +-- query-worker      [query]
-        +-- rag-worker        [rag] ---- selected local runtime
-                                          |-- llama-rag (llama.cpp)
-                                          `-- vllm-rag  (vLLM)
+        |                       |
+        +-- synchronous search -+
+        +-- HTTP RAG stream -------- selected local runtime
+        |                               |-- llama.cpp
+        |                               `-- vLLM
+        `-- Queue Server
+              `-- dotori-document  [parse, embed]
 ```
 
-The queue server and its workers process tasks asynchronously according to the configured concurrency.
+Only long-running parsing and embedding work is queued. Interactive search returns directly, and RAG answers stream over HTTP.
+
+### Planned Interface Architecture
+
+Dotori is moving gradually from Django template-rendered screens to an API-centered server with a separate `web/` SPA. Django continues to own authentication, authorization, documents, search, RAG, and operator functions. The `web/` frontend is a small, lightweight React SPA that requires no separate Node.js server in production. The GUI and the independent `dotori-cli` reuse the same APIs, which may later support an optional thin MCP adapter.
+
+This is a design direction, not a completed feature. See the [API-centered server and lightweight SPA transition plan](documents/interface-architecture-plan.md) for the intended boundaries and migration sequence.
 
 ## Data and Configuration
 

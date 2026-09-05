@@ -16,7 +16,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--scope",
-            choices=("production", "development"),
+            choices=("production",),
             default="production",
         )
         parser.add_argument("--generation-id")
@@ -63,6 +63,6 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"Rolled back embedding runtime to {target.generation_id}. "
-                "Restart app, embedding-worker, and search-worker."
+                "Restart app and dotori-document."
             )
         )

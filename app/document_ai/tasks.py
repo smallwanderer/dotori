@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, time, timedelta
+from time import perf_counter
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from django.utils import timezone
 from django.db import transaction
 from django.db.models import Count, Exists, F, OuterRef, Q
 
+from document_ai.db_span import capture_db_spans
 from document_ai.embedding.store_registry import get_embedding_store_instance
 from document_ai.models import DocumentParseResult, DocumentChunk
 from document_ai.parsers.config import (
@@ -24,12 +26,15 @@ from document_ai.parsers.config import (
     get_parser_tokenizer_id,
 )
 from document_ai.parsers.text_utils import normalize_extracted_text, serialize_meta
+from document_ai.performance import datetime_delta_ms, elapsed_ms, put_metric
+from document_ai.tracing_utils import enqueue_kwargs
 
 from config.enums import AIStatus
+from config.tracing import get_trace_id, new_trace_id, set_trace_id
 from document_ai.rag.generation import _build_rag_context
 
 if TYPE_CHECKING:
-    from document_ai.parsers.docling_parser import ParseResult
+    from document_ai.parsers.schema import ParseResult
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +335,26 @@ def _redis_client():
     return Redis.from_url(redis_url, socket_connect_timeout=2, socket_timeout=2)
 
 
+def _embedding_queue_backpressure() -> tuple[bool, int | None, int]:
+    """Return whether new parsing should pause behind the embed backlog.
+
+    Redis is the Celery broker, so the queue list length is the authoritative
+    count of waiting embed tasks. A broker inspection failure is fail-open:
+    Celery itself will still provide delivery/retry semantics, and a transient
+    monitoring failure must not stop document ingestion.
+    """
+    limit = _get_positive_int_env("DOCUMENT_AI_EMBED_QUEUE_BACKPRESSURE_LIMIT", 32)
+    try:
+        depth = int(_redis_client().llen("embed"))
+    except Exception as exc:
+        logger.warning(
+            "Unable to inspect embed queue depth; parse backpressure is temporarily disabled: %s",
+            exc,
+        )
+        return False, None, limit
+    return depth >= limit, depth, limit
+
+
 def _try_acquire_recovery_lock(redis_client, key: str, ttl_seconds: int) -> bool:
     """Redis SET NX 로 복구 락을 획득합니다.
 
@@ -365,7 +390,7 @@ def recover_document_pipeline_backlog() -> dict:
                 skipped_parse_count += 1
                 logger.debug("Parse recovery dedup skip: node_id=%s", node_id)
                 continue
-        parse_document_with_docling.delay(node_id)
+        parse_document_with_docling.delay(node_id, **enqueue_kwargs())
         queued_parse_node_ids.append(node_id)
         recovered_parse_count += 1
 
@@ -406,7 +431,7 @@ def recover_document_pipeline_backlog() -> dict:
                 skipped_embed_count += 1
                 logger.debug("Embed recovery dedup skip: node_id=%s", node_id)
                 continue
-        enqueue_embedding_tasks.delay(node_id)
+        enqueue_embedding_tasks.delay(node_id, **enqueue_kwargs())
         queued_embed_chunk_ids.extend(node_to_chunks.get(node_id, []))
         recovered_embed_count += 1
 
@@ -439,6 +464,7 @@ def save_parse_result(node, pr: ParseResult) -> DocumentParseResult:
     DocumentParseResult + DocumentChunk 를 DB에 저장
     """
     metadata = {
+        "parser_backend": pr.parser_backend,
         "parser_version": pr.parser_version,
         "tokenizer_name": get_parser_tokenizer_id(),
         "chunk_max_tokens": get_chunk_max_tokens(),
@@ -462,7 +488,7 @@ def save_parse_result(node, pr: ParseResult) -> DocumentParseResult:
         doc_result, _ = DocumentParseResult.objects.update_or_create(
             node=node,
             defaults = {
-                "parser_name": "docling",
+                "parser_name": pr.parser_backend,
                 "parser_mode": pr.parser_mode or "",
                 "status": parse_status,
                 "input_format": pr.input_format or "",
@@ -546,49 +572,97 @@ def _extract_page(meta: dict, key: str) -> int | None:
     return None
 
 
-@shared_task(queue="parse")
-def parse_document_with_docling(node_id: int) -> dict:
+@shared_task(
+    queue="parse",
+    bind=True,
+    max_retries=2,
+    retry_backoff=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def parse_document_with_docling(
+    self, node_id: int, trace_id: str | None = None, enqueued_at: str | None = None
+) -> dict:
     """
     Celery 태스크: 파싱 → DB 저장 오케스트레이션
     node_id를 받아 파일 경로를 조회하고, 파싱 후 결과를 DB에 저장
     """
     from files.models import Node
-    from document_ai.parsers.docling_parser import parse_document_entry
+    from document_ai.parsers.registry import get_document_parser
+
+    parser = get_document_parser()
+
+    set_trace_id(trace_id or new_trace_id())
+    task_start = timezone.now()
+    worker_started = perf_counter()
+    enqueued_dt = datetime.fromisoformat(enqueued_at) if enqueued_at else None
+
+    should_pause, embed_queue_depth, backpressure_limit = _embedding_queue_backpressure()
+    if should_pause:
+        retry_seconds = _get_positive_int_env(
+            "DOCUMENT_AI_PARSE_BACKPRESSURE_RETRY_SECONDS", 5
+        )
+        logger.warning(
+            "Parse deferred by embed queue backpressure: node_id=%s, embed_queue_depth=%s, limit=%s, retry_seconds=%s",
+            node_id,
+            embed_queue_depth,
+            backpressure_limit,
+            retry_seconds,
+        )
+        raise self.retry(
+            exc=RuntimeError(
+                f"embed queue depth {embed_queue_depth} reached limit {backpressure_limit}"
+            ),
+            countdown=retry_seconds,
+            max_retries=None,
+        )
 
     try:
-        node = Node.objects.select_related("blob").get(pk=node_id)
-        if node.node_type != "file":
-            raise ValueError(f"Node {node_id} is not a file")
-        if not node.ai_processing_enabled:
-            logger.info("Parse skipped: node_id=%s, reason=ai_processing_disabled", node_id)
-            return {
-                "status": "skipped",
-                "node_id": node_id,
-                "message": "AI processing is disabled",
-            }
-        if not hasattr(node, "blob") or not node.blob.file:
-            raise ValueError(f"Node {node_id} has no attached file blob")
+        with capture_db_spans():
+            try:
+                node = Node.objects.select_related("blob").get(pk=node_id)
+                if node.node_type != "file":
+                    raise ValueError(f"Node {node_id} is not a file")
+                if not node.ai_processing_enabled:
+                    logger.info("Parse skipped: node_id=%s, reason=ai_processing_disabled", node_id)
+                    return {
+                        "status": "skipped",
+                        "node_id": node_id,
+                        "message": "AI processing is disabled",
+                    }
+                if not hasattr(node, "blob") or not node.blob.file:
+                    raise ValueError(f"Node {node_id} has no attached file blob")
 
-        file_path = node.blob.file.path
+                file_path = node.blob.file.path
 
-        logger.info("Parse started: node_id=%s", node_id)
+                logger.info("Parse started: node_id=%s", node_id)
 
-        # 1. 파서 호출 (순수 Pydantic 결과)
-        parse_result = parse_document_entry(file_path)
+                # 1. 파서 호출 (순수 Pydantic 결과)
+                parse_result = parser.parse(file_path)
 
-        node.refresh_from_db(fields=["ai_processing_enabled"])
-        if not node.ai_processing_enabled:
-            logger.info("Parse result discarded: node_id=%s, reason=ai_processing_disabled_after_parse", node_id)
-            return {
-                "status": "skipped",
-                "node_id": node_id,
-                "message": "AI processing was disabled during parsing",
-            }
+                node.refresh_from_db(fields=["ai_processing_enabled"])
+                if not node.ai_processing_enabled:
+                    logger.info("Parse result discarded: node_id=%s, reason=ai_processing_disabled_after_parse", node_id)
+                    return {
+                        "status": "skipped",
+                        "node_id": node_id,
+                        "message": "AI processing was disabled during parsing",
+                    }
 
-        # 2. DB 저장 (Pydantic → ORM 매핑)
-        doc_result = save_parse_result(node, parse_result)
+                # 2. DB 저장 (Pydantic → ORM 매핑)
+                doc_result = save_parse_result(node, parse_result)
 
-        enqueue_embedding_tasks.delay(node_id)
+                metrics = dict(doc_result.performance_metrics or {})
+                put_metric(metrics, "trace_id", get_trace_id())
+                put_metric(metrics, "queue_wait_ms", datetime_delta_ms(enqueued_dt, task_start))
+                put_metric(metrics, "parse_processing_ms", elapsed_ms(worker_started))
+                doc_result.performance_metrics = metrics
+                doc_result.save(update_fields=["performance_metrics"])
+            except Node.DoesNotExist:
+                logger.error(f"Node {node_id} not found")
+                return {"status": "failed", "error": f"Node {node_id} not found"}
+
+        enqueue_embedding_tasks.delay(node_id, **enqueue_kwargs(trace_id=get_trace_id()))
 
         logger.info(
             "Parse completed: node_id=%s, status=%s, chunks=%s, parser_mode=%s",
@@ -604,20 +678,23 @@ def parse_document_with_docling(node_id: int) -> dict:
             "chunk_count": doc_result.chunk_count,
         }
 
-    except Node.DoesNotExist:
-        logger.error(f"Node {node_id} not found")
-        return {"status": "failed", "error": f"Node {node_id} not found"}
-
     except Exception as e:
         logger.exception(f"파싱 실패: node_id={node_id}")
+
+        failure_metrics = {}
+        put_metric(failure_metrics, "trace_id", get_trace_id())
+        put_metric(failure_metrics, "queue_wait_ms", datetime_delta_ms(enqueued_dt, task_start))
+        put_metric(failure_metrics, "parse_processing_ms", elapsed_ms(worker_started))
+        failure_metrics["failed"] = True
 
         # 실패 상태 기록
         DocumentParseResult.objects.update_or_create(
             node_id=node_id,
             defaults={
-                "parser_name": "docling",
+                "parser_name": parser.spec.backend,
                 "status": AIStatus.FAILED,
                 "errors": [{"message": str(e)}],
+                "performance_metrics": failure_metrics,
                 "metadata": {
                     "tokenizer_name": get_embedding_model(),
                     "chunk_max_tokens": get_chunk_max_tokens(),
@@ -628,6 +705,9 @@ def parse_document_with_docling(node_id: int) -> dict:
             },
         )
 
+        if isinstance(e, (OSError, TimeoutError, ConnectionError)) and self.request.retries < self.max_retries:
+            raise self.retry(exc=e)
+
         return {
             "status": "failed",
             "node_id": node_id,
@@ -635,18 +715,46 @@ def parse_document_with_docling(node_id: int) -> dict:
         }
 
 @shared_task(queue="embed")
-def enqueue_embedding_tasks(node_id: int) -> dict:
+def run_quality_evaluation_task(run_uid: str) -> None:
+    """Runs a workspace quality-profile evaluation (WorkspaceQualityEvaluationRun)
+    and persists its metrics. Defined here rather than in document_ai.search.evaluation
+    because Celery's autodiscover_tasks() only imports each app's tasks.py module."""
+    from document_ai.search.evaluation import execute_quality_evaluation_run
+
+    execute_quality_evaluation_run(run_uid)
+
+
+@shared_task(queue="embed")
+def enqueue_embedding_tasks(
+    node_id: int,
+    trace_id: str | None = None,
+    enqueued_at: str | None = None,
+) -> dict:
     """
     Celery 태스크: 임베딩 → DB 저장 오케스트레이션
     node_id를 받아 파일 경로를 조회하고, 임베딩 후 결과를 DB에 저장
     """
     from document_ai.processing.embedding import enqueue_embedding_tasks_sync
 
-    return enqueue_embedding_tasks_sync(node_id)
+    # `enqueued_at` is part of the common Celery tracing envelope. This
+    # orchestration task does not persist its own queue-wait metric, but it
+    # must accept the envelope before it fans out chunk tasks that do.
+    _ = enqueued_at
+    return enqueue_embedding_tasks_sync(node_id, trace_id=trace_id)
 
 
-@shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
-def embedding_document_with_bge(self, chunk_id: int) -> dict:
+@shared_task(
+    queue="embed",
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=3,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def embedding_document_with_bge(
+    self, chunk_id: int, trace_id: str | None = None, enqueued_at: str | None = None
+) -> dict:
     """
     Celery 태스크: 임베딩 → DB 저장 오케스트레이션
     node_id를 받아 파일 경로를 조회하고, 임베딩 후 결과를 DB에 저장
@@ -656,6 +764,8 @@ def embedding_document_with_bge(self, chunk_id: int) -> dict:
 
         return embed_document_chunk_sync(
             chunk_id,
+            trace_id=trace_id,
+            enqueued_at=enqueued_at,
             retries=self.request.retries,
             max_retries=self.max_retries,
         )
@@ -663,20 +773,36 @@ def embedding_document_with_bge(self, chunk_id: int) -> dict:
         raise self.retry(exc=exc)
 
 
-@shared_task(queue="search", bind=True, autoretry_for=(Exception,), retry_backoff=True, max_retries=1)
-def perform_vector_search(self, job_id: int) -> dict:
-    from document_ai.search.execution import perform_vector_search_sync
-
+@shared_task(
+    queue="embed",
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=3,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def embedding_document_batch_with_bge(
+    self, chunk_ids: list[int], trace_id: str | None = None, enqueued_at: str | None = None
+) -> dict:
+    """
+    Celery 태스크: 같은 문서의 청크 묶음을 model.encode() 한 번으로 임베딩.
+    enqueue_embedding_tasks_sync가 청크 수/토큰 예산으로 미리 묶어 넘긴 chunk_ids를
+    받아 처리한다. 실패 시 배치 전체를 하나의 단위로 재시도한다.
+    """
     try:
-        return perform_vector_search_sync(
-            job_id,
+        from document_ai.processing.embedding import RetryableEmbeddingError, embed_document_chunks_batch_sync
+
+        return embed_document_chunks_batch_sync(
+            chunk_ids,
+            trace_id=trace_id,
+            enqueued_at=enqueued_at,
             retries=self.request.retries,
             max_retries=self.max_retries,
         )
-    except Exception as exc:
-        if self.request.retries < self.max_retries:
-            raise self.retry(exc=exc)
-        raise
+    except RetryableEmbeddingError as exc:
+        raise self.retry(exc=exc)
+
 
 def _summarize_structured_filters(filters: list[dict]) -> list[str]:
     summaries = []
@@ -724,18 +850,3 @@ def parse_user_query(query: str, mode: str = "search") -> dict:
     from document_ai.query_understanding.parser_service import parse_user_query_sync
 
     return parse_user_query_sync(query, mode)
-
-
-@shared_task(queue="rag", bind=True, soft_time_limit=330, time_limit=360)
-def generate_rag_response(self, rag_job_id: int) -> dict:
-    """
-    RAG 답변 생성 태스크.
-    검색은 search worker가 완료한 SearchJob 결과를 사용하고,
-    llama-rag 엔드포인트와 RAG 전용 세마포어 정책으로 celery rag 큐에서 실행합니다.
-    """
-    from document_ai.rag.generation import RAGGenerationBusy, generate_rag_response_sync
-
-    try:
-        return generate_rag_response_sync(rag_job_id)
-    except RAGGenerationBusy as exc:
-        raise self.retry(exc=exc, countdown=10, max_retries=6)

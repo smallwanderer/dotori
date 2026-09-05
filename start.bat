@@ -10,6 +10,18 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
+python -c "import requests" >nul 2>nul
+if %errorlevel% equ 0 goto menu
+
+echo [INFO] Installing required Python package: requests
+python -m pip install --quiet requests
+python -c "import requests" >nul 2>nul
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to install "requests". Run "pip install requests" manually and retry.
+    pause
+    exit /b
+)
+
 :menu
 cls
 echo ============================================================

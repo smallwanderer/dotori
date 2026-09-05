@@ -43,7 +43,7 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--scope",
-            choices=("production", "development"),
+            choices=("production",),
             default="production",
         )
         parser.add_argument(
@@ -54,7 +54,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--limit",
             type=int,
-            help="Development-only candidate limit. Limited runs cannot activate.",
+            help="Diagnostic candidate limit. Limited runs cannot activate.",
         )
         parser.add_argument(
             "--force-reembed",
@@ -176,6 +176,10 @@ class Command(BaseCommand):
             },
         )
 
+        # provider proxies to dotori-document's /embed when run outside it (see
+        # RemoteBGEM3Provider) -- correct either way, but running this inside
+        # dotori-document avoids paying a per-chunk HTTP round trip for what
+        # can be a large bulk re-embed.
         provider = get_embedding_provider(runtime=runtime)
         store = get_embedding_store_instance(runtime=runtime)
         try:
@@ -291,7 +295,7 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"Activated embedding generation: {generation_id}. "
-                "Restart app, embedding-worker, and search-worker before "
+                "Restart app and dotori-document before "
                 "serving new requests."
             )
         )

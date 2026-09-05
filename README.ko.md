@@ -56,17 +56,22 @@ Windows에서는 Docker Desktop의 WSL2 백엔드를 권장합니다.
       Nginx
         |
      Web App -------------- DataBase
-        |
-    Queue Server
-        |
-        +-- embedding-worker  [parse, embed]
-        +-- search-worker     [search]
-        +-- rag-worker        [rag] ---- 선택된 로컬 런타임
-                                          |-- llama-rag (llama.cpp)
-                                          `-- vllm-rag  (vLLM)
+        |                       |
+        +-- 동기 검색 ----------+
+        +-- HTTP RAG 스트림 ------- 선택된 로컬 런타임
+        |                              |-- llama.cpp
+        |                              `-- vLLM
+        `-- Queue Server
+              `-- dotori-document  [parse, embed]
 ```
 
-각 worker로 구성된 Queue Server는 설정된 동시성을 바탕으로 작업을 비동기적으로 처리합니다.
+오래 걸리는 문서 파싱과 임베딩만 Queue Server에서 비동기로 처리합니다. 검색은 즉시 반환하고 RAG 답변은 HTTP로 스트리밍합니다.
+
+### 예정된 인터페이스 구조 변경
+
+Dotori는 Django template 중심 화면을 API 중심 서버와 별도 `web/` SPA로 단계적으로 전환하고 있습니다. Django는 인증, 권한, 문서, 검색, RAG 및 운영 기능을 계속 담당하며, `web/`은 운영 시 별도 Node.js 서버가 필요 없는 작고 가벼운 React SPA로 구성합니다. 같은 API는 GUI와 독립 `dotori-cli`가 재사용하며, 향후 선택적 MCP 어댑터에서도 사용할 수 있습니다.
+
+이 항목은 현재 완료된 기능이 아닌 설계 방향입니다. 자세한 경계와 전환 순서는 [API 중심 서버 및 경량 SPA 전환 계획](documents/interface-architecture-plan.md)을 참고하세요.
 
 
 ## 데이터와 설정

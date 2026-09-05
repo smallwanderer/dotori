@@ -11,16 +11,11 @@ if TYPE_CHECKING:
     from llm_installation.runtime_lifecycle import RuntimeSpec
 
 
-SCOPES = ("production", "development")
+SCOPES = ("production",)
 MODES = ("rag", "search", "basic")
 NETWORK_ACCESS_MODES = ("local", "direct_https")
 CORE_SERVICES = ("db", "redis", "app")
-ALL_WORKER_SERVICES = (
-    "embedding-worker",
-    "search-worker",
-    "rag-worker",
-    "recovery-worker",
-)
+ALL_WORKER_SERVICES = ("dotori-document",)
 
 
 def compose_up_command(
@@ -32,7 +27,7 @@ def compose_up_command(
 ) -> str:
     """Build the explicit fast-start or maintenance rebuild command."""
     build_flag = "--build" if build_images else "--no-build"
-    parts = [compose_command, "up", build_flag]
+    parts = [compose_command, "up", build_flag, "--remove-orphans"]
     if force_recreate:
         parts.append("--force-recreate")
     parts.extend(["-d", *services])
@@ -143,7 +138,7 @@ def _worker_specs(mode: str, *, runtime_available: bool) -> tuple[WorkerSpec, ..
     return (
         WorkerSpec(
             name="embedding",
-            compose_service="embedding-worker",
+            compose_service="dotori-document",
             queues=("parse", "embed"),
             concurrency=1,
             prefetch_multiplier=1,
@@ -151,39 +146,6 @@ def _worker_specs(mode: str, *, runtime_available: bool) -> tuple[WorkerSpec, ..
             requires_runtime=False,
             dependencies=("db", "redis"),
             health_strategy="celery-ping",
-        ),
-        WorkerSpec(
-            name="search",
-            compose_service="search-worker",
-            queues=("search",),
-            concurrency=1,
-            prefetch_multiplier=1,
-            enabled=ai_enabled,
-            requires_runtime=False,
-            dependencies=("db", "redis", "embedding-worker"),
-            health_strategy="celery-ping",
-        ),
-        WorkerSpec(
-            name="rag",
-            compose_service="rag-worker",
-            queues=("rag",),
-            concurrency=1,
-            prefetch_multiplier=1,
-            enabled=mode == "rag" and runtime_available,
-            requires_runtime=True,
-            dependencies=("db", "redis", "rag-runtime"),
-            health_strategy="celery-ping",
-        ),
-        WorkerSpec(
-            name="recovery",
-            compose_service="recovery-worker",
-            queues=(),
-            concurrency=1,
-            prefetch_multiplier=1,
-            enabled=ai_enabled,
-            requires_runtime=False,
-            dependencies=("db", "redis"),
-            health_strategy="celery-beat",
         ),
     )
 
