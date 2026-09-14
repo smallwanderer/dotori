@@ -5,7 +5,7 @@
 개인 및 소규모 팀이 외부 클라우드 서비스를 사용하지 않고 최소한의 리소스로 쾌적하게 문서 검색 및 RAG를 경험할 수 있습니다. 웹 UI 뿐만 아닌 CLI 및 MCP 서버로 확장을 도와줍니다. 사용 중인 PC나 원격 저장소에 쉽게 설치하여 어디서든 사용할 수 있습니다.
 
 <p align="center">
-  <img src="documents/statics/dotori_files.png" width="80%" alt="Dotori document workspace">
+  <img src="./documents/statics/dotori_files.png" width="80%" alt="Dotori document workspace">
 </p>
 
 영문 문서는 [README.md](README.md)를 참고하세요.  상세 내용은 [Walkthrough](./documents/WALKTHROUGH.md)을 참고하세요.
@@ -21,7 +21,7 @@
 - 원하는 기능만을 선택하여 설치 및 운영할 수 있습니다
 - 한국어와 영어 웹 UI
 - 외부 AI 모델 연동을 위한 기능
-- 로컬 BGE-M3 모델 대신 OpenAI 호환 외부 임베딩 엔드포인트(OpenAI, vLLM, Ollama, 자체 서버 등) 연동 지원
+- 로컬 임베딩/LLM 모델 설치 지원 및 외부 endpoint 연결 모두 지원
 
 > 주의
 > 로컬 LLM은 Dotori 설치 도우미를 통해 설치하거나 직접 운영 중인 로컬 LLM을 사용해야 인터넷 연결 없이 안전하게 사용할 수 있습니다.
