@@ -6,7 +6,7 @@
 Dotori는 당신과 당신의 그룹이 로컬 LLM에 쉽게 다가갈 수 있도록 구성되어 있습니다. Dotori for Document는 문서 관리에 특화되어 있으며 스마트한 검색, RAG 기능을 제공하는 AI 문서 어시스턴트입니다. 사용자의 로컬 환경에서 인터넷 연결 또는 별도의 비용 추가 없이 문서와 검색, 질의응답 기능을 안전하게 사용할 수 있습니다.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/54c7a4a6-39cd-49f9-b5ad-99fe4b24a438" width="80%" alt="Dotori document workspace">
+  <img src="./statics/dotori_files.png" width="80%" alt="Dotori document workspace">
 </p>
 
 Dotori는 매우 가볍습니다. 서버를 만드는 데에 엄청난 시스템 자원을 요구하지 않으며, 저사양 컴퓨터에서도 충분히 실행할 수 있습니다. 도커 환경으로 구성되어 윈도우, 맥, 리눅스 모든 운영체제를 지원합니다.
@@ -29,6 +29,26 @@ Dotori는 웹 UI뿐만 아니라 CLI와 HTTP API로도 확장됩니다. 서버�
 - **로컬 우선** — 로컬 LLM으로 운영하면 문서 내용이 외부로 나가지 않습니다. 단, 운영자가 ChatGPT·Claude 같은 외부 모델을 직접 선택하면 그 순간부터 문서 내용이 해당 제공자에게 전송됩니다 — 이 선택은 항상 서버 전체 설정이며 사용자별로 바뀌지 않습니다.
 - **가벼움** — 저사양 서버에서도 실행되도록 설계되어, 개인 PC나 NAS에도 그대로 올릴 수 있습니다.
 - **여러 인터페이스** — 웹 UI, CLI, HTTP API가 같은 서버 기능을 공유하므로 어느 쪽으로 접속해도 동일한 문서·검색 결과를 얻습니다.
+
+## 주요 화면
+
+**문서 검색** — 자연어로 검색하면 관련도 높은 문서를 순서대로 보여줍니다.
+
+![문서 검색](./statics/dotori-search.png)
+
+**RAG 채팅과 답변 근거** — 질문에 대한 답변과 함께, 답변의 근거가 된 문서를 관련도 점수와 함께 확인할 수 있습니다.
+
+![RAG 채팅](./statics/dotor-rag.png)
+
+![답변 근거](./statics/dotori-evidence.png)
+
+**문서 상세** — 문서별 업로드·파싱·임베딩 처리 상태와 메타데이터를 확인합니다.
+
+![문서 상세](./statics/dotori-specific.png)
+
+**운영 요약** — 관리자는 서버 상태와 최근 처리 성능을 한 화면에서 확인합니다. 자세한 내용은 [모니터링 가이드](./monitoring-and-quality-guide.md)를 참고하세요.
+
+![운영 요약](./statics/dotori-management-screen.png)
 
 ## 처음 설치한다면
 

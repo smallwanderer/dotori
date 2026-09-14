@@ -5,7 +5,7 @@
 개인 및 소규모 팀이 외부 클라우드 서비스를 사용하지 않고 최소한의 리소스로 쾌적하게 문서 검색 및 RAG를 경험할 수 있습니다. 웹 UI 뿐만 아닌 CLI 및 MCP 서버로 확장을 도와줍니다. 사용 중인 PC나 원격 저장소에 쉽게 설치하여 어디서든 사용할 수 있습니다.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/5fe384e6-1c70-4b67-b6b8-5a670489e082" width="80%" alt="Dotori document workspace">
+  <img src="documents/statics/dotori_files.png" width="80%" alt="Dotori document workspace">
 </p>
 
 영문 문서는 [README.md](README.md)를 참고하세요.  상세 내용은 [Walkthrough](./documents/WALKTHROUGH.md)을 참고하세요.
