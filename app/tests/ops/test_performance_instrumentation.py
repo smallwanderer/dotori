@@ -27,6 +27,14 @@ User = get_user_model()
 
 class EmbeddingInstrumentationTests(TestCase):
     def setUp(self):
+        tokenizer = SimpleNamespace(count_tokens=lambda text: len(text.split()))
+        tokenizer_patcher = patch(
+            "document_ai.embedding.executor.get_hf_tokenizer",
+            return_value=tokenizer,
+        )
+        tokenizer_patcher.start()
+        self.addCleanup(tokenizer_patcher.stop)
+
         self.user = User.objects.create_user(
             email="perf-embed@example.com",
             password="password",

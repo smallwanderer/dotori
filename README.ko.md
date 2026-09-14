@@ -67,6 +67,7 @@ Windows에서는 Docker Desktop의 WSL2 백엔드를 권장합니다.
 
 변경 사항을 확인하기 위한 테스트 코드는 일부 제공됩니다.
 ```bash
+docker compose --profile test build test
 docker compose --profile test run --rm test python manage.py check
 docker compose --profile test run --rm test python -m pytest
 ```

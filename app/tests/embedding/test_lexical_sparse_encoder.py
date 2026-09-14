@@ -11,7 +11,11 @@ from document_ai.search.retriever import _sparse_dot_product
 
 
 @pytest.fixture
-def encoder():
+def encoder(monkeypatch):
+    # These tests exercise the deterministic rule-based path.  Kiwi has its
+    # own contract test below; whether the optional package is installed must
+    # not change the assertions in this fixture's tests.
+    monkeypatch.setattr(LexicalSparseEncoder, "_init_kiwi", staticmethod(lambda: None))
     return LexicalSparseEncoder()
 
 
@@ -190,4 +194,3 @@ def test_kiwi_integration_when_available():
     # Particles should be completely excluded by Kiwi
     assert "에서" not in tokens
     assert "을" not in tokens
-

@@ -65,11 +65,13 @@ def pytest_configure(config):
 
     config.addinivalue_line(
         "markers",
-        "unit: marks fast tests that validate isolated logic",
+        "unit: marks fast tests using local fakes or the isolated test database, "
+        "without real parser/model/runtime services",
     )
     config.addinivalue_line(
         "markers",
-        "integration: marks tests that depend on real parser/model integration",
+        "integration: marks tests covering cross-component behavior or real "
+        "parser/model/runtime boundaries",
     )
     config.addinivalue_line(
         "markers",

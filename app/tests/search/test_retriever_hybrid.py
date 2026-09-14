@@ -40,13 +40,21 @@ def _make_embedding_row(
     model_version: str = "bgem3_hybrid",
     status: str = AIStatus.COMPLETED,
     trashed: bool = False,
+    generation_id: str | None = None,
+    runtime_fingerprint: str | None = None,
 ):
+    runtime = retriever_module.get_active_embedding_runtime()
+    if generation_id is None:
+        generation_id = runtime.generation_id
+    if runtime_fingerprint is None:
+        runtime_fingerprint = runtime.runtime_fingerprint
     node = SimpleNamespace(uid=uid, name=node_name, owner=owner, trashed=trashed, ext=ext)
     parse_result = SimpleNamespace(
         id=parse_result_id,
         node=node,
         metadata={"file_ext": ext},
-        embedding_generation_id="legacy-bge-m3",
+        embedding_generation_id=generation_id,
+        embedding_runtime_fingerprint=runtime_fingerprint,
     )
     chunk = SimpleNamespace(
         id=chunk_id,
@@ -61,7 +69,7 @@ def _make_embedding_row(
     )
     return SimpleNamespace(
         chunk=chunk,
-        generation_id="legacy-bge-m3",
+        generation_id=generation_id,
         model_name="BAAI/bge-m3",
         model_version=model_version,
         status=status,
@@ -92,12 +100,18 @@ class FakeQuerySet:
                 filtered = [row for row in filtered if row.status == value]
             elif key == "chunk__status":
                 filtered = [row for row in filtered if row.chunk.status == value]
-            elif key in {
-                "chunk__parse_result__embedding_generation_id",
-                "chunk__parse_result__embedding_runtime_fingerprint",
-            }:
-                # Fake rows represent the active in-place contract.
-                filtered = list(filtered)
+            elif key == "chunk__parse_result__embedding_generation_id":
+                filtered = [
+                    row
+                    for row in filtered
+                    if row.chunk.parse_result.embedding_generation_id == value
+                ]
+            elif key == "chunk__parse_result__embedding_runtime_fingerprint":
+                filtered = [
+                    row
+                    for row in filtered
+                    if row.chunk.parse_result.embedding_runtime_fingerprint == value
+                ]
             elif key == "model_version":
                 filtered = [row for row in filtered if row.model_version == value]
             elif key == "chunk__parse_result__node__owner":
@@ -203,6 +217,31 @@ class FakeDocumentChunkManager:
 def test_sparse_dot_product():
     score = _sparse_dot_product({"10": 0.6, "20": 0.8}, {"20": 0.5, "30": 1.0})
     assert score == 0.4
+
+
+def test_fake_queryset_enforces_embedding_runtime_contract():
+    runtime = retriever_module.get_active_embedding_runtime()
+    row = _make_embedding_row(
+        parse_result_id=1,
+        uid=str(uuid4()),
+        owner=SimpleNamespace(email="owner@example.com"),
+        chunk_id=1,
+        chunk_index=0,
+        node_name="matching-runtime",
+        dense_vector=[1.0, 0.0],
+        sparse_vector={},
+    )
+
+    matching = FakeQuerySet([row]).filter(
+        chunk__parse_result__embedding_generation_id=runtime.generation_id,
+        chunk__parse_result__embedding_runtime_fingerprint=runtime.runtime_fingerprint,
+    )
+    stale = FakeQuerySet([row]).filter(
+        chunk__parse_result__embedding_runtime_fingerprint="stale-runtime",
+    )
+
+    assert list(matching) == [row]
+    assert list(stale) == []
 
 
 def test_retriever_defaults_to_inner_product():

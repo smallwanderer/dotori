@@ -143,7 +143,12 @@ def test_embed_query_calls_provider_embed_query_directly(monkeypatch):
             raise AssertionError("embed_query() must not call embed_document()")
 
     monkeypatch.setattr(embeding_models, "get_embedding_provider", lambda **kwargs: FakeProvider())
-    settings.SEARCH_QUERY_EMBEDDING_MAX_TOKENS = 64
+    monkeypatch.setattr(
+        settings,
+        "SEARCH_QUERY_EMBEDDING_MAX_TOKENS",
+        64,
+        raising=False,
+    )
 
     embeding_models.embed_query(
         query="query",

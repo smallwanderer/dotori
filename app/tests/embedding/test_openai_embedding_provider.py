@@ -10,6 +10,7 @@ from document_ai.embedding.providers.openai_compatible import (
     OpenAIEmbeddingProvider,
     _normalize_embeddings_url,
 )
+from document_ai.embedding.providers.remote import RemoteEmbeddingProxyProvider
 from document_ai.embedding.registry import get_embedding_provider
 
 pytestmark = pytest.mark.unit
@@ -113,11 +114,26 @@ def test_openai_embedding_provider_healthcheck():
         assert health["backend"] == "openai_compatible"
 
 
-def test_registry_resolves_openai_compatible_directly():
+def test_registry_resolves_openai_compatible_directly(monkeypatch):
+    monkeypatch.setenv("DOTORI_EMBEDDING_MODEL_PROCESS", "1")
     provider = get_embedding_provider(
         backend="openai_compatible",
         model_name="text-embedding-3-small",
         dimension=1536,
     )
     assert isinstance(provider, OpenAIEmbeddingProvider)
+    assert provider.spec.dimension == 1536
+
+
+def test_registry_proxies_openai_compatible_outside_model_process(monkeypatch):
+    monkeypatch.delenv("DOTORI_EMBEDDING_MODEL_PROCESS", raising=False)
+
+    provider = get_embedding_provider(
+        backend="openai_compatible",
+        model_name="text-embedding-3-small",
+        dimension=1536,
+    )
+
+    assert isinstance(provider, RemoteEmbeddingProxyProvider)
+    assert provider.backend == "openai_compatible"
     assert provider.spec.dimension == 1536

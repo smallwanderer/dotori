@@ -240,11 +240,13 @@ class DocumentPipelineRecoveryTests(TestCase):
             status=AIStatus.PROCESSING,
         )
 
-        with patch("document_ai.embedding.embeding_models.embed_document") as embed_document:
+        with patch(
+            "document_ai.embedding.internal_views.run_embedding_with_admission"
+        ) as run_embedding:
             result = embed_document_chunks_batch_sync([chunk.id])
 
         chunk.refresh_from_db()
-        embed_document.assert_not_called()
+        run_embedding.assert_not_called()
         self.assertEqual(result["status"], "skipped")
         self.assertEqual(chunk.status, AIStatus.PENDING)
 

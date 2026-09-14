@@ -87,6 +87,7 @@ The repository's primary application boundaries are `files`, `accounts`, and `do
 The repository includes tests for selected behavior:
 
 ```bash
+docker compose --profile test build test
 docker compose --profile test run --rm test python manage.py check
 docker compose --profile test run --rm test python -m pytest
 ```
