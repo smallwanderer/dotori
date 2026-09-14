@@ -51,27 +51,6 @@
 
 Windows에서는 Docker Desktop의 WSL2 백엔드를 권장합니다.
 
-## 데이터와 설정
-
-- `.env.example`에는 운영에 필요한 주요 설정값이 담겨 있습니다. 이 파일을 복사하여 `.env` 파일을 만들고 필요에 따라 수정하세요. 필수 요소는 설치도우미에 의해 자동으로 설정됩니다.
-- 또한 `.env.example`에는 고급 기능들을 위한 제어 설정들이 포함되어 있습니다. 
-- 해당 프로그램을 사용하며 저장한 모든 파일들은 로컬 서버의 파일시스템에 저장됩니다. 별다른 백업 기능은 아직 제공하지 않고 있습니다.
-- `data/config/runtime_scopes/production/embedding_runtime`은 로컬 및 클라우드 임베딩 설정 과정에서 자동으로 생성되는 서버 단위의 런타임 기준 파일입니다.
-- `data/config/runtime_scopes/production/ llm_runtime.json`은 로컬 RAG 설정 과정에서 생성되는 서버 단위 런타임 기준 파일입니다. 
-- 임베딩 백엔드는 `.env`와 `data/config/runtime_scopes/production/embedding_runtime.json` 설정으로 로컬 BGE-M3 모델에서 외부 OpenAI 호환 엔드포인트로 전환할 수 있습니다. 지원 차원과 설정 절차는 [임베딩 가이드](documents/embedding-guide.md)를 참고하세요.
-
-## 개발
-
-저장소의 주요 애플리케이션 경계는 `files`, `accounts`, `document_ai`입니다. 
-무거운 AI 작업은 processing, embedding, query-understanding, search, RAG, 설치 및 런타임 모듈로 분리되어 있습니다.
-
-변경 사항을 확인하기 위한 테스트 코드는 일부 제공됩니다.
-```bash
-docker compose --profile test build test
-docker compose --profile test run --rm test python manage.py check
-docker compose --profile test run --rm test python -m pytest
-```
-
 ## 프로젝트 상태
 
 도토리는 현재 개발 중입니다. 
