@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EmbeddingFootprintSpec(BaseModel):
@@ -56,17 +56,6 @@ class EmbeddingProfileEntry(BaseModel):
     document_prefix: str = ""
     availability: Literal["supported", "experimental", "unavailable"]
     priority: int = 0
-    presets: list[Literal["speed", "balanced", "quality"]] = Field(
-        default_factory=list
-    )
-
-    @model_validator(mode="after")
-    def validate_supported_presets(self) -> "EmbeddingProfileEntry":
-        if self.availability != "supported" and self.presets:
-            raise ValueError("Only supported profiles may be assigned to presets.")
-        if len(self.presets) != len(set(self.presets)):
-            raise ValueError("presets must not contain duplicates.")
-        return self
 
 
 class EmbeddingCatalogEntry(BaseModel):

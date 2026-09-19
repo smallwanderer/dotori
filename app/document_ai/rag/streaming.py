@@ -4,14 +4,22 @@ import asyncio
 import json
 import queue
 import threading
+from datetime import timedelta
 
 from asgiref.sync import sync_to_async
+from django.db import IntegrityError, transaction
 from django.http import StreamingHttpResponse
+from django.utils import timezone
 
-from config.enums import QueryAnswerMode, QueryIntent, RAGStage
+from config.enums import AIStatus, QueryAnswerMode, QueryIntent, RAGStage
 from config.tracing import get_trace_id, set_trace_id
 from document_ai.models import RAGJob, SearchJob
 from document_ai.services.rag_cancel_service import set_rag_cancel_signal
+from document_ai.services.rag_conversation_service import (
+    rag_execution_deadline_seconds,
+    rag_execution_lease_seconds,
+    recover_expired_rag_jobs,
+)
 
 
 class RAGSearchError(RuntimeError):
@@ -29,6 +37,10 @@ class RAGSearchBusyError(RAGSearchError):
         self.retry_after_seconds = retry_after_seconds
 
 
+class RAGConversationBusyError(RuntimeError):
+    pass
+
+
 def _create_rag_jobs_sync(
     *,
     owner,
@@ -44,33 +56,13 @@ def _create_rag_jobs_sync(
     tuning_params: dict | None = None,
     conversation=None,
     reply_to=None,
+    reserved_rag_job=None,
 ) -> tuple[SearchJob, RAGJob]:
     from document_ai.search.execution import perform_vector_search_sync
 
-    search_job = SearchJob.objects.create(
-        owner=owner,
-        workspace=workspace,
-        query=retrieval_query,
-        top_k=top_k,
-        threshold=threshold,
-        node_ids=scoped_node_ids,
-        tuning_params=tuning_params or {},
-    )
-    search_result = perform_vector_search_sync(search_job.id, max_retries=0)
-    search_job.refresh_from_db()
-    if search_result.get("status") != "success":
-        error_message = search_result.get("error") or "Search failed."
-        if search_result.get("error_code") == "EMBEDDING_BUSY":
-            raise RAGSearchBusyError(
-                error_message,
-                retry_after_seconds=search_result.get("retry_after_seconds", 5.0),
-            )
-        raise RAGSearchError(error_message)
-
     rag_job_values = dict(
         owner=owner,
-        workspace=search_job.workspace,
-        search_job=search_job,
+        workspace=workspace,
         question=question,
         retrieval_query=retrieval_query,
         query_intent=QueryIntent.DOCUMENT_QUESTION,
@@ -80,39 +72,103 @@ def _create_rag_jobs_sync(
         top_k=top_k,
         language=language,
         node_ids=[str(node_id) for node_id in requested_node_ids],
-        stage=RAGStage.GENERATING,
-        stage_message="검색된 근거를 바탕으로 답변을 생성하고 있습니다.",
+        stage=RAGStage.SEARCHING,
+        stage_message="답변에 필요한 문서를 검색하고 있습니다.",
         **llm_snapshot,
     )
-    if conversation is not None and reply_to is not None:
-        from django.db import transaction
+    if reserved_rag_job is not None:
+        rag_job = reserved_rag_job
+        rag_job.stage = RAGStage.SEARCHING
+        rag_job.stage_message = "답변에 필요한 문서를 검색하고 있습니다."
+        rag_job.save(update_fields=["stage", "stage_message", "updated_at"])
+    elif conversation is not None and reply_to is not None:
         from django.db.models import Max
         from document_ai.models import RAGConversation, RAGMessage
 
-        with transaction.atomic():
-            locked_conversation = RAGConversation.objects.select_for_update().get(pk=conversation.pk)
-            if reply_to.conversation_id != locked_conversation.pk:
-                raise ValueError("Reply and RAG job must belong to the same conversation.")
-            rag_job = RAGJob.objects.create(
-                conversation=locked_conversation, **rag_job_values
-            )
-            sequence = (
-                RAGMessage.objects.filter(conversation=locked_conversation).aggregate(maximum=Max("sequence"))["maximum"]
-                or 0
-            ) + 1
-            assistant_message = RAGMessage.objects.create(
-                conversation=locked_conversation,
-                sequence=sequence,
-                role=RAGMessage.ROLE_ASSISTANT,
-                reply_to=reply_to,
-                rag_job=rag_job,
-                node_ids=rag_job.node_ids,
-            )
-            locked_conversation.save(update_fields=["updated_at"])
+        busy = False
+        try:
+            with transaction.atomic():
+                locked_conversation = RAGConversation.objects.select_for_update().get(pk=conversation.pk)
+                recover_expired_rag_jobs(conversation=locked_conversation)
+                if reply_to.conversation_id != locked_conversation.pk:
+                    raise ValueError("Reply and RAG job must belong to the same conversation.")
+                busy = locked_conversation.rag_jobs.filter(
+                    status__in=[AIStatus.PENDING, AIStatus.PROCESSING]
+                ).exists()
+                if not busy:
+                    now = timezone.now()
+                    rag_job = RAGJob.objects.create(
+                        conversation=locked_conversation,
+                        deadline_at=now + timedelta(seconds=rag_execution_deadline_seconds()),
+                        lease_expires_at=now + timedelta(seconds=rag_execution_lease_seconds()),
+                        lease_heartbeat_at=now,
+                        **rag_job_values,
+                    )
+                    sequence = (
+                        RAGMessage.objects.filter(conversation=locked_conversation).aggregate(maximum=Max("sequence"))["maximum"]
+                        or 0
+                    ) + 1
+                    assistant_message = RAGMessage.objects.create(
+                        conversation=locked_conversation,
+                        sequence=sequence,
+                        role=RAGMessage.ROLE_ASSISTANT,
+                        reply_to=reply_to,
+                        rag_job=rag_job,
+                        node_ids=rag_job.node_ids,
+                    )
+                    locked_conversation.save(update_fields=["updated_at"])
+        except IntegrityError as exc:
+            RAGMessage.objects.filter(pk=reply_to.pk, replies__isnull=True).delete()
+            raise RAGConversationBusyError("Another answer is already active for this conversation.") from exc
+        if busy:
+            RAGMessage.objects.filter(pk=reply_to.pk, replies__isnull=True).delete()
+            raise RAGConversationBusyError("Another answer is already active for this conversation.")
         rag_job._conversation_message_uid = str(assistant_message.uid)
         rag_job._client_request_id = str(reply_to.client_request_id)
+    try:
+        search_job = SearchJob.objects.create(
+            owner=owner,
+            workspace=workspace,
+            query=retrieval_query,
+            top_k=top_k,
+            threshold=threshold,
+            node_ids=scoped_node_ids,
+            tuning_params=tuning_params or {},
+        )
+        search_result = perform_vector_search_sync(search_job.id, max_retries=0)
+        search_job.refresh_from_db()
+        if search_result.get("status") != "success":
+            error_message = search_result.get("error") or "Search failed."
+            if search_result.get("error_code") == "EMBEDDING_BUSY":
+                raise RAGSearchBusyError(
+                    error_message,
+                    retry_after_seconds=search_result.get("retry_after_seconds", 5.0),
+                )
+            raise RAGSearchError(error_message)
+    except Exception as exc:
+        if conversation is not None and reply_to is not None:
+            RAGJob.objects.filter(
+                pk=rag_job.pk, status__in=[AIStatus.PENDING, AIStatus.PROCESSING]
+            ).update(
+                status=AIStatus.FAILED, stage=RAGStage.FAILED,
+                stage_message="문서 검색에 실패했습니다.", error_message=str(exc),
+                completed_at=timezone.now(), updated_at=timezone.now(),
+            )
+        raise
+    if conversation is not None and reply_to is not None:
+        rag_job.search_job = search_job
+        rag_job.stage = RAGStage.GENERATING
+        rag_job.stage_message = "검색된 근거를 바탕으로 답변을 생성하고 있습니다."
+        rag_job.save(update_fields=["search_job", "stage", "stage_message", "updated_at"])
     else:
-        rag_job = RAGJob.objects.create(**rag_job_values)
+        rag_job = RAGJob.objects.create(
+            search_job=search_job,
+            **{
+                **rag_job_values,
+                "stage": RAGStage.GENERATING,
+                "stage_message": "검색된 근거를 바탕으로 답변을 생성하고 있습니다.",
+            },
+        )
     return search_job, rag_job
 
 
@@ -135,6 +191,7 @@ def create_rag_streaming_response(
     tuning_params: dict | None = None,
     conversation=None,
     reply_to=None,
+    reserved_rag_job=None,
 ) -> StreamingHttpResponse:
     try:
         search_job, rag_job = _create_rag_jobs_sync(
@@ -151,6 +208,7 @@ def create_rag_streaming_response(
             tuning_params=tuning_params,
             conversation=conversation,
             reply_to=reply_to,
+            reserved_rag_job=reserved_rag_job,
         )
     except Exception:
         # Nothing made it to the background generation thread, so this
@@ -281,6 +339,7 @@ async def create_rag_streaming_response_async(
     tuning_params: dict | None = None,
     conversation=None,
     reply_to=None,
+    reserved_rag_job=None,
 ) -> StreamingHttpResponse:
     """Search in a bounded sync section, then stream LLM HTTP on the event loop."""
 
@@ -301,6 +360,7 @@ async def create_rag_streaming_response_async(
             tuning_params=tuning_params,
             conversation=conversation,
             reply_to=reply_to,
+            reserved_rag_job=reserved_rag_job,
         )
     except (Exception, asyncio.CancelledError):
         # CancelledError (client disconnect / stop-button abort during the

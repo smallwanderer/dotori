@@ -99,8 +99,8 @@ def test_stage7_uses_handoff_and_resolves_balanced_cpu_parameters():
 
     assert plan.backend_profile == "llamacpp-cpu"
     assert plan.context_length == 8192
-    assert plan.parallel == 4
-    assert plan.server_ctx_size == 32768
+    assert plan.parallel == 32
+    assert plan.server_ctx_size == 262144
     assert plan.cache_type_k == "q8_0"
 
 

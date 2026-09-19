@@ -357,6 +357,8 @@ h1, h2, p { margin-top: 0; }
 .chat-history summary::-webkit-details-marker { display: none; }
 .chat-history > small { display: block; margin-top: 7px; color: var(--soft-muted); font-size: 8px; }
 .chat-history > small.scope-error { color: #963d34; }
+.chat-history-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chat-history-actions .scope-clear:disabled { cursor: not-allowed; opacity: .5; }
 .chat-history-list { display: grid; max-height: 220px; margin-top: 8px; overflow-y: auto; }
 .chat-history-list button { display: grid; gap: 3px; padding: 8px 4px; border: 0; border-bottom: 1px solid #eeeeea; background: transparent; cursor: pointer; text-align: left; }
 .chat-history-list button:hover { background: #f3f3ef; }
@@ -371,6 +373,16 @@ h1, h2, p { margin-top: 0; }
 .chat-scope-list strong { overflow: hidden; color: #55584f; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .chat-scope-list small { color: var(--soft-muted); font-size: 7px; }
 .scope-clear { margin-top: 8px; padding: 0; border: 0; background: transparent; color: var(--brown); cursor: pointer; font-size: 8px; font-weight: 600; }
+.chat-read-only { margin: 0 20px 8px; color: var(--muted); font-size: 8px; line-height: 1.5; }
+.conversation-dialog { width: min(520px, 100%); }
+.conversation-scope-field { display: grid; gap: 7px; min-width: 0; margin: 0 0 19px; padding: 0; border: 0; }
+.conversation-scope-field legend { color: #555850; font-size: 9px; font-weight: 600; }
+.conversation-scope-field > p { color: var(--muted); font-size: 8px; }
+.conversation-scope-field .chat-scope-list { max-height: 180px; border: 1px solid var(--line); border-radius: 8px; }
+.conversation-dialog-actions { align-items: center; }
+.conversation-dialog-actions > span { flex: 1; }
+.danger-text { display: inline-flex; align-items: center; gap: 5px; color: #a3483f; }
+.conversation-confirm { z-index: 60; }
 .evidence-panel .result-card { padding: 10px; }
 .evidence-panel .result-body p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .evidence-empty { display: grid; min-height: 340px; place-items: center; align-content: center; gap: 8px; color: #b1b3ac; text-align: center; }

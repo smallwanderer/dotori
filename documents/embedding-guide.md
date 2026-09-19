@@ -2,7 +2,7 @@
 
 이 가이드를 따라 하면 Dotori의 활성 임베딩 모델을 바꾸고, 기존 문서를 새 모델로 재임베딩하고, 전환이 제대로 끝났는지 확인할 수 있습니다.
 
-업로드된 문서는 벡터로 변환되어 저장되며, 검색과 RAG는 그 벡터를 사용합니다. 어떤 모델로 변환할지는 서버 전체에 **한 번에 하나만** 활성화되고, 이를 임베딩 런타임이라고 부릅니다.
+업로드된 문서는 임베딩 모델에 의해 벡터 차원의 좌표로 인덱싱되어 저장되며, 검색 시에 이용됩니다. 임베딩 모델은 서버 전체에 **단일 모델**로 활성화되고, 이를 임베딩 런타임이라고 부릅니다.
 
 카탈로그 목록에 없는 모델을 새로 추가하려면 [임베딩 설치 가이드](./embedding-installation-guide.md)를 먼저 참고하세요.
 
@@ -11,7 +11,7 @@
 ## Prerequisites
 
 - 운영 모드가 `[1] Full 로컬 AI RAG` 또는 `[2] Hybrid/Search AI`여야 합니다. `[3] 기본 모드`는 임베딩을 쓰지 않으므로 전환이 거부됩니다.
-- 서버 컨테이너가 기동된 상태여야 합니다. 전환 과정에서 데이터베이스를 조회합니다.
+- 서버 컨테이너가 기동된 상태여야 합니다. 전환 과정에서 기존 파일 상태에 대해 데이터베이스를 조회합니다.
 - 모든 명령은 저장소 최상위 디렉터리에서, 호스트 셸로 실행합니다.
 - 전환이 시작되면 문서 처리 파이프라인이 잠시 중지되었다가 다시 기동됩니다. 전환 도중에는 업로드를 피하세요.
 - 임베딩 전환에는 되돌리는 명령이 없습니다. 청크 벡터는 활성 계약 하나만 보관하므로, 이전 모델로 돌아가려면 그 모델로 다시 전환해 전량 재임베딩하거나 전환 이전 시점의 데이터베이스 백업을 복원해야 합니다.
@@ -42,7 +42,8 @@ Select embedding source:
 [3] Cancel
 ```
 
-두 선택지 중 하나를 고르면 아래 [Configure](#configure)의 해당 절차로 이어집니다. 소스를 고른 뒤에는 기존 문서를 재임베딩할지 묻는 화면으로 이어지며, 이는 [Verify](#verify)가 아니라 이 절차의 마지막 단계입니다 — [재임베딩 여부 선택](#재임베딩-여부-선택)에서 다룹니다.
+두 선택지 중 하나를 고르면 아래 [Configure](#configure)의 해당 절차로 이어집니다.
+모델을 선택한 후 기존 문서를 재임베딩할지 묻는 화면으로 이어지며, 이는 [Verify](#verify)가 아니라 이 절차의 마지막 단계입니다 — [재임베딩 여부 선택](#재임베딩-여부-선택)에서 다룹니다.
 
 ---
 
@@ -50,26 +51,63 @@ Select embedding source:
 
 ### 카탈로그 모델 선택
 
-`[1]`을 고르면 카탈로그에서 `availability`가 `supported`인 프로필이 나열됩니다.
+`[1]`을 고르면 Dotori가 기본 제공하는 카탈로그에서 동작 검증이 완료된 **로컬** 모델을 선택할 수 있습니다. 직접 다운받거나 카탈로그를 작성한 모델은 [임베딩 설치 가이드](./embedding-installation-guide.md)에 따라 직접 프로필을 추가해야 합니다.
 
-| 프로필 ID | 모델 | 차원 | 프로바이더 | 특징 |
-|---|---|---|---|---|
-| `bge-m3-hybrid` | BAAI/bge-m3 | 1024 | `bgem3_hybrid` | 밀집 + 희소 하이브리드. 목록에 `[Recommended]`로 표시됩니다. |
-| `harrier-270m` | microsoft/harrier-oss-v1-270m | 640 | `sentence_transformers` | 초경량. 입력 32,768토큰까지 처리합니다. |
-| `granite-278m` | ibm-granite/granite-embedding-278m-multilingual | 768 | `sentence_transformers` | 다국어 116종. 입력 512토큰. |
-| `gte-qwen2-1.5b` | Alibaba-NLP/gte-Qwen2-1.5B-instruct | 1536 | `sentence_transformers` | 카탈로그에서 가장 큰 모델(1.5B). |
-| `openai-text-embedding-3-small` | openai/text-embedding-3-small | 1536 | `openai_compatible` | 외부 API를 호출합니다. 로컬 메모리를 쓰지 않습니다. |
+목록이 한 페이지(8개)를 넘으면 페이징됩니다 — `[n]` 다음 페이지, `[p]` 이전 페이지, 번호 입력으로 바로 선택(지금 보이는 페이지가 아니어도 전체 목록 기준 번호), `[q]` 취소. 목록이 8개 이하면 페이징 없이 전부 한 번에 보여줍니다 (지금은 정확히 8개라 아직 한 화면에 다 나옵니다). Enter만 누르면 항상 `[1]`(권장 모델)이 선택됩니다.
 
-목록 마지막 항목은 `Select by Preset`입니다. 모델 이름 대신 `speed`, `balanced`(기본값), `quality` 중 하나를 고르면 해당 프리셋을 가진 프로필이 선택됩니다.
+| 프로필 ID | 모델 | 차원 | 프로바이더 | 파라미터 | RAM (CPU) | VRAM (GPU) |
+|---|---|---|---|---|---|---|
+| `bge-m3-hybrid` | BAAI/bge-m3 | 1024 | `bgem3_hybrid` | 568M | ~2.7 GB | ~3.1 GB |
+| `harrier-270m` | microsoft/harrier-oss-v1-270m | 640 | `sentence_transformers` | 270M | ~1.6 GB | ~2.5 GB |
+| `gte-qwen2-1.5b` | Alibaba-NLP/gte-Qwen2-1.5B-instruct | 1536 | `sentence_transformers` | 1540M | ~6.5 GB | ~5.0 GB |
+| `qwen3-embedding-0.6b` | Qwen/Qwen3-Embedding-0.6B | 1024 | `sentence_transformers` | 596M | ~2.8 GB | ~3.1 GB |
+| `granite-311m-r2` | ibm-granite/granite-embedding-311m-multilingual-r2 | 768 | `sentence_transformers` | 312M | ~1.7 GB | ~2.6 GB |
+| `granite-278m` | ibm-granite/granite-embedding-278m-multilingual | 768 | `sentence_transformers` | 278M | ~1.6 GB | ~2.5 GB |
+| `granite-97m-r2` | ibm-granite/granite-embedding-97m-multilingual-r2 | 384 | `sentence_transformers` | 97M | ~0.9 GB | ~2.2 GB |
+| `all-minilm-l6-v2` | sentence-transformers/all-MiniLM-L6-v2 | 384 | `sentence_transformers` | 23M | ~0.6 GB | ~2.0 GB |
 
-> 현재 세 프리셋은 모두 `bge-m3-hybrid`에 배정되어 있습니다. 따라서 프리셋으로는 어느 쪽을 골라도 같은 모델이 선택됩니다. 프리셋 배정을 바꾸려면 [임베딩 설치 가이드](./embedding-installation-guide.md)를 참고하세요.
+> `provider`가 `openai_compatible`인 카탈로그 항목(`openai-text-embedding-3-small` 등)은 `[1]` 목록에 나타나지 않습니다. 이런 항목은 `repo_id`/`revision`만으로 자기완결되지 않고 실행 시점에 `.env`의 `OPENAI_EMBEDDING_BASE_URL`/`OPENAI_EMBEDDING_API_KEY`에 의존하는데, `[1]`의 흐름은 그 값을 물어보거나 확인하지 않기 때문입니다. 엔드포인트와 키를 직접 입력하고 그 자리에서 연결을 검증하는 [`[2]` 외부 엔드포인트 연결](#외부-엔드포인트-연결)로 가야 합니다. (`--catalog-id openai-text-embedding-3-small`로 비대화형 지정하는 것은 여전히 가능하지만, 그 경우도 `.env` 값이 미리 맞게 설정돼 있어야 합니다.)
+
+각 항목에 대한 설명은 다음과 같습니다:
+
+- 프로필 ID: Dotori 서버에서 사용할 모델의 고유 ID
+- 모델: 허깅페이스 모델 ID
+- 차원: 벡터의 차원 수
+- 프로바이더: 모델을 실행하는 방식. `bgem3_hybrid`: bge-m3 전용 프로바이더, `sentence_transformers`: sentence-transformers 라이브러리 사용, `openai_compatible`: OpenAI 호환 API 사용
+- RAM (CPU) / VRAM (GPU): 모델을 상주시키는 데 필요한 최소 메모리 추정치입니다. 같은 모델이라도 CPU에서는 fp32, CUDA에서는 fp16으로 동작해 가중치 크기가 절반으로 줄지만, CUDA는 컨텍스트 오버헤드(약 1.5 GB)가 추가로 붙습니다. 실측 활성화 메모리는 포함되지 않은 하한선이며, 실제 필요량은 배치 크기와 입력 길이에 따라 늘어날 수 있습니다. 현재는 GPU 없이 CPU로만 동작하지만, GPU를 연결하면 이 VRAM 값 기준으로 배치해야 합니다.
+
+> `all-minilm-l6-v2`는 **영어 전용**이고(다국어 문서에는 부적합), 입력 토큰 한계도 256으로 가장 짧습니다. 대신 가장 가볍습니다(23M 파라미터) — 영어 문서만 다루면서 리소스를 최소로 쓰고 싶을 때 고려할 선택지입니다. 같은 384차원 자리의 `granite-97m-r2`는 다국어를 지원하면서도 97M로 가볍고, 공개 다국어 임베딩 모델 중 100M 이하에서 검색 성능이 가장 좋다고 알려져 있습니다 — 다국어 문서인데 리소스를 아끼고 싶다면 `all-minilm-l6-v2` 대신 이쪽을 고르세요.
+>
+> `granite-97m-r2`/`granite-311m-r2`는 IBM Granite Embedding의 2026년 2세대(R2) 모델입니다. 2024년에 나온 기존 `granite-278m`(1세대)과 비교하면, 비슷하거나 더 적은 파라미터로 검색 성능이 더 높고 입력 토큰 한계도 512 → 32768로 크게 늘었습니다. 새로 고르신다면 `granite-278m`보다 R2 쪽을 먼저 검토하시는 걸 권합니다 — `granite-278m`은 기존 설치와의 호환을 위해 카탈로그에 남겨뒀습니다.
+>
+> `qwen3-embedding-0.6b`는 2026년에 나온 최신 모델로, 파라미터 대비 검색 성능이 좋다고 알려져 있습니다(가성비 위주로 고르신다면 `gte-qwen2-1.5b`보다 먼저 검토해볼 만합니다 — 파라미터가 약 1/2.6 수준입니다). `gte-qwen2-1.5b`와 같은 계열이라 `query_prefix`도 동일한 instruct 형식입니다.
+
+> 설치 마법사(`python install.py --change-embedding`)와 `docker compose exec app python manage.py embedding_model_catalog`도 각 모델 옆에 이 추정치를 함께 보여줍니다. 계산 방식은 [임베딩 설치 가이드의 메모리 예약](./embedding-installation-guide.md#다음-단계)을 참고하세요.
+
+두 명령 모두 추정치 아래에 `Fit` 판정도 함께 보여줍니다. 실제 서버 하드웨어(RAM 총량, GPU 여부와 VRAM 여유분)를 탐지해서 위 필요량과 비교한 결과입니다.
+
+| 판정 | 의미 |
+|---|---|
+| `FIT` | 필요량에 25% 여유(headroom)를 더해도 감당됩니다. |
+| `RISKY` | 감당은 되지만 25% 여유가 없습니다. |
+| `NOFIT` | 필요량 자체가 가용량을 넘습니다. |
+
+GPU가 없으면 `GPU not detected`로 표시되고 CPU 판정만 나옵니다. LLM 설치 마법사의 `FIT`/`RISKY`/`NOFIT`([LLM 설치 가이드](./llm-installation-guide.md) 참고)과 같은 기준(필요량 × 1.25 vs 가용량)을 씁니다. 다만 LLM 쪽과 달리 이 판정이 선택을 막지는 않습니다 — `NOFIT`이어도 마법사가 해당 모델 선택 자체를 거부하지 않으므로, 실제로 활성화하기 전에 이 표시를 보고 직접 판단해야 합니다.
+
+목록 마지막 항목은 `Select by Preset`입니다. 모델 이름 대신 `speed`, `balanced`(기본값), `quality` 중 하나를 고르면 각 특성에 맞게 배정된 프로필이 선택됩니다:
+
+| 프리셋 | 배정된 프로필 | 모델 | 특징 |
+|---|---|---|---|
+| `speed` | `harrier-270m` | microsoft/harrier-oss-v1-270m | 270M 경량 파라미터로 가장 빠르고 가벼운 추론 속도 (640차원) |
+| `balanced` (기본값) | `bge-m3-hybrid` | BAAI/bge-m3 | 568M 파라미터 기반 밀집(Dense) + 어휘(Sparse) 하이브리드 검색 지원 (1024차원) |
+| `quality` | `gte-qwen2-1.5b` | Alibaba-NLP/gte-Qwen2-1.5B-instruct | 1.5B 대형 파라미터와 1536차원으로 가장 높은 검색 품질 제공 |
+
+> 프리셋 배정을 변경하거나 새 모델을 등록하는 방법은 [임베딩 설치 가이드](./embedding-installation-guide.md)를 참고하세요.
 
 전환 시 아래 두 가지가 달라질 수 있습니다.
 
 - **희소 벡터**: 하이브리드 검색은 `supports_sparse`가 `true`인 프로필에서만 동작합니다. 현재는 `bge-m3-hybrid` 하나이며, 다른 모델로 바꾸면 밀집 벡터 검색만 남습니다.
 - **청크 크기**: 모델마다 입력 토큰 한계가 다릅니다. `granite-278m`(512토큰)처럼 짧은 모델로 바꾼다면 `.env`의 `EMBEDDING_MAX_TOKENS`도 함께 낮춰야 합니다. 값 조정은 [운영 가이드](./operation-guide.md)를 참고하세요.
-
-`openai-text-embedding-3-small`은 카탈로그 프로필이지만 실행은 외부에서 이루어집니다. 엔드포인트와 키는 `.env`의 `OPENAI_EMBEDDING_BASE_URL`, `OPENAI_EMBEDDING_API_KEY`에서 읽으며, 값이 없으면 `https://api.openai.com`으로 요청합니다.
 
 ### 외부 엔드포인트 연결
 
@@ -91,7 +129,23 @@ Select embedding source:
 
 **API Key** — 로컬 Ollama나 vLLM이라면 엔터로 건너뜁니다. 입력한 키는 `.env`에 저장되고 요청의 `Authorization` 헤더로 전달됩니다.
 
-**Model Name** — 엔드포인트가 인식하는 모델 이름입니다. `text-embedding-3-small`, `bge-m3`, `nomic-embed-text` 등.
+**Model Name** — 엔드포인트가 인식하는 모델 이름입니다. 앞서 입력한 Endpoint URL을 보고 추천 목록이 달라집니다.
+
+`api.openai.com`을 입력했다면:
+
+| 번호 | 모델 | 차원 |
+|---|---|---|
+| `[1]` | `text-embedding-3-small` | ~1536 |
+
+그 외(로컬 Ollama, vLLM, 사내 서버 등)라면:
+
+| 번호 | 모델 | 차원 | 비고 |
+|---|---|---|---|
+| `[1]` | `nomic-embed-text` | ~768 | Ollama |
+| `[2]` | `mxbai-embed-large` | ~1024 | Ollama |
+| `[3]` | `all-minilm` | ~384 | 가장 작고 빠름 |
+
+OpenAI 전용 이름을 로컬 주소에, 또는 그 반대로 섞어서 보여주면 어차피 그 엔드포인트에 없는 이름이라 실패하므로, URL에 `api.openai.com`이 포함돼 있는지로 두 목록 중 하나만 보여줍니다. 번호 대신 다른 이름을 직접 입력해도 됩니다 — 이 목록은 자주 쓰이는 이름을 미리 채워주는 편의 기능일 뿐, 실제 차원과 호환 여부는 다음 단계의 라이브 프로브가 확인합니다.
 
 입력을 마치면 `POST /v1/embeddings`로 테스트 요청을 보내 응답 상태, 벡터 차원, pgvector 스토어 호환성을 확인합니다. 하나라도 실패하면 전환이 중단되고 `.env`도 바뀌지 않습니다.
 

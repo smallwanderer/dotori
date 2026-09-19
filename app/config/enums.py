@@ -45,6 +45,7 @@ class RAGStage(models.TextChoices):
     COMPLETED = "completed", "Completed"
     FAILED = "failed", "Failed"
     CANCELED = "canceled", "Canceled"
+    INTERRUPTED = "interrupted", "Interrupted"
 
 
 class QueryIntent(models.TextChoices):

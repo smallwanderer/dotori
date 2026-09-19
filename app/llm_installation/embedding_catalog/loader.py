@@ -9,6 +9,7 @@ from llm_installation.embedding_catalog.models import (
     EmbeddingModelEntry,
     EmbeddingProfileEntry,
 )
+from llm_installation.embedding_catalog.presets import EMBEDDING_PRESETS
 
 
 CATALOG_DIR = Path(__file__).parent
@@ -47,9 +48,12 @@ def load_embedding_catalog() -> list[EmbeddingCatalogEntry]:
             raise ValueError(f"Duplicate embedding model id: {model.id}")
         model_by_id[model.id] = model
 
+    presets_by_entry_id: dict[str, list[str]] = {}
+    for preset, entry_id in EMBEDDING_PRESETS.items():
+        presets_by_entry_id.setdefault(entry_id, []).append(preset)
+
     resolved = []
     profile_ids = set()
-    preset_owners: dict[str, str] = {}
     for profile in profiles:
         if profile.id in profile_ids:
             raise ValueError(f"Duplicate embedding profile id: {profile.id}")
@@ -76,13 +80,6 @@ def load_embedding_catalog() -> list[EmbeddingCatalogEntry]:
                     f"Supported profile {profile.id} is incompatible with store "
                     f"{profile.store}."
                 )
-        for preset in profile.presets:
-            previous = preset_owners.setdefault(preset, profile.id)
-            if previous != profile.id:
-                raise ValueError(
-                    f"Embedding preset {preset} is assigned to both {previous} "
-                    f"and {profile.id}."
-                )
 
         resolved.append(
             EmbeddingCatalogEntry(
@@ -106,11 +103,24 @@ def load_embedding_catalog() -> list[EmbeddingCatalogEntry]:
                 document_prefix=profile.document_prefix,
                 availability=profile.availability,
                 priority=profile.priority,
-                presets=profile.presets,
+                presets=presets_by_entry_id.get(profile.id, []),
                 languages=model.languages,
                 footprint=model.footprint,
             )
         )
+
+    resolved_by_id = {entry.id: entry for entry in resolved}
+    for preset, entry_id in EMBEDDING_PRESETS.items():
+        target = resolved_by_id.get(entry_id)
+        if target is None:
+            raise ValueError(
+                f"Embedding preset {preset} points to unknown catalog entry {entry_id}."
+            )
+        if target.availability != "supported":
+            raise ValueError(
+                f"Embedding preset {preset} points to non-supported catalog entry {entry_id}."
+            )
+
     return sorted(resolved, key=lambda item: item.priority, reverse=True)
 
 
@@ -134,13 +144,10 @@ def get_embedding_catalog_entry_for_preset(
     preset: str,
 ) -> EmbeddingCatalogEntry:
     normalized = (preset or "balanced").strip().lower()
-    candidates = [
-        entry
-        for entry in get_supported_embedding_catalog()
-        if normalized in entry.presets
-    ]
-    if not candidates:
+    entry_id = EMBEDDING_PRESETS.get(normalized)
+    entry = get_embedding_catalog_entry(entry_id) if entry_id else None
+    if entry is None or entry.availability != "supported":
         raise ValueError(
             f"No supported embedding catalog entry for preset: {normalized}"
         )
-    return candidates[0]
+    return entry

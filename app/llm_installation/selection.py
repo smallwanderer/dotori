@@ -91,29 +91,58 @@ def _known_number(value: float | int | None) -> tuple[int, float]:
     return (0, 0.0) if value is None else (1, float(value))
 
 
-def _ranking_key(candidate: SelectionCandidate, preset: PriorityPreset) -> tuple:
+# Reciprocal Rank Fusion damping constant. Standard default; not tuned
+# against real catalog data yet.
+_RRF_K = 60
+
+
+def _rank_positions(
+    candidates: list[SelectionCandidate], key_fn
+) -> dict[str, int]:
+    """0-indexed rank per candidate under key_fn (descending), tie-broken by
+    artifact id ascending -- the input to Reciprocal Rank Fusion below."""
+    ordered = sorted(candidates, key=lambda item: item.entry.id)
+    ordered = sorted(ordered, key=key_fn, reverse=True)
+    return {item.entry.id: index for index, item in enumerate(ordered)}
+
+
+def _rrf_component(rank: int) -> float:
+    return 1.0 / (_RRF_K + rank + 1)
+
+
+def _tiebreak_key(candidate: SelectionCandidate) -> tuple:
     entry = candidate.entry
-    tps = _known_number(estimated_decode_tps(candidate.assessment))
     headroom = _known_number(_resource_headroom_ratio(candidate.fit_evaluation))
-    parameters = float(entry.model_metadata.parameter_count_b)
     precision = _precision_rank(entry)
     max_context = int(entry.model_metadata.max_context_length)
-    catalog_priority = int(entry.priority)
-
-    if preset == "speed":
-        return tps, headroom, catalog_priority, parameters, precision
-    if preset == "quality":
-        return parameters, precision, max_context, headroom, tps, catalog_priority
-    return catalog_priority, headroom, parameters, precision, tps
+    return headroom, precision, max_context
 
 
-def _rank(
-    candidates: list[SelectionCandidate],
-    preset: PriorityPreset,
-) -> list[SelectionCandidate]:
+def _rank(candidates: list[SelectionCandidate]) -> list[SelectionCandidate]:
+    """Rank candidates by a single, preset-independent score: Reciprocal Rank
+    Fusion of decode-TPS rank and parameter-count rank (always "faster and
+    bigger wins" -- there is no per-preset direction). Ties fall back to
+    resource headroom, precision, then max context, then artifact id."""
+    if not candidates:
+        return []
+    tps_ranks = _rank_positions(
+        candidates,
+        lambda item: _known_number(estimated_decode_tps(item.assessment)),
+    )
+    param_ranks = _rank_positions(
+        candidates,
+        lambda item: float(item.entry.model_metadata.parameter_count_b),
+    )
+
+    def sort_key(item: SelectionCandidate) -> tuple:
+        rrf_score = _rrf_component(tps_ranks[item.entry.id]) + _rrf_component(
+            param_ranks[item.entry.id]
+        )
+        return (rrf_score, *_tiebreak_key(item))
+
     # Stable sort preserves artifact ID ascending as the final tie-break.
     ranked = sorted(candidates, key=lambda item: item.entry.id)
-    return sorted(ranked, key=lambda item: _ranking_key(item, preset), reverse=True)
+    return sorted(ranked, key=sort_key, reverse=True)
 
 
 def rank_manual_candidates(
@@ -122,7 +151,12 @@ def rank_manual_candidates(
 ) -> tuple[list[SelectionCandidate], list[SelectionCandidate]]:
     """Split candidates into the same FIT/RISKY-ranked-first, non-selectable-last
     order that manual selection enforces, so display order and eligibility can
-    never drift out of sync with `select_catalog_model`."""
+    never drift out of sync with `select_catalog_model`.
+
+    priority_preset no longer affects ranking (see `_rank`) -- it is accepted
+    only so callers can keep threading the value through for the resulting
+    SelectionResult's audit label."""
+    del priority_preset
     fit_candidates = []
     risky_candidates = []
     non_selectable = []
@@ -132,7 +166,7 @@ def rank_manual_candidates(
             (fit_candidates if fit_status == "FIT" else risky_candidates).append(candidate)
         else:
             non_selectable.append(candidate)
-    ranked = _rank(fit_candidates, priority_preset) + _rank(risky_candidates, priority_preset)
+    ranked = _rank(fit_candidates) + _rank(risky_candidates)
     return ranked, non_selectable
 
 
@@ -216,7 +250,7 @@ def select_catalog_model(
         )
 
     if fit_candidates:
-        ranked = _rank(fit_candidates, priority_preset)
+        ranked = _rank(fit_candidates)
         selected = ranked[0]
         return SelectionResult(
             selection_status="SELECTED",
@@ -227,7 +261,7 @@ def select_catalog_model(
             reason_code=f"SELECTED_FIT_BY_{priority_preset.upper()}",
         )
 
-    ranked = _rank(risky_candidates, priority_preset)
+    ranked = _rank(risky_candidates)
     if ranked and not risky_confirmed:
         return SelectionResult(
             selection_status="RISKY_CONFIRMATION_REQUIRED",

@@ -9,7 +9,7 @@
 ## Prerequisites
 
 - 카탈로그는 `app/llm_installation/embedding_catalog/` 아래에 있으며, 한 모델을 **모델 파일**과 **프로필 파일** 두 개로 나누어 기술합니다. 나누는 이유는 같은 모델을 여러 방식으로 서빙할 수 있기 때문입니다(로컬 실행 프로필과 외부 엔드포인트 호출 프로필을 각각 등록할 수 있습니다).
-- Dotori는 미리 만들어둔 pgvector 컬럼에 벡터를 저장하므로, 아래 다섯 개 차원만 등록할 수 있습니다.
+- Dotori는 미리 만들어둔 pgvector 컬럼에 벡터를 저장하므로, 아래 다섯 개 차원에 대해서만 등록할 수 있습니다.
 
   | 차원 | 스토어 이름 |
   |---|---|
@@ -105,8 +105,7 @@ Hugging Face 저장소 주소입니다. 이 값으로 모델을 내려받습니�
   "query_prefix": "",
   "document_prefix": "",
   "availability": "supported",
-  "priority": 100,
-  "presets": ["speed", "balanced", "quality"]
+  "priority": 100
 }
 ```
 
@@ -151,12 +150,9 @@ Hugging Face 저장소 주소입니다. 이 값으로 모델을 내려받습니�
 `priority` (정수, 선택, 기본 0)
 목록 정렬 순서입니다. 큰 값이 먼저 나옵니다.
 
-`presets` (배열, 선택)
-이 프로필이 담당할 프리셋입니다. `speed`, `balanced`, `quality` 중에서 고릅니다.
+> 프로필 파일에는 `presets` 필드가 없습니다. 어떤 프로필이 `speed`/`balanced`/`quality`를 담당하는지는 각 프로필이 스스로 선언하지 않고, `app/llm_installation/embedding_catalog/presets.py`의 `EMBEDDING_PRESETS` 딕셔너리 하나가 중앙에서 결정합니다(LLM 런타임의 `PresetPolicy`와 같은 이유입니다 — 어떤 모델이 어떤 프리셋에 응답할지는 모델 자신의 속성이 아니라 제품 차원의 라우팅 결정이기 때문입니다). 새로 등록한 프로필에 프리셋을 배정하려면 이 파일에서 해당 프리셋의 값을 새 프로필 `id`로 바꾸세요. 로더는 기동 시 `EMBEDDING_PRESETS`의 각 값이 실재하고 `availability: supported`인 프로필을 가리키는지 검증하며, 어긋나면 카탈로그 로딩이 실패합니다.
 
-> 하나의 프리셋은 하나의 프로필만 가질 수 있습니다. 이미 다른 프로필이 쓰고 있는 프리셋을 지정하면 로딩이 실패합니다. `availability`가 `supported`가 아닌 프로필에는 프리셋을 지정할 수 없습니다.
-
-> 현재 세 프리셋은 모두 `bge-m3-hybrid`가 가지고 있습니다. 새 모델에 프리셋을 주려면 `bge-m3-hybrid`의 `presets`에서 해당 값을 먼저 빼야 합니다. 프리셋 없이 등록해도 `--catalog-id`로는 언제나 선택할 수 있습니다.
+> 현재 `speed`는 `harrier-270m`, `balanced`는 `bge-m3-hybrid`, `quality`는 `gte-qwen2-1.5b`에 배정되어 있습니다. 프리셋 배정 없이 등록해도 `--catalog-id`로는 언제나 선택할 수 있습니다.
 
 **검증 규칙**
 
@@ -170,9 +166,9 @@ Hugging Face 저장소 주소입니다. 이 값으로 모델을 내려받습니�
 | 프로필 차원 == 모델 차원 | `dimension does not match model` |
 | `provider`가 지원 목록에 있음 | `references unknown provider` |
 | `store` 차원 == 프로필 차원 | `is incompatible with store` |
-| 프리셋 소유가 겹치지 않음 | `is assigned to both` |
+| `EMBEDDING_PRESETS`가 가리키는 프로필이 실재하고 `supported`임 | `points to unknown catalog entry` / `points to non-supported catalog entry` |
 
-`provider`와 `store` 검사는 `availability`가 `supported`인 프로필에만 적용됩니다.
+`provider`와 `store` 검사는 `availability`가 `supported`인 프로필에만 적용됩니다. 마지막 행은 프로필 파일이 아니라 `presets.py`를 잘못 고쳤을 때 걸립니다.
 
 ---
 
@@ -194,10 +190,15 @@ docker compose exec app python manage.py embedding_model_catalog
 
 ```
 bge-m3-hybrid: model=BAAI/bge-m3@5617a9f provider=bgem3_hybrid store=pgvector_chunk_1024 dimension=1024 sparse=True availability=supported
-harrier-270m: model=microsoft/harrier-oss-v1-270m@main000 provider=sentence_transformers store=pgvector_chunk_640 dimension=640 sparse=False availability=supported
-gte-qwen2-1.5b: model=Alibaba-NLP/gte-Qwen2-1.5B-instruct@main000 provider=sentence_transformers store=pgvector_chunk_1536 dimension=1536 sparse=False availability=supported
-granite-278m: model=ibm-granite/granite-embedding-278m-multilingual@main000 provider=sentence_transformers store=pgvector_chunk_768 dimension=768 sparse=False availability=supported
+    memory: 568M params | ~2.7GB RAM (CPU) / ~3.1GB VRAM (CUDA)
+harrier-270m: model=microsoft/harrier-oss-v1-270m@31de22b673913c7d658c0f03f792d77c2dcf8ebd provider=sentence_transformers store=pgvector_chunk_640 dimension=640 sparse=False availability=supported
+    memory: 270M params | ~1.6GB RAM (CPU) / ~2.5GB VRAM (CUDA)
+gte-qwen2-1.5b: model=Alibaba-NLP/gte-Qwen2-1.5B-instruct@a9af15a6372d7d6b25e9fb07c2ccb9e1fe645644 provider=sentence_transformers store=pgvector_chunk_1536 dimension=1536 sparse=False availability=supported
+    memory: 1540M params | ~6.5GB RAM (CPU) / ~5.0GB VRAM (CUDA)
+granite-278m: model=ibm-granite/granite-embedding-278m-multilingual@a9cb5338491faf32b73dd17b714a31821c021bbf provider=sentence_transformers store=pgvector_chunk_768 dimension=768 sparse=False availability=supported
+    memory: 278M params | ~1.6GB RAM (CPU) / ~2.5GB VRAM (CUDA)
 openai-text-embedding-3-small: model=openai/text-embedding-3-small@main000 provider=openai_compatible store=pgvector_chunk_1536 dimension=1536 sparse=False availability=supported
+    memory: remote endpoint (no local RAM/VRAM required)
 ```
 
 `experimental`과 `unavailable` 항목까지 보려면 `--all`을, 기계 판독용 출력이 필요하면 `--json`을 붙입니다. 새 항목이 목록에 보이면 등록이 끝난 것입니다.
@@ -292,7 +293,7 @@ docker compose exec app python manage.py inspect_embedding_runtime --scope produ
 | `dimension does not match model` | 모델 파일과 프로필 파일의 `dimension`이 다릅니다. |
 | `is incompatible with store` | `store` 이름의 숫자와 `dimension`이 다릅니다. 1024차원 모델은 `pgvector_chunk_1024`를 씁니다. |
 | `references unknown model` | 프로필의 `model_id`에 해당하는 모델 파일이 없습니다. 파일 이름이 아니라 모델 파일 안의 `id` 값이어야 합니다. |
-| `is assigned to both` | 두 프로필이 같은 프리셋을 가지고 있습니다. 한쪽에서 빼세요. |
+| `points to unknown catalog entry` / `points to non-supported catalog entry` | `presets.py`의 `EMBEDDING_PRESETS`가 존재하지 않거나 `supported`가 아닌 프로필 `id`를 가리킵니다. 값을 실재하는 `supported` 프로필 `id`로 고치세요. |
 | 새 모델이 목록에 없음 | `availability`가 `supported`인지 확인하고, `app` 컨테이너를 다시 만들었는지 확인합니다. |
 | 외부 엔드포인트에서 `Dimension ... is not supported` | 그 모델의 출력 차원이 지원 차원 다섯 개에 없습니다. 다른 모델을 쓰거나 차원 축소를 지원하는 엔드포인트를 사용하세요. |
 

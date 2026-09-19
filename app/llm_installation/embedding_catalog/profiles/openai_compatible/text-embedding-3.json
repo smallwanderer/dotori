@@ -10,6 +10,5 @@
   "query_prefix": "",
   "document_prefix": "",
   "availability": "supported",
-  "priority": 60,
-  "presets": []
+  "priority": 60
 }

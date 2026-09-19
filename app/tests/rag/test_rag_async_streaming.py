@@ -6,6 +6,7 @@
 3. Chat Completions 및 Responses API 규격의 SSE delta 토큰 추출과 <think> 태그 필터링.
 """
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -186,6 +187,78 @@ def test_async_generation_uses_httpx_stream_and_emits_direct_deltas():
     ]
     async_client.assert_called_once()
     assert complete.call_args.kwargs["raw_answer"] == "직접 스트림"
+
+
+def test_client_disconnect_marks_generation_canceled_and_propagates_cancel():
+    context = AsyncGenerationContext(
+        job_id=31,
+        request_url="http://llm.test/v1/chat/completions",
+        payload={"model": "test", "stream": True},
+        headers={},
+        request_timeout=30,
+        citations=[],
+        language="ko",
+        metrics={},
+        worker_started=0.0,
+        created_at=timezone.now(),
+        conversation_job=True,
+    )
+
+    class FakeRedis:
+        async def exists(self, _key):
+            return False
+
+        async def aclose(self):
+            return None
+
+    class FakeResponse:
+        is_error = False
+
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"첫 토큰"}}]}'
+            raise asyncio.CancelledError()
+
+    class FakeStream:
+        async def __aenter__(self):
+            return FakeResponse()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            return FakeStream()
+
+    async def consume():
+        with pytest.raises(asyncio.CancelledError):
+            async for _event in iter_rag_generation_events_async(context.job_id):
+                pass
+
+    with patch(
+        "document_ai.rag.async_generation._prepare_generation_sync",
+        return_value=(context, None),
+    ), patch(
+        "document_ai.rag.async_generation.AsyncRedis.from_url",
+        return_value=FakeRedis(),
+    ), patch(
+        "document_ai.rag.async_generation.httpx.AsyncClient",
+        return_value=FakeClient(),
+    ), patch(
+        "document_ai.rag.async_generation.renew_rag_job_lease",
+        return_value=True,
+    ), patch(
+        "document_ai.rag.async_generation._mark_generation_canceled_sync",
+        return_value={"status": "canceled", "job_id": context.job_id},
+    ) as mark_canceled:
+        async_to_sync(consume)()
+
+    mark_canceled.assert_called_once()
 
 
 def test_admission_token_release_is_idempotent():

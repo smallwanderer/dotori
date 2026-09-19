@@ -14,6 +14,7 @@ the claim says whether anything has been observed yet.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
@@ -250,3 +251,97 @@ def claim_embedding_runtime(
     except OSError:
         return None
     return claim
+
+
+def describe_embedding_footprint(entry: Any) -> str:
+    """Human-readable resident-memory estimate for CLI/install-wizard display.
+
+    Single canonical implementation: both install.py's host-side wizard and
+    the Django `embedding_model_catalog` command call this instead of each
+    reimplementing the parameter-to-MB math.
+    """
+    provider = str(getattr(entry, "provider", "") or "")
+    if provider in REMOTE_PROVIDERS:
+        return "Remote endpoint (no local RAM/VRAM required)"
+
+    footprint = getattr(entry, "footprint", None)
+    if footprint is None:
+        return "Size: unknown (no declared footprint)"
+
+    cpu_mb = sum(estimate_embedding_components(entry, device=DEVICE_CPU).values())
+    gpu_mb = sum(estimate_embedding_components(entry, device=DEVICE_CUDA).values())
+    params_m = float(getattr(footprint, "parameter_count_m", 0) or 0)
+    return (
+        f"{params_m:.0f}M params | ~{cpu_mb / 1024:.1f}GB RAM (CPU) "
+        f"/ ~{gpu_mb / 1024:.1f}GB VRAM (GPU)"
+    )
+
+
+@dataclass(frozen=True)
+class EmbeddingPoolCheck:
+    device: str
+    required_mb: int
+    available_mb: int
+    fit_status: str
+
+
+def evaluate_embedding_fit(entry: Any, profile: Any) -> dict[str, EmbeddingPoolCheck]:
+    """FIT/RISKY/NOFIT for this entry under CPU, and under CUDA if a GPU exists.
+
+    Reuses the exact headroom rule llm_installation.catalog.evaluator applies
+    to LLM candidates (required * HEADROOM_MULTIPLIER vs available), so an
+    operator reading the embedding and LLM tables side by side sees one
+    meaning for "RISKY", not two. Returns {} for a remote provider or an
+    entry with no declared footprint -- there is nothing local to check.
+    """
+    provider = str(getattr(entry, "provider", "") or "")
+    if provider in REMOTE_PROVIDERS or getattr(entry, "footprint", None) is None:
+        return {}
+
+    from llm_installation.planner import HEADROOM_MULTIPLIER, _gpu_free_list, _planning_ram
+
+    def _status(required_mb: int, available_mb: int) -> str:
+        if required_mb > available_mb:
+            return "NOFIT"
+        if required_mb * HEADROOM_MULTIPLIER > available_mb:
+            return "RISKY"
+        return "FIT"
+
+    checks: dict[str, EmbeddingPoolCheck] = {}
+
+    cpu_required = sum(estimate_embedding_components(entry, device=DEVICE_CPU).values())
+    available_ram = _planning_ram(profile)
+    checks["cpu"] = EmbeddingPoolCheck(
+        device="cpu",
+        required_mb=cpu_required,
+        available_mb=available_ram,
+        fit_status=_status(cpu_required, available_ram),
+    )
+
+    if int(getattr(profile, "gpu_count", 0) or 0) > 0:
+        gpu_required = sum(estimate_embedding_components(entry, device=DEVICE_CUDA).values())
+        available_vram = (_gpu_free_list(profile) or [0])[0]
+        checks["cuda"] = EmbeddingPoolCheck(
+            device="cuda",
+            required_mb=gpu_required,
+            available_mb=available_vram,
+            fit_status=_status(gpu_required, available_vram),
+        )
+
+    return checks
+
+
+def describe_embedding_fit(entry: Any, profile: Any) -> str:
+    """One-line FIT/RISKY/NOFIT summary for CLI display, plain text (no ANSI)."""
+    provider = str(getattr(entry, "provider", "") or "")
+    if provider in REMOTE_PROVIDERS:
+        return "Remote endpoint (no fit check needed)"
+
+    checks = evaluate_embedding_fit(entry, profile)
+    if not checks:
+        return "Fit: unknown (no declared footprint)"
+
+    parts = [f"CPU {checks['cpu'].fit_status}"]
+    cuda = checks.get("cuda")
+    parts.append(f"GPU {cuda.fit_status}" if cuda is not None else "GPU not detected")
+    return " | ".join(parts)

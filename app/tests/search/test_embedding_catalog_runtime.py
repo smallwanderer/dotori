@@ -48,11 +48,18 @@ def test_supported_profiles_include_verified_and_expanded_models():
     assert "ko" in harrier_entry.languages
 
 
-@pytest.mark.parametrize("preset", ["speed", "balanced", "quality"])
-def test_catalog_resolves_server_preset(preset):
+@pytest.mark.parametrize(
+    ("preset", "expected_id"),
+    [
+        ("speed", "harrier-270m"),
+        ("balanced", "bge-m3-hybrid"),
+        ("quality", "gte-qwen2-1.5b"),
+    ],
+)
+def test_catalog_resolves_server_preset(preset, expected_id):
     entry = get_embedding_catalog_entry_for_preset(preset)
 
-    assert entry.id == "bge-m3-hybrid"
+    assert entry.id == expected_id
 
 
 def test_embedding_runtime_generation_is_atomic_and_readable(tmp_path):

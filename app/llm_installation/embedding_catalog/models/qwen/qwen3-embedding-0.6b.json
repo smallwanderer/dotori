@@ -1,0 +1,17 @@
+{
+  "id": "qwen3-embedding-0.6b",
+  "display_name": "Qwen3-Embedding-0.6B",
+  "description": "Decoder-based embedding model from the Qwen3 series, supporting 100+ languages with strong retrieval performance for its size.",
+  "license": "apache-2.0",
+  "repo_id": "Qwen/Qwen3-Embedding-0.6B",
+  "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+  "tokenizer_id": "Qwen/Qwen3-Embedding-0.6B",
+  "tokenizer_revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+  "dimension": 1024,
+  "model_input_max_tokens": 32768,
+  "languages": ["ko", "en", "zh", "ja", "multilingual"],
+  "footprint": {
+    "parameter_count_m": 596,
+    "peak_activation_mb": 0
+  }
+}

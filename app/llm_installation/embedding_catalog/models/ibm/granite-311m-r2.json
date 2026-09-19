@@ -1,0 +1,17 @@
+{
+  "id": "granite-311m-r2",
+  "display_name": "Granite-Embedding-311M-Multilingual-R2",
+  "description": "IBM Granite second-generation multilingual embedding model (ModernBERT-based), top-3 open multilingual retrieval quality under 500M parameters with a 32K token context.",
+  "license": "apache-2.0",
+  "repo_id": "ibm-granite/granite-embedding-311m-multilingual-r2",
+  "revision": "44399559930365213510b1ee2eb15ded83374f0e",
+  "tokenizer_id": "ibm-granite/granite-embedding-311m-multilingual-r2",
+  "tokenizer_revision": "44399559930365213510b1ee2eb15ded83374f0e",
+  "dimension": 768,
+  "model_input_max_tokens": 32768,
+  "languages": ["ko", "en", "zh", "ja", "multilingual"],
+  "footprint": {
+    "parameter_count_m": 311.7,
+    "peak_activation_mb": 0
+  }
+}

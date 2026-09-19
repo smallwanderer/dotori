@@ -181,6 +181,19 @@ export interface RagCompleted {
   performanceMetrics: Record<string, unknown>
 }
 
+export interface RagReplay {
+  conversationUid: string
+  messageUid: string
+  clientRequestId: string
+  jobId: number | null
+  status: string
+  answer: string
+  citations: RagCitation[]
+  errorMessage: string
+  performanceMetrics: Record<string, unknown>
+  completedAt: string | null
+}
+
 export interface RagHistoryItem {
   id: number
   question: string
@@ -202,6 +215,7 @@ export interface RagConversation {
   defaultNodeIds: string[]
   revision: number
   createdById: number | null
+  canManage: boolean
   createdAt: string
   updatedAt: string
 }
@@ -262,6 +276,7 @@ export interface RagStreamHandlers {
   onSources: (citations: RagCitation[]) => void
   onToken: (text: string) => void
   onCompleted: (completed: RagCompleted) => void
+  onReplay?: (replay: RagReplay) => void
   onCanceled: (performanceMetrics: Record<string, unknown>) => void
   onError: (error: Error) => void
 }

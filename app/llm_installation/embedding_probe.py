@@ -20,6 +20,32 @@ SUPPORTED_DIMENSIONS: dict[int, str] = {
     1536: "pgvector_chunk_1536",
 }
 
+# Starting points for the "Model Name" prompt in the external-endpoint flow.
+# Unlike the built-in catalog, these are not pinned to a revision -- the live
+# probe (probe_openai_embedding_endpoint) is what actually confirms the
+# dimension and store compatibility, so a name here is only a convenience,
+# never a correctness guarantee. Dimensions are the model's known default and
+# are shown for orientation only. `host` says which endpoint actually serves
+# this name, so the prompt can filter by the URL the operator just entered
+# instead of listing OpenAI-only names next to a local Ollama address (or the
+# reverse).
+EXTERNAL_MODEL_SUGGESTIONS: list[dict[str, object]] = [
+    {"name": "text-embedding-3-small", "dimension": 1536, "note": "OpenAI cloud API", "host": "openai"},
+    {"name": "nomic-embed-text", "dimension": 768, "note": "Ollama", "host": "self_hosted"},
+    {"name": "mxbai-embed-large", "dimension": 1024, "note": "Ollama", "host": "self_hosted"},
+    {"name": "all-minilm", "dimension": 384, "note": "Ollama, smallest/fastest", "host": "self_hosted"},
+]
+
+
+def suggested_models_for_endpoint(url: str) -> list[dict[str, object]]:
+    """Filter EXTERNAL_MODEL_SUGGESTIONS to the ones that could plausibly
+    exist at this URL, so the prompt doesn't offer an OpenAI-only model name
+    next to a local Ollama address (it would just 404) or vice versa.
+    """
+    is_openai = "api.openai.com" in (url or "").lower()
+    wanted_host = "openai" if is_openai else "self_hosted"
+    return [s for s in EXTERNAL_MODEL_SUGGESTIONS if s["host"] == wanted_host]
+
 
 @dataclass(frozen=True)
 class EmbeddingProbeResult:
@@ -266,6 +292,12 @@ def load_host_embedding_catalog(
                 continue
             combined = dict(model)
             combined.update({k: v for k, v in prof.items() if k != "model_id"})
+            footprint = combined.get("footprint")
+            if isinstance(footprint, dict):
+                # embedding_footprint.py reads this via attribute access
+                # (footprint.parameter_count_m), matching the pydantic
+                # EmbeddingFootprintSpec shape it sees in the Django context.
+                combined["footprint"] = SimpleNamespace(**footprint)
             resolved.append(SimpleNamespace(**combined))
         except Exception:
             pass

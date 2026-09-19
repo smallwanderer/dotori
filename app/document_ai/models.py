@@ -7,6 +7,9 @@ from pgvector.django import VectorField, HnswIndex
 from config.enums import AIStatus, FileLanguage, QueryAnswerMode, QueryIntent, RAGStage
 
 
+RAG_STATUS_CHOICES = (*AIStatus.choices, ("interrupted", "Interrupted"))
+
+
 class ExecutorJobReceipt(models.Model):
     """Small durable receipt for executor HTTP dispatch.
 
@@ -711,7 +714,7 @@ class RAGJob(models.Model):
 
     status = models.CharField(
         max_length=32,
-        choices=AIStatus.choices,
+        choices=RAG_STATUS_CHOICES,
         default=AIStatus.PENDING,
         db_index=True,
     )
@@ -729,6 +732,10 @@ class RAGJob(models.Model):
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
     canceled_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=255, blank=True)
+    deadline_at = models.DateTimeField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    lease_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    interrupted_at = models.DateTimeField(null=True, blank=True)
     performance_metrics = models.JSONField(default=dict, blank=True)
 
     started_at = models.DateTimeField(null=True, blank=True)
@@ -742,6 +749,16 @@ class RAGJob(models.Model):
             models.Index(fields=["owner", "status", "-created_at"]),
             models.Index(fields=["workspace", "owner", "status", "-completed_at"], name="docai_rag_ws_own_st_cmp_idx"),
             models.Index(fields=["workspace", "owner", "-created_at"], name="docai_rag_ws_own_created_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["conversation"],
+                condition=models.Q(
+                    conversation__isnull=False,
+                    status__in=[AIStatus.PENDING, AIStatus.PROCESSING],
+                ),
+                name="docai_rag_one_active_conversation",
+            ),
         ]
         ordering = ["-created_at"]
 

@@ -7,6 +7,7 @@ from document_ai.search.views import (
 )
 from document_ai.status_views import server_policy
 from document_ai.conversation_views import (
+    ConversationCancelView,
     ConversationDetailView,
     ConversationListView,
     ConversationMessageListView,
@@ -28,6 +29,7 @@ urlpatterns = [
     path("v1/rag/conversations/", ConversationListView.as_view(), name="rag-conversations"),
     path("v1/rag/conversations/<uuid:uid>/", ConversationDetailView.as_view(), name="rag-conversation"),
     path("v1/rag/conversations/<uuid:uid>/messages/", ConversationMessageListView.as_view(), name="rag-conversation-messages"),
+    path("v1/rag/conversations/<uuid:uid>/cancel/", ConversationCancelView.as_view(), name="rag-conversation-cancel"),
     path("v1/rag/conversations/<uuid:conversation_uid>/messages/stream/", RAGStreamView.as_view(), name="rag-conversation-stream"),
     path("v1/server-policy/", server_policy, name="server-policy"),
     path("v1/operations/status/", operation_status, name="operation-status"),

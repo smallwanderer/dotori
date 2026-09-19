@@ -13,6 +13,7 @@ import type {
   RagConversationMessage,
   RagHistoryItem,
   RagRequest,
+  RagReplay,
   RagStreamHandlers,
   SearchRequest,
   SearchResponse,
@@ -43,6 +44,9 @@ export interface WorkspaceApi {
   listRagConversations(): Promise<RagConversation[]>
   createRagConversation(title: string, defaultNodeIds: string[]): Promise<RagConversation>
   getRagConversation(uid: string): Promise<RagConversation>
+  updateRagConversation(uid: string, expectedRevision: number, changes: { title?: string; defaultNodeIds?: string[] }): Promise<RagConversation>
+  deleteRagConversation(uid: string): Promise<void>
+  cancelRagConversation(uid: string): Promise<boolean>
   listRagConversationMessages(uid: string): Promise<RagConversationMessage[]>
   streamAnswer(
     request: RagRequest,
@@ -185,6 +189,7 @@ interface ApiRagConversation {
   default_node_ids?: string[]
   revision: number
   created_by_id?: number | null
+  can_manage?: boolean
   created_at: string
   updated_at: string
 }
@@ -347,6 +352,7 @@ function mapRagConversation(value: ApiRagConversation): RagConversation {
     defaultNodeIds: value.default_node_ids ?? [],
     revision: value.revision,
     createdById: value.created_by_id ?? null,
+    canManage: value.can_manage ?? false,
     createdAt: value.created_at,
     updatedAt: value.updated_at,
   }
@@ -581,6 +587,27 @@ const djangoDocumentApi: WorkspaceApi = {
     return mapRagConversation(payload.conversation)
   },
 
+  async updateRagConversation(uid, expectedRevision, changes) {
+    const payload = await apiRequest<{ conversation: ApiRagConversation }>(`/api/document-ai/v1/rag/conversations/${encodeURIComponent(uid)}/`, {
+      method: 'PATCH',
+      json: {
+        expected_revision: expectedRevision,
+        ...(changes.title === undefined ? {} : { title: changes.title }),
+        ...(changes.defaultNodeIds === undefined ? {} : { default_node_ids: changes.defaultNodeIds }),
+      },
+    })
+    return mapRagConversation(payload.conversation)
+  },
+
+  async deleteRagConversation(uid) {
+    await apiRequest<void>(`/api/document-ai/v1/rag/conversations/${encodeURIComponent(uid)}/`, { method: 'DELETE' })
+  },
+
+  async cancelRagConversation(uid) {
+    const payload = await apiRequest<{ cancel_requested: boolean }>(`/api/document-ai/v1/rag/conversations/${encodeURIComponent(uid)}/cancel/`, { method: 'POST' })
+    return payload.cancel_requested
+  },
+
   async listRagConversationMessages(uid) {
     const payload = await apiRequest<{ messages: ApiRagMessage[] }>(`/api/document-ai/v1/rag/conversations/${encodeURIComponent(uid)}/messages/`)
     return payload.messages.map(mapRagMessage)
@@ -660,10 +687,40 @@ const djangoDocumentApi: WorkspaceApi = {
             ...(request.threshold === undefined ? {} : { threshold: request.threshold }),
             language: request.language,
             ...(request.clientRequestId ? { client_request_id: request.clientRequestId } : {}),
-            ...(request.nodeIds.length ? { node_ids: request.nodeIds } : {}),
+            node_ids: request.nodeIds,
           },
         })
         if (!response.ok) throw await apiError(response)
+        if (response.headers.get('content-type')?.includes('application/json')) {
+          const payload = await response.json() as {
+            replay?: boolean
+            conversation_uid?: string
+            message_uid?: string
+            client_request_id?: string
+            job_id?: number | null
+            status?: string
+            answer?: string
+            citations?: ApiRagCitation[]
+            error_message?: string
+            performance_metrics?: Record<string, unknown>
+            completed_at?: string | null
+          }
+          if (!payload.replay) throw new ApiClientError(0, 'INVALID_RAG_REPLAY', 'RAG replay response was invalid.')
+          const replay: RagReplay = {
+            conversationUid: payload.conversation_uid ?? request.conversationUid ?? '',
+            messageUid: payload.message_uid ?? '',
+            clientRequestId: payload.client_request_id ?? request.clientRequestId ?? '',
+            jobId: payload.job_id ?? null,
+            status: payload.status ?? 'pending',
+            answer: payload.answer ?? '',
+            citations: (payload.citations ?? []).map(mapRagCitation),
+            errorMessage: payload.error_message ?? '',
+            performanceMetrics: payload.performance_metrics ?? {},
+            completedAt: payload.completed_at ?? null,
+          }
+          handlers.onReplay?.(replay)
+          return
+        }
         if (!response.body) throw new ApiClientError(0, 'RAG_STREAM_UNAVAILABLE', 'This browser cannot read the RAG response stream.')
 
         const reader = response.body.getReader()
@@ -783,7 +840,7 @@ const mockWorkspaceApi: WorkspaceApi = {
     const now = new Date().toISOString()
     const conversation: RagConversation = {
       uid: crypto.randomUUID(), title, defaultNodeIds, revision: 1,
-      createdById: 1, createdAt: now, updatedAt: now,
+      createdById: 1, canManage: true, createdAt: now, updatedAt: now,
     }
     mockConversations.unshift(conversation)
     mockConversationMessages.set(conversation.uid, [])
@@ -794,6 +851,23 @@ const mockWorkspaceApi: WorkspaceApi = {
     if (!conversation) throw new Error('Conversation not found')
     return conversation
   },
+  async updateRagConversation(uid, expectedRevision, changes) {
+    const conversation = mockConversations.find((item) => item.uid === uid)
+    if (!conversation) throw new Error('Conversation not found')
+    if (conversation.revision !== expectedRevision) throw new Error('Conversation revision conflict')
+    if (changes.title !== undefined) conversation.title = changes.title.trim().slice(0, 160)
+    if (changes.defaultNodeIds !== undefined) conversation.defaultNodeIds = [...changes.defaultNodeIds]
+    conversation.revision += 1
+    conversation.updatedAt = new Date().toISOString()
+    return { ...conversation, defaultNodeIds: [...conversation.defaultNodeIds] }
+  },
+  async deleteRagConversation(uid) {
+    const index = mockConversations.findIndex((item) => item.uid === uid)
+    if (index < 0) throw new Error('Conversation not found')
+    mockConversations.splice(index, 1)
+    mockConversationMessages.delete(uid)
+  },
+  async cancelRagConversation() { return true },
   async listRagConversationMessages(uid) {
     return [...(mockConversationMessages.get(uid) ?? [])]
   },

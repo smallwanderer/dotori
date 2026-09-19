@@ -7,8 +7,10 @@ from document_ai.models import RAGConversation, RAGMessage
 from document_ai.services.rag_conversation_service import (
     ConversationNotFound, ConversationPermissionDenied, ConversationRevisionConflict,
     InvalidConversationScope, create_conversation, delete_conversation,
-    get_conversation, update_conversation,
+    get_conversation, recover_expired_rag_jobs, request_conversation_cancel,
+    update_conversation,
 )
+from workspaces.models import WorkspaceMembership
 
 
 def _access_error(request):
@@ -20,12 +22,19 @@ def _access_error(request):
     return None
 
 
-def _conversation_payload(conversation):
+def _conversation_payload(conversation, *, user, workspace_membership):
+    can_manage = (
+        conversation.created_by_id == user.id
+        or (
+            workspace_membership is not None
+            and workspace_membership.role == WorkspaceMembership.ROLE_ADMIN
+        )
+    )
     return {
         "uid": str(conversation.uid), "title": conversation.title,
         "default_node_ids": conversation.default_node_ids, "revision": conversation.revision,
         "created_by_id": conversation.created_by_id, "created_at": conversation.created_at,
-        "updated_at": conversation.updated_at,
+        "updated_at": conversation.updated_at, "can_manage": can_manage,
     }
 
 
@@ -53,7 +62,14 @@ class ConversationListView(APIView):
         conversations = RAGConversation.objects.filter(
             workspace=request.workspace, deleted_at__isnull=True
         ).order_by("-updated_at", "-id")[:50]
-        return Response({"conversations": [_conversation_payload(item) for item in conversations]})
+        return Response({
+            "conversations": [
+                _conversation_payload(
+                    item, user=request.user, workspace_membership=request.workspace_membership
+                )
+                for item in conversations
+            ]
+        })
 
     def post(self, request):
         if (error := _access_error(request)) is not None:
@@ -71,7 +87,12 @@ class ConversationListView(APIView):
                 "INVALID_DOCUMENT_SCOPE", "Conversation scope contains unavailable nodes.",
                 status=400, details={"node_ids": exc.invalid_node_ids},
             )
-        return Response({"conversation": _conversation_payload(conversation)}, status=status.HTTP_201_CREATED)
+        return Response({
+            "conversation": _conversation_payload(
+                conversation, user=request.user,
+                workspace_membership=request.workspace_membership,
+            )
+        }, status=status.HTTP_201_CREATED)
 
 
 class ConversationDetailView(APIView):
@@ -89,7 +110,10 @@ class ConversationDetailView(APIView):
         conversation = self._get(request, uid)
         if conversation is None:
             return api_error_response("NOT_FOUND", "Conversation not found.", status=404)
-        return Response({"conversation": _conversation_payload(conversation)})
+        return Response({"conversation": _conversation_payload(
+            conversation, user=request.user,
+            workspace_membership=request.workspace_membership,
+        )})
 
     def patch(self, request, uid):
         if (error := _access_error(request)) is not None:
@@ -116,7 +140,10 @@ class ConversationDetailView(APIView):
                 "INVALID_DOCUMENT_SCOPE", "Conversation scope contains unavailable nodes.",
                 status=400, details={"node_ids": exc.invalid_node_ids},
             )
-        return Response({"conversation": _conversation_payload(conversation)})
+        return Response({"conversation": _conversation_payload(
+            conversation, user=request.user,
+            workspace_membership=request.workspace_membership,
+        )})
 
     def delete(self, request, uid):
         if (error := _access_error(request)) is not None:
@@ -143,5 +170,29 @@ class ConversationMessageListView(APIView):
             conversation = get_conversation(workspace=request.workspace, uid=uid)
         except ConversationNotFound:
             return api_error_response("NOT_FOUND", "Conversation not found.", status=404)
+        recover_expired_rag_jobs(conversation=conversation)
         messages = RAGMessage.objects.filter(conversation=conversation).select_related("rag_job", "reply_to")
         return Response({"messages": [_message_payload(message) for message in messages]})
+
+
+class ConversationCancelView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, uid):
+        if (error := _access_error(request)) is not None:
+            return error
+        try:
+            conversation = get_conversation(workspace=request.workspace, uid=uid)
+            active_job = request_conversation_cancel(
+                conversation=conversation, user=request.user
+            )
+        except ConversationNotFound:
+            return api_error_response("NOT_FOUND", "Conversation not found.", status=404)
+        except ConversationPermissionDenied:
+            return api_error_response(
+                "PERMISSION_DENIED", "You cannot cancel this conversation.", status=403
+            )
+        return Response({
+            "cancel_requested": active_job is not None,
+            "job_id": active_job.id if active_job is not None else None,
+        })

@@ -44,6 +44,22 @@ from files.models import Node, NodeType
 EMPTY_SCOPE_SENTINEL = "00000000-0000-0000-0000-000000000000"
 
 
+def _conversation_replay_response(*, conversation, message, rag_job, request_id):
+    return JsonResponse({
+        "replay": True,
+        "conversation_uid": str(conversation.uid),
+        "message_uid": str(message.uid),
+        "client_request_id": str(request_id),
+        "job_id": rag_job.id if rag_job is not None else None,
+        "status": rag_job.status if rag_job is not None else "pending",
+        "answer": rag_job.answer if rag_job is not None else "",
+        "citations": rag_job.citations if rag_job is not None else [],
+        "error_message": rag_job.error_message if rag_job is not None else "",
+        "performance_metrics": rag_job.performance_metrics if rag_job is not None else {},
+        "completed_at": rag_job.completed_at.isoformat() if rag_job is not None and rag_job.completed_at else None,
+    })
+
+
 def _workspace_access_error(request):
     error = session_access_error(request.user)
     if error is not None:
@@ -325,18 +341,103 @@ class RAGStreamView(View):
             if not runtime_available:
                 return _llm_runtime_unavailable_response(runtime_status)
 
+        conversation = None
+        reply_to = None
+        node_ids = serializer.validated_data.get("node_ids") or []
+        conversation_uid = kwargs.get("conversation_uid")
+        if conversation_uid is not None:
+            from document_ai.services.rag_conversation_service import (
+                ConversationIdempotencyConflict,
+                ConversationNotFound,
+                ConversationPermissionDenied,
+                get_existing_user_message,
+                get_reply_job_for_message,
+                get_conversation,
+            )
+            try:
+                conversation = await sync_to_async(get_conversation, thread_sensitive=True)(workspace=request.workspace, uid=conversation_uid)
+                if "node_ids" not in request_data:
+                    node_ids = list(conversation.default_node_ids or [])
+                request_id = uuid.UUID(str(request_data.get("client_request_id")))
+                existing = await sync_to_async(get_existing_user_message, thread_sensitive=True)(
+                    conversation=conversation,
+                    user=user,
+                    content=serializer.validated_data["question"],
+                    client_request_id=request_id,
+                    node_ids=[str(node_id) for node_id in node_ids],
+                )
+                if existing is not None:
+                    rag_job = await sync_to_async(get_reply_job_for_message, thread_sensitive=True)(existing)
+                    return _conversation_replay_response(conversation=conversation, message=existing, rag_job=rag_job, request_id=request_id)
+            except (TypeError, ValueError, AttributeError):
+                return api_error_response("INVALID_REQUEST", "client_request_id must be a UUID.", status=400)
+            except ConversationIdempotencyConflict:
+                return api_error_response("IDEMPOTENCY_CONFLICT", "client_request_id was already used for a different message.", status=409)
+            except ConversationNotFound:
+                return api_error_response("NOT_FOUND", "Conversation not found.", status=404)
+            except ConversationPermissionDenied:
+                return api_error_response("PERMISSION_DENIED", "You cannot continue this conversation.", status=403)
+
+        scoped_node_ids = await sync_to_async(
+            _expand_scope_node_ids, thread_sensitive=True
+        )(user, node_ids, workspace=request.workspace)
+        question = serializer.validated_data["question"]
+        retrieval_config = await sync_to_async(
+            get_effective_retrieval_config, thread_sensitive=True
+        )(request.workspace)
+        top_k = serializer.validated_data["top_k"] if "top_k" in request_data else retrieval_config["rag_search_top_k"]
+        threshold = (
+            serializer.validated_data.get("threshold")
+            if "threshold" in request_data
+            else await sync_to_async(profile_threshold_to_retriever, thread_sensitive=True)(retrieval_config["retrieval_threshold"])
+        )
+        retrieval_query = normalize_extracted_text(question).strip()
+        reserved_rag_job = None
+        if conversation is not None:
+            from document_ai.services.rag_conversation_service import reserve_session_turn
+            try:
+                reply_to, reserved_rag_job, created = await sync_to_async(
+                    reserve_session_turn, thread_sensitive=True
+                )(
+                    conversation=conversation, user=user, question=question,
+                    client_request_id=request_id, node_ids=[str(node_id) for node_id in node_ids],
+                    retrieval_query=retrieval_query, top_k=top_k, threshold=threshold,
+                    language=serializer.validated_data.get("language", "ko"),
+                    llm_snapshot=llm_snapshot,
+                )
+                if not created:
+                    return _conversation_replay_response(
+                        conversation=conversation, message=reply_to,
+                        rag_job=reserved_rag_job, request_id=request_id,
+                    )
+            except RuntimeError as exc:
+                if str(exc) == "CONVERSATION_BUSY":
+                    return api_error_response("CONVERSATION_BUSY", "Another answer is already active for this conversation.", status=409)
+                raise
+
         # Resolve the target before admission. Local and external endpoints
         # have independent non-blocking gates, so external traffic never
         # consumes calibrated local GPU slots (or vice versa).
         admission_token = await acquire_rag_admission_token_async(llm_snapshot)
         if admission_token is None:
+            if reserved_rag_job is not None:
+                from document_ai.services.rag_conversation_service import fail_reserved_rag_job
+                await sync_to_async(fail_reserved_rag_job, thread_sensitive=True)(
+                    rag_job_id=reserved_rag_job.id,
+                    error="RAG capacity limit reached before generation started.",
+                )
             response = JsonResponse(
                 {
                     "ok": False,
                     "error": {
                         "code": "RAG_CAPACITY_EXCEEDED",
                         "message": "RAG 생성 요청이 많아 잠시 후 다시 시도해 주세요.",
-                        "details": {},
+                        "details": {
+                            "retryable": True,
+                            "conversation_uid": str(conversation.uid) if conversation is not None else None,
+                            "message_uid": str(reply_to.uid) if reply_to is not None else None,
+                            "job_id": reserved_rag_job.id if reserved_rag_job is not None else None,
+                        },
                     }
                 },
                 status=503,
@@ -344,18 +445,15 @@ class RAGStreamView(View):
             response["Retry-After"] = str(rag_retry_after_seconds())
             return response
 
-        conversation = None
-        reply_to = None
         handed_off = False
         try:
-            node_ids = serializer.validated_data.get("node_ids") or []
-            conversation_uid = kwargs.get("conversation_uid")
-            if conversation_uid is not None:
+            if conversation_uid is not None and reserved_rag_job is None:
                 from document_ai.services.rag_conversation_service import (
                     ConversationIdempotencyConflict,
                     ConversationNotFound,
                     ConversationPermissionDenied,
                     append_user_message,
+                    get_reply_job_for_message,
                     get_conversation,
                 )
 
@@ -371,6 +469,7 @@ class RAGStreamView(View):
                         return api_error_response(
                             "INVALID_REQUEST", "client_request_id must be a UUID.", status=400
                         )
+                    normalized_node_ids = [str(node_id) for node_id in node_ids]
                     reply_to, created = await sync_to_async(
                         append_user_message, thread_sensitive=True
                     )(
@@ -378,13 +477,17 @@ class RAGStreamView(View):
                         user=user,
                         content=serializer.validated_data["question"],
                         client_request_id=request_id,
-                        node_ids=[str(node_id) for node_id in node_ids],
+                        node_ids=normalized_node_ids,
                     )
                     if not created:
-                        return api_error_response(
-                            "IDEMPOTENCY_REPLAY",
-                            "This message was already submitted; reload the conversation.",
-                            status=409,
+                        rag_job = await sync_to_async(
+                            get_reply_job_for_message, thread_sensitive=True
+                        )(reply_to)
+                        return _conversation_replay_response(
+                            conversation=conversation,
+                            message=reply_to,
+                            rag_job=rag_job,
+                            request_id=request_id,
                         )
                 except ConversationIdempotencyConflict:
                     return api_error_response(
@@ -398,27 +501,8 @@ class RAGStreamView(View):
                     return api_error_response(
                         "PERMISSION_DENIED", "You cannot continue this conversation.", status=403
                     )
-            scoped_node_ids = await sync_to_async(
-                _expand_scope_node_ids, thread_sensitive=True
-            )(user, node_ids, workspace=request.workspace)
-            question = serializer.validated_data["question"]
-            retrieval_config = await sync_to_async(
-                get_effective_retrieval_config, thread_sensitive=True
-            )(request.workspace)
-            top_k = (
-                serializer.validated_data["top_k"]
-                if "top_k" in request_data
-                else retrieval_config["rag_search_top_k"]
-            )
-            threshold = (
-                serializer.validated_data.get("threshold")
-                if "threshold" in request_data
-                else await sync_to_async(profile_threshold_to_retriever, thread_sensitive=True)(
-                    retrieval_config["retrieval_threshold"]
-                )
-            )
-            retrieval_query = normalize_extracted_text(question).strip()
             from document_ai.rag.streaming import (
+                RAGConversationBusyError,
                 RAGSearchBusyError,
                 RAGSearchError,
                 create_rag_streaming_response_async,
@@ -442,6 +526,7 @@ class RAGStreamView(View):
                     admission_token=admission_token,
                     conversation=conversation,
                     reply_to=reply_to,
+                    reserved_rag_job=reserved_rag_job,
                 )
             except RAGSearchBusyError as exc:
                 response = api_error_response(
@@ -452,6 +537,12 @@ class RAGStreamView(View):
                 )
                 response["Retry-After"] = str(exc.retry_after_seconds)
                 return response
+            except RAGConversationBusyError:
+                return api_error_response(
+                    "CONVERSATION_BUSY",
+                    "Another answer is already active for this conversation.",
+                    status=409,
+                )
             except RAGSearchError as exc:
                 return api_error_response(
                     "SEARCH_FAILED",

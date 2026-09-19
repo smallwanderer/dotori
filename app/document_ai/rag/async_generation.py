@@ -35,6 +35,7 @@ from document_ai.services.rag_cancel_service import (
     get_rag_cancel_key,
     get_rag_cancel_redis_url,
 )
+from document_ai.services.rag_conversation_service import RAG_INTERRUPTED, renew_rag_job_lease
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class AsyncGenerationContext:
     metrics: dict
     worker_started: float
     created_at: object
+    conversation_job: bool = False
 
 
 def _finish_metrics(context: AsyncGenerationContext, *, completed_at=None, **extra) -> dict:
@@ -100,6 +102,7 @@ def _prepare_generation_sync(
             metrics=metrics,
             worker_started=worker_started,
             created_at=rag_job.created_at,
+            conversation_job=bool(rag_job.conversation_id),
         )
 
         skip_retrieval = not rag_job.search_job and (
@@ -133,10 +136,20 @@ def _prepare_generation_sync(
                 "error": rag_job.error_message,
             }
 
+        now = timezone.now()
+        if rag_job.deadline_at and rag_job.deadline_at <= now:
+            rag_job.status = RAG_INTERRUPTED
+            rag_job.stage = RAGStage.INTERRUPTED
+            rag_job.stage_message = "실행 시간이 만료되어 작업을 중단했습니다."
+            rag_job.error_message = "RAG execution deadline expired."
+            rag_job.completed_at = now
+            rag_job.interrupted_at = now
+            rag_job.save(update_fields=["status", "stage", "stage_message", "error_message", "completed_at", "interrupted_at", "updated_at"])
+            return None, {"status": "interrupted", "job_id": rag_job_id, "error": rag_job.error_message}
         rag_job.status = AIStatus.PROCESSING
         rag_job.stage = RAGStage.GENERATING
         rag_job.stage_message = "검색된 근거를 바탕으로 답변을 생성하고 있습니다."
-        rag_job.started_at = timezone.now()
+        rag_job.started_at = now
         rag_job.error_message = ""
         if "queue_wait_ms" not in metrics:
             put_metric(
@@ -251,6 +264,7 @@ def _complete_generation_sync(
 
     with capture_db_spans():
         rag_job = RAGJob.objects.get(pk=context.job_id)
+        now = timezone.now()
         if rag_job.status == AIStatus.CANCELED:
             rag_job.performance_metrics = _finish_metrics(
                 context, completed_at=rag_job.completed_at, canceled=True
@@ -258,6 +272,12 @@ def _complete_generation_sync(
             rag_job.save(update_fields=["performance_metrics"])
             clear_rag_cancel_signal(rag_job.id)
             return {"status": "canceled", "job_id": rag_job.id}, ""
+        if (
+            rag_job.status == RAG_INTERRUPTED
+            or (rag_job.deadline_at and rag_job.deadline_at <= now)
+            or (rag_job.lease_expires_at and rag_job.lease_expires_at <= now)
+        ):
+            return _mark_generation_interrupted_sync(context), ""
 
         answer = _normalize_rag_answer(raw_answer)
         if not answer:
@@ -316,6 +336,9 @@ def _mark_generation_canceled_sync(context: AsyncGenerationContext) -> dict:
 
     with capture_db_spans():
         rag_job = RAGJob.objects.get(pk=context.job_id)
+        if rag_job.status not in [AIStatus.PENDING, AIStatus.PROCESSING]:
+            clear_rag_cancel_signal(rag_job.id)
+            return {"status": rag_job.status, "job_id": rag_job.id, "updated": False}
         rag_job.status = AIStatus.CANCELED
         rag_job.stage = RAGStage.CANCELED
         rag_job.stage_message = "사용자 요청으로 RAG 작업을 중단했습니다."
@@ -472,6 +495,12 @@ async def iter_rag_generation_events_async(
                     now_monotonic = time_module.monotonic()
                     if now_monotonic - last_cancel_check >= 0.5:
                         last_cancel_check = now_monotonic
+                        if context.conversation_job:
+                            renewed = await sync_to_async(renew_rag_job_lease, thread_sensitive=True)(rag_job_id=rag_job_id)
+                            if not renewed:
+                                result = await sync_to_async(_mark_generation_interrupted_sync, thread_sensitive=True)(context)
+                                yield {"type": "terminal", "result": result}
+                                return
                         if await redis_client.exists(cancel_key):
                             result = await sync_to_async(
                                 _mark_generation_canceled_sync,
@@ -542,3 +571,25 @@ async def iter_rag_generation_events_async(
         yield {"type": "terminal", "result": result}
     finally:
         await redis_client.aclose()
+
+
+def _mark_generation_interrupted_sync(context: AsyncGenerationContext) -> dict:
+    from document_ai.models import RAGJob
+
+    now = timezone.now()
+    updated = RAGJob.objects.filter(
+        pk=context.job_id,
+        status__in=[AIStatus.PENDING, AIStatus.PROCESSING],
+    ).update(
+        status=RAG_INTERRUPTED,
+        stage=RAGStage.INTERRUPTED,
+        stage_message="실행 시간이 만료되어 작업을 중단했습니다.",
+        error_message="RAG execution lease or deadline expired.",
+        completed_at=now,
+        interrupted_at=now,
+        updated_at=now,
+    )
+    if updated:
+        return {"status": "interrupted", "job_id": context.job_id, "updated": True}
+    current = RAGJob.objects.filter(pk=context.job_id).values_list("status", flat=True).first()
+    return {"status": current or "interrupted", "job_id": context.job_id, "updated": False}

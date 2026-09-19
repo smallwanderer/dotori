@@ -138,13 +138,13 @@ services:
     restart: unless-stopped
     # Allocating GPU to embedding-executor may induce OOM when dotori-llm 
     # oversubscribe GPU memory. If OOM occurs, remove this section.
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [ gpu ]
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [ gpu ]
     # Relative CPU priority: app and dotori-llm are eleft at Docker's default 
     # prioity (1024), and so under contention over CPU cores, embedding-executor
     # is de-priotized.
@@ -163,6 +163,8 @@ services:
       # app calls /embed/ over the compose network instead of loading the model itself;
       # this Host header must be accepted.
       DOTORI_DJANGO_ALLOWED_HOSTS: embedding-executor,localhost,127.0.0.1
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-0}
     depends_on:
       db:
         condition: service_healthy

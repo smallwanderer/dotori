@@ -96,6 +96,11 @@ from llm_installation.embedding_probe import (
     load_host_embedding_catalog,
     probe_openai_embedding_endpoint,
     stage_external_embedding_generation,
+    suggested_models_for_endpoint,
+)
+from llm_installation.embedding_footprint import (
+    describe_embedding_fit,
+    describe_embedding_footprint,
 )
 from llm_installation.installer_adapter import (
     detect_hardware,
@@ -111,7 +116,7 @@ from llm_installation.runtime_lifecycle import (
     build_runtime_spec,
 )
 from llm_installation.config_store import stage_legacy_runtime_generation
-from llm_installation.runtime_probe import probe_docker_services
+from llm_installation.runtime_probe import probe_docker_services, probe_server_runtime
 from installation.network_access import (
     ConfigurationError as NetworkConfigurationError,
     connect as connect_external_access,
@@ -146,35 +151,55 @@ def select_rag_priority():
     )
 
 
+def _resolve_embedding_preset_files(priority_preset):
+    # Keep the host installer runnable with the Python standard library only.
+    # The container-side loader performs the full Pydantic catalog validation.
+    from pathlib import Path
+    from llm_installation.embedding_catalog.presets import EMBEDDING_PRESETS
+
+    catalog_root = Path(os.path.dirname(__file__)) / "app" / "llm_installation" / "embedding_catalog"
+    entry_id = EMBEDDING_PRESETS.get(priority_preset)
+    if entry_id is None:
+        raise RuntimeError(f"Unknown embedding priority preset: {priority_preset}")
+
+    profile = None
+    for path in sorted((catalog_root / "profiles").rglob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("id") == entry_id:
+            profile = payload
+            break
+    if profile is None:
+        raise RuntimeError(
+            "The checked-in embedding catalog has no profile entry "
+            f"for preset {priority_preset} ({entry_id})."
+        )
+
+    model = None
+    for path in sorted((catalog_root / "models").rglob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("id") == profile.get("model_id"):
+            model = payload
+            break
+    if model is None:
+        raise RuntimeError(
+            f"The checked-in embedding catalog has no model entry "
+            f"for profile {profile.get('id')}."
+        )
+    return model, profile
+
+
 def initialize_embedding_runtime_config(
     priority_preset="balanced",
     *,
     scope="production",
 ):
-    # Keep the host installer runnable with the Python standard library only.
-    # The container-side loader performs the full Pydantic catalog validation.
     from types import SimpleNamespace
     from llm_installation.embedding_config_store import (
         commit_active_embedding_runtime,
         write_embedding_runtime_generation,
     )
 
-    catalog_root = (
-        os.path.dirname(__file__)
-        + "/app/llm_installation/embedding_catalog"
-    )
-    with open(
-        catalog_root + "/models/baai/bge-m3.json",
-        "r",
-        encoding="utf-8",
-    ) as model_file:
-        model = json.load(model_file)
-    with open(
-        catalog_root + "/profiles/bgem3_hybrid/bge-m3.json",
-        "r",
-        encoding="utf-8",
-    ) as profile_file:
-        profile = json.load(profile_file)
+    model, profile = _resolve_embedding_preset_files(priority_preset)
 
     known_providers = {"bgem3_hybrid", "sentence_transformers", "openai_compatible"}
     known_stores = {
@@ -187,8 +212,6 @@ def initialize_embedding_runtime_config(
 
     if (
         profile.get("availability") != "supported"
-        or priority_preset not in profile.get("presets", [])
-        or profile.get("model_id") != model.get("id")
         or profile.get("provider") not in known_providers
         or profile.get("store") not in known_stores
         or int(profile.get("dimension", 0)) != int(model.get("dimension", 0))
@@ -922,36 +945,88 @@ def change_embedding_runtime_cli(
         source = input("Select an option (default: 1): ").strip() or "1"
 
         if source == "1":
-            supported = load_host_embedding_catalog()
-            print("\nAvailable Catalog Models:")
-            for idx, item in enumerate(supported, 1):
-                rec = " [Recommended]" if item.id == "bge-m3-hybrid" else ""
-                print(f"{BOLD}[{idx}] {item.display_name}{RESET} ({item.dimension} dim, {item.provider}){rec}")
-                print(f"    - {item.description}")
-            print(f"{BOLD}[{len(supported) + 1}] Select by Preset (Speed / Balanced / Quality){RESET}")
-
-            choice = input(f"Select a model [1-{len(supported) + 1}] (default: 1): ").strip() or "1"
+            # openai_compatible catalog entries have no repo_id/revision of
+            # their own -- they resolve to whatever OPENAI_EMBEDDING_BASE_URL
+            # / _API_KEY happen to be set in .env at run time, so this list
+            # can't show them as self-contained "local" choices the way it
+            # can the sentence_transformers/bgem3_hybrid entries. Route them
+            # through [2] instead, which asks for the endpoint/key directly.
+            supported = [
+                item
+                for item in load_host_embedding_catalog()
+                if item.provider != "openai_compatible"
+            ]
             try:
-                choice_idx = int(choice)
-                if 1 <= choice_idx <= len(supported):
-                    selected_entry = supported[choice_idx - 1]
-                    catalog_id = selected_entry.id
-                    candidate_model_name = selected_entry.repo_id
-                    candidate_dim = selected_entry.dimension
-                    candidate_provider = selected_entry.provider
-                elif choice_idx == len(supported) + 1:
-                    print("\nSelect Preset:")
-                    print("[1] Speed")
-                    print("[2] Balanced")
-                    print("[3] Quality")
-                    p_sel = input("Select preset (default: 2): ").strip() or "2"
-                    priority_preset = {"1": "speed", "2": "balanced", "3": "quality"}.get(p_sel, "balanced")
+                hw_profile = probe_server_runtime()
+            except Exception:
+                hw_profile = None
+
+            EMBEDDING_CATALOG_PAGE_SIZE = 5
+            total = len(supported)
+            preset_option = total + 1
+            last_page = max((total - 1) // EMBEDDING_CATALOG_PAGE_SIZE, 0) if total else 0
+            paginated = total > EMBEDDING_CATALOG_PAGE_SIZE
+            page = 0
+
+            choice_idx = None
+            while choice_idx is None:
+                start = page * EMBEDDING_CATALOG_PAGE_SIZE
+                end = min(start + EMBEDDING_CATALOG_PAGE_SIZE, total)
+                if paginated:
+                    print(f"\nAvailable Catalog Models (showing {start + 1}-{end} of {total}):")
                 else:
-                    print(f"{RED}[ERROR] Invalid selection.{RESET}")
+                    print("\nAvailable Catalog Models:")
+                for idx, item in enumerate(supported[start:end], start + 1):
+                    rec = " [Recommended]" if item.id == "bge-m3-hybrid" else ""
+                    print(f"{BOLD}[{idx}] {item.display_name}{RESET} ({item.dimension} dim, {item.provider}){rec}")
+                    print(f"    - {item.description}")
+                    print(f"    - {describe_embedding_footprint(item)}")
+                    if hw_profile is not None:
+                        fit_line = describe_embedding_fit(item, hw_profile)
+                        color = RED if "NOFIT" in fit_line else YELLOW if "RISKY" in fit_line else GREEN
+                        print(f"    - Fit: {color}{fit_line}{RESET}")
+                print(f"{BOLD}[{preset_option}] Select by Preset (Speed / Balanced / Quality){RESET}")
+                if paginated:
+                    print("Commands: [n] Next Page, [p] Previous Page, [Index] Select, [q] Cancel")
+
+                raw_choice = input(f"Select a model [1-{preset_option}] (default: 1): ").strip().lower() or "1"
+                if paginated and raw_choice == "n":
+                    if page < last_page:
+                        page += 1
+                    else:
+                        print(f"{YELLOW}• Already on the last page.{RESET}")
+                    continue
+                if paginated and raw_choice == "p":
+                    if page > 0:
+                        page -= 1
+                    else:
+                        print(f"{YELLOW}• Already on the first page.{RESET}")
+                    continue
+                if raw_choice == "q":
+                    print(f"{YELLOW}• Embedding change cancelled by user.{RESET}")
                     return False
-            except ValueError:
-                print(f"{RED}[ERROR] Invalid input.{RESET}")
-                return False
+                if not raw_choice.isdigit():
+                    print(f"{RED}[ERROR] Invalid input.{RESET}")
+                    continue
+                candidate_idx = int(raw_choice)
+                if not (1 <= candidate_idx <= preset_option):
+                    print(f"{RED}[ERROR] Invalid selection.{RESET}")
+                    continue
+                choice_idx = candidate_idx
+
+            if choice_idx <= total:
+                selected_entry = supported[choice_idx - 1]
+                catalog_id = selected_entry.id
+                candidate_model_name = selected_entry.repo_id
+                candidate_dim = selected_entry.dimension
+                candidate_provider = selected_entry.provider
+            else:
+                print("\nSelect Preset:")
+                print("[1] Speed")
+                print("[2] Balanced")
+                print("[3] Quality")
+                p_sel = input("Select preset (default: 2): ").strip() or "2"
+                priority_preset = {"1": "speed", "2": "balanced", "3": "quality"}.get(p_sel, "balanced")
 
         elif source == "2":
             print("\nConfigure External OpenAI-compatible Embedding Endpoint:")
@@ -962,7 +1037,20 @@ def change_embedding_runtime_cli(
             )
             raw_url = input(f"Endpoint URL (default: {default_url}): ").strip() or default_url
             api_key = input("API Key (optional, press Enter to skip): ").strip()
-            model_name = input("Model Name (e.g. text-embedding-3-small, bge-m3, nomic-embed-text): ").strip()
+
+            relevant_suggestions = suggested_models_for_endpoint(raw_url)
+            if relevant_suggestions:
+                print("\nSuggested models for this endpoint (pick a number, or type any other name it supports):")
+                for sug_idx, suggestion in enumerate(relevant_suggestions, 1):
+                    print(
+                        f"{BOLD}[{sug_idx}] {suggestion['name']}{RESET} "
+                        f"(~{suggestion['dimension']} dim, {suggestion['note']})"
+                    )
+            model_input = input("Model Name: ").strip()
+            if relevant_suggestions and model_input.isdigit() and 1 <= int(model_input) <= len(relevant_suggestions):
+                model_name = str(relevant_suggestions[int(model_input) - 1]["name"])
+            else:
+                model_name = model_input
 
             if not model_name:
                 print(f"{RED}[ERROR] Model name is required.{RESET}")

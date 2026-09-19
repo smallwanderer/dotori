@@ -3,6 +3,11 @@ import json
 from django.core.management.base import BaseCommand
 
 from llm_installation.embedding_catalog import load_embedding_catalog
+from llm_installation.embedding_footprint import (
+    describe_embedding_fit,
+    describe_embedding_footprint,
+)
+from llm_installation.runtime_probe import probe_server_runtime
 
 
 class Command(BaseCommand):
@@ -32,6 +37,11 @@ class Command(BaseCommand):
             )
             return
 
+        try:
+            profile = probe_server_runtime()
+        except Exception:
+            profile = None
+
         for entry in entries:
             self.stdout.write(
                 f"{entry.id}: model={entry.repo_id}@{entry.revision} "
@@ -39,3 +49,12 @@ class Command(BaseCommand):
                 f"dimension={entry.dimension} sparse={entry.supports_sparse} "
                 f"availability={entry.availability}"
             )
+            self.stdout.write(f"    memory: {describe_embedding_footprint(entry)}")
+            if profile is not None:
+                fit_line = describe_embedding_fit(entry, profile)
+                style = (
+                    self.style.ERROR if "NOFIT" in fit_line
+                    else self.style.WARNING if "RISKY" in fit_line
+                    else self.style.SUCCESS
+                )
+                self.stdout.write(f"    fit: {style(fit_line)}")

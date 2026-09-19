@@ -1,7 +1,6 @@
 # Dotori 현재 API 계약 v1
 
 > 기준일: 2026-08-29
-> 상태: SPA 전환 MVP인 0–8단계와 사용자 CLI(9단계) 계약 적용 완료. 이 문서는 현재 Django 구현과 template·SPA·CLI가 실제로 사용하는 계약을 기록합니다.
 
 이 문서는 `web/` SPA와 `clients/dotori-cli/` CLI가 실제로 사용하는 HTTP 계약을 고정한 참조 자료입니다. Dotori 서버에 대해 직접 HTTP 클라이언트를 작성하려는 경우에도 이 문서가 기준입니다.
 실제 사용 절차가 필요하다면 [설치 가이드](./installation-guide.md), [운영 가이드](./operation-guide.md), CLI 사용법(`clients/dotori-cli/README.md`)을 참고하세요.
@@ -20,11 +19,10 @@
 
 ## 목적과 적용 범위
 
-이 문서는 `web/` SPA 연결 전에 현재 HTTP 경계를 고정하기 위한 자료입니다. 현재 동작을 그대로 재사용할 부분과 후속 단계에서 의도적으로 바꿀 부분을 구분하며, Django 내부 서비스나 데이터베이스 모델을 외부 계약으로 간주하지 않습니다.
+이 문서는 Dotori의 web-backend api 전체에 적용하기 위한 계약 문서입니다.
 
 - SPA, 기존 Django template, 사용자 CLI가 사용하는 HTTP 계약을 대상으로 합니다.
 - 폴더 동기화 API와 검색 tuning API는 별도 소비자 경계로 기록합니다.
-- Django Admin, management command, 설치 스크립트는 HTTP 사용자 API에 포함하지 않습니다.
 - 외부 문서 식별자는 UUID 문자열인 `uid` 또는 `node_id`를 기준으로 합니다.
 - 이 기준선의 핵심 동작은 `app/tests/test_web_api_contract.py`에서 검증합니다.
 

@@ -17,6 +17,22 @@ CPU_RUNTIME_OVERHEAD_MB = 512
 GPU_RUNTIME_OVERHEAD_MB = 512
 CUDA_CONTEXT_OVERHEAD_MB = 1500
 
+# Context length is not yet user-configurable; this is a single shared
+# target for all presets until a real setting is added. Still capped by
+# the model's max_context_length and profile.configured_context_cap.
+DEFAULT_CONTEXT_LENGTH = 8192
+
+# Sanity ceiling for the llama.cpp descending concurrency search (see
+# _llamacpp_concurrency_seed) -- guards against a runaway-long search on
+# a tiny model with huge free memory, not a product/preset knob.
+MAX_PLANNED_CONCURRENCY = 32
+
+# Not yet user-configurable; single shared defaults until a real setting is
+# added (see DEFAULT_CONTEXT_LENGTH above for the same pattern).
+DEFAULT_KV_CACHE_TYPE = "q8_0"
+DEFAULT_BATCH_SIZE = 1024
+DEFAULT_UBATCH_SIZE = 256
+
 QUANT_BYTES_PER_PARAM = {
     "f32": 4.0,
     "fp32": 4.0,
@@ -61,8 +77,6 @@ class RuntimeChoice:
 @dataclass(frozen=True)
 class PresetPolicy:
     priority_preset: str
-    target_context: int
-    target_concurrency: int
     memory_policy: str
     engine_preference: str
 
@@ -301,15 +315,9 @@ def convert_policy(priority_preset: str) -> PresetPolicy:
     if priority_preset not in PRIORITY_PRESETS:
         raise ValueError(f"Unknown priority preset: {priority_preset}")
     return {
-        "speed": PresetPolicy(
-            "speed", 4096, 2, "latency", "highest estimated decode TPS"
-        ),
-        "balanced": PresetPolicy(
-            "balanced", 8192, 4, "headroom", "catalog recommendation"
-        ),
-        "quality": PresetPolicy(
-            "quality", 16384, 1, "context", "highest model quality"
-        ),
+        "speed": PresetPolicy("speed", "latency", "highest estimated decode TPS"),
+        "balanced": PresetPolicy("balanced", "headroom", "catalog recommendation"),
+        "quality": PresetPolicy("quality", "context", "highest model quality"),
     }[priority_preset]
 
 
@@ -740,49 +748,55 @@ def assess_catalog_entry(entry: Any, profile: Any) -> CatalogAssessment:
     )
 
 
-def model_preference_score(entry: Any, priority_preset: str) -> tuple:
-    parameters = float(entry.model_metadata.parameter_count_b)
-    priority = int(entry.priority)
-    quant = QUANT_BYTES_PER_PARAM.get(_quant_key(entry), 0.0)
-    if priority_preset == "quality":
-        return parameters, quant, entry.model_metadata.max_context_length, priority
-    if priority_preset == "speed":
-        return priority, -parameters
-    return priority, parameters
-
-
-def _resolve_llamacpp_batch_pair(priority_preset: str) -> tuple[int, int]:
-    return {
-        "speed": (2048, 512),
-        "balanced": (1024, 256),
-        "quality": (512, 128),
-    }[priority_preset]
-
-
-def _threads(profile: Any, preset: str) -> int:
+def _threads(profile: Any) -> int:
     cores = int(
         getattr(profile, "physical_cpu_cores", 0)
         or getattr(profile, "cpu_count", 1)
         or 1
     )
     usable = max(1, cores - 1)
-    if preset == "speed":
-        return usable
     return max(1, math.floor(usable * 0.75))
 
 
-def _context_candidates(entry: Any, profile: Any, preset: str) -> list[int]:
-    values = {
-        "speed": [4096, 2048],
-        "balanced": [8192, 4096, 2048],
-        "quality": [16384, 8192, 4096],
-    }[preset]
+def _context_target(entry: Any, profile: Any) -> int:
     cap = min(
         int(entry.model_metadata.max_context_length),
         int(getattr(profile, "configured_context_cap", 16384) or 16384),
     )
-    filtered = [value for value in values if value <= cap]
-    return filtered or [max(1, cap)]
+    return min(DEFAULT_CONTEXT_LENGTH, cap) if cap > 0 else max(1, cap)
+
+
+def _llamacpp_concurrency_seed(
+    entry: Any, profile: Any, backend_profile: str, context: int
+) -> int:
+    # Deliberately approximate (best-case full-offload assumption, doesn't
+    # model partial-layer/KV coupling): it only needs to be a reasonable
+    # upper bound. The descending search loop in _plan_llamacpp re-verifies
+    # every candidate with the real placement/_pool_fit machinery, so it
+    # will never return something infeasible even if this seed overshoots.
+    baseline = estimate_model_memory(
+        entry,
+        context_length=context,
+        concurrency=1,
+        cache_type_k=DEFAULT_KV_CACHE_TYPE,
+        cache_type_v=DEFAULT_KV_CACHE_TYPE,
+    )
+    if backend_profile == "llamacpp-cpu":
+        available = _planning_ram(profile)
+        fixed = baseline.weight_memory_mb + CPU_RUNTIME_OVERHEAD_MB
+    else:
+        free = _gpu_free_list(profile)
+        available = free[0] if free else 0
+        fixed = (
+            baseline.weight_memory_mb
+            + GPU_RUNTIME_OVERHEAD_MB
+            + CUDA_CONTEXT_OVERHEAD_MB
+        )
+    kv_slot = baseline.kv_cache_memory_mb
+    if kv_slot <= 0:
+        return MAX_PLANNED_CONCURRENCY
+    budget = available / HEADROOM_MULTIPLIER - fixed
+    return max(1, math.floor(budget / kv_slot))
 
 
 def _plan_llamacpp(
@@ -792,160 +806,158 @@ def _plan_llamacpp(
     backend_profile: str,
     preserved_fit_status: str | None,
 ) -> ServingPlan:
-    batch_size, ubatch_size = _resolve_llamacpp_batch_pair(preset)
-    parallel_cap = {"speed": 2, "balanced": 4, "quality": 1}[preset]
-    cache_candidates = (
-        [("f16", "f16"), ("q8_0", "q8_0")]
-        if preset == "quality"
-        else [("q8_0", "q8_0"), ("q4_0", "q4_0")]
+    batch_size, ubatch_size = DEFAULT_BATCH_SIZE, DEFAULT_UBATCH_SIZE
+    context = _context_target(entry, profile)
+    parallel_cap = min(
+        MAX_PLANNED_CONCURRENCY,
+        _llamacpp_concurrency_seed(entry, profile, backend_profile, context),
     )
+    cache_k, cache_v = DEFAULT_KV_CACHE_TYPE, DEFAULT_KV_CACHE_TYPE
     best_risky = None
-    for cache_k, cache_v in cache_candidates:
-        for context in _context_candidates(entry, profile, preset):
-            kv_placements = ["ram"]
-            if (
-                backend_profile == "llamacpp-gpu-offload"
-                and bool(getattr(profile, "llamacpp_kv_offload_supported", True))
-            ):
-                kv_placements = ["vram", "ram"]
-            for kv_placement in kv_placements:
-                baseline = estimate_model_memory(
-                    entry,
-                    context_length=context,
-                    concurrency=1,
-                    cache_type_k=cache_k,
-                    cache_type_v=cache_v,
+    kv_placements = ["ram"]
+    if (
+        backend_profile == "llamacpp-gpu-offload"
+        and bool(getattr(profile, "llamacpp_kv_offload_supported", True))
+    ):
+        kv_placements = ["vram", "ram"]
+    for kv_placement in kv_placements:
+        baseline = estimate_model_memory(
+            entry,
+            context_length=context,
+            concurrency=1,
+            cache_type_k=cache_k,
+            cache_type_v=cache_v,
+        )
+        if backend_profile == "llamacpp-cpu":
+            baseline_placement = _place_cpu(baseline, _gpu_count(profile))
+        else:
+            baseline_placement = _place_llamacpp_gpu(
+                baseline,
+                profile,
+                num_layers=entry.model_metadata.num_hidden_layers,
+                kv_cache_placement=kv_placement,
+            )
+            if baseline_placement.gpu_layers == 0:
+                baseline_placement = _place_llamacpp_gpu(
+                    baseline,
+                    profile,
+                    num_layers=entry.model_metadata.num_hidden_layers,
+                    kv_cache_placement=kv_placement,
+                    force_layers=1,
                 )
-                if backend_profile == "llamacpp-cpu":
-                    baseline_placement = _place_cpu(baseline, _gpu_count(profile))
-                else:
-                    baseline_placement = _place_llamacpp_gpu(
-                        baseline,
+        baseline_status, _ = _pool_fit(
+            baseline_placement,
+            profile,
+            use_planning_capacity=True,
+        )
+        if baseline_status == "NOFIT":
+            continue
+        parallel = parallel_cap
+        while parallel >= 1:
+            estimate = estimate_model_memory(
+                entry,
+                context_length=context,
+                concurrency=parallel,
+                cache_type_k=cache_k,
+                cache_type_v=cache_v,
+            )
+            if backend_profile == "llamacpp-cpu":
+                placement = _place_cpu(estimate, _gpu_count(profile))
+            else:
+                placement = _place_llamacpp_gpu(
+                    estimate,
+                    profile,
+                    num_layers=entry.model_metadata.num_hidden_layers,
+                    kv_cache_placement=kv_placement,
+                )
+                if placement.gpu_layers == 0:
+                    placement = _place_llamacpp_gpu(
+                        estimate,
                         profile,
                         num_layers=entry.model_metadata.num_hidden_layers,
                         kv_cache_placement=kv_placement,
+                        force_layers=1,
                     )
-                    if baseline_placement.gpu_layers == 0:
-                        baseline_placement = _place_llamacpp_gpu(
-                            baseline,
-                            profile,
-                            num_layers=entry.model_metadata.num_hidden_layers,
-                            kv_cache_placement=kv_placement,
-                            force_layers=1,
-                        )
-                baseline_status, _ = _pool_fit(
-                    baseline_placement,
-                    profile,
-                    use_planning_capacity=True,
+            status, reason = _pool_fit(
+                placement,
+                profile,
+                use_planning_capacity=True,
+            )
+            disk_status, disk_reason, _ = _disk_fit(entry, profile)
+            status = _combine_status(status, disk_status)
+            reason = f"{reason} {disk_reason}".strip()
+            if status != "NOFIT":
+                layers = int(placement.gpu_layers or 0)
+                if backend_profile == "llamacpp-cpu":
+                    candidate_type = "CPU"
+                    offload = "none"
+                elif layers >= entry.model_metadata.num_hidden_layers:
+                    candidate_type = "GPU full-offload"
+                    offload = "full"
+                else:
+                    candidate_type = "GPU partial-offload"
+                    offload = "partial"
+                    reason += " Remaining model weights are placed in RAM."
+                output_status = preserved_fit_status or status
+                plan = ServingPlan(
+                    artifact_id=entry.id,
+                    runtime="llama.cpp",
+                    backend_profile=backend_profile,
+                    base_url="http://rag-runtime:8080",
+                    device=(
+                        "CPU"
+                        if backend_profile == "llamacpp-cpu"
+                        else "GPU"
+                    ),
+                    candidate_type=candidate_type,
+                    offload=offload,
+                    fit_status=output_status,
+                    reason=reason,
+                    priority_preset=preset,
+                    context_length=context,
+                    ctx_size_per_slot=context,
+                    server_ctx_size=context * parallel,
+                    configured_context_cap=int(
+                        getattr(profile, "configured_context_cap", 16384)
+                        or 16384
+                    ),
+                    concurrency=parallel,
+                    parallel=parallel,
+                    max_num_seqs=parallel,
+                    max_num_batched_tokens=context * parallel,
+                    cache_type_k=cache_k,
+                    cache_type_v=cache_v,
+                    kv_cache_placement=kv_placement,
+                    gpu_layers=layers,
+                    n_gpu_layers=layers,
+                    threads=_threads(profile),
+                    batch_size=batch_size,
+                    ubatch_size=ubatch_size,
+                    tensor_parallel_size=1,
+                    gpu_memory_utilization=0.9,
+                    weight_memory_mb=estimate.weight_memory_mb,
+                    kv_cache_memory_mb=estimate.kv_cache_memory_mb,
+                    runtime_overhead_mb=estimate.runtime_overhead_mb,
+                    logical_total_memory_mb=(
+                        placement.required_ram_mb
+                        + sum(placement.required_vram_per_gpu_mb)
+                    ),
+                    required_ram_mb=placement.required_ram_mb,
+                    required_vram_per_gpu_mb=placement.required_vram_per_gpu_mb,
+                    planning_ram_mb=_planning_ram(profile),
+                    memory_placement=placement.as_dict(),
                 )
-                if baseline_status == "NOFIT":
-                    continue
-                parallel = parallel_cap
-                while parallel >= 1:
-                    estimate = estimate_model_memory(
-                        entry,
-                        context_length=context,
-                        concurrency=parallel,
-                        cache_type_k=cache_k,
-                        cache_type_v=cache_v,
-                    )
-                    if backend_profile == "llamacpp-cpu":
-                        placement = _place_cpu(estimate, _gpu_count(profile))
-                    else:
-                        placement = _place_llamacpp_gpu(
-                            estimate,
-                            profile,
-                            num_layers=entry.model_metadata.num_hidden_layers,
-                            kv_cache_placement=kv_placement,
-                        )
-                        if placement.gpu_layers == 0:
-                            placement = _place_llamacpp_gpu(
-                                estimate,
-                                profile,
-                                num_layers=entry.model_metadata.num_hidden_layers,
-                                kv_cache_placement=kv_placement,
-                                force_layers=1,
-                            )
-                    status, reason = _pool_fit(
-                        placement,
-                        profile,
-                        use_planning_capacity=True,
-                    )
-                    disk_status, disk_reason, _ = _disk_fit(entry, profile)
-                    status = _combine_status(status, disk_status)
-                    reason = f"{reason} {disk_reason}".strip()
-                    if status != "NOFIT":
-                        layers = int(placement.gpu_layers or 0)
-                        if backend_profile == "llamacpp-cpu":
-                            candidate_type = "CPU"
-                            offload = "none"
-                        elif layers >= entry.model_metadata.num_hidden_layers:
-                            candidate_type = "GPU full-offload"
-                            offload = "full"
-                        else:
-                            candidate_type = "GPU partial-offload"
-                            offload = "partial"
-                            reason += " Remaining model weights are placed in RAM."
-                        output_status = preserved_fit_status or status
-                        plan = ServingPlan(
-                            artifact_id=entry.id,
-                            runtime="llama.cpp",
-                            backend_profile=backend_profile,
-                            base_url="http://rag-runtime:8080",
-                            device=(
-                                "CPU"
-                                if backend_profile == "llamacpp-cpu"
-                                else "GPU"
-                            ),
-                            candidate_type=candidate_type,
-                            offload=offload,
-                            fit_status=output_status,
-                            reason=reason,
-                            priority_preset=preset,
-                            context_length=context,
-                            ctx_size_per_slot=context,
-                            server_ctx_size=context * parallel,
-                            configured_context_cap=int(
-                                getattr(profile, "configured_context_cap", 16384)
-                                or 16384
-                            ),
-                            concurrency=parallel,
-                            parallel=parallel,
-                            max_num_seqs=parallel,
-                            max_num_batched_tokens=context * parallel,
-                            cache_type_k=cache_k,
-                            cache_type_v=cache_v,
-                            kv_cache_placement=kv_placement,
-                            gpu_layers=layers,
-                            n_gpu_layers=layers,
-                            threads=_threads(profile, preset),
-                            batch_size=batch_size,
-                            ubatch_size=ubatch_size,
-                            tensor_parallel_size=1,
-                            gpu_memory_utilization=0.9,
-                            weight_memory_mb=estimate.weight_memory_mb,
-                            kv_cache_memory_mb=estimate.kv_cache_memory_mb,
-                            runtime_overhead_mb=estimate.runtime_overhead_mb,
-                            logical_total_memory_mb=(
-                                placement.required_ram_mb
-                                + sum(placement.required_vram_per_gpu_mb)
-                            ),
-                            required_ram_mb=placement.required_ram_mb,
-                            required_vram_per_gpu_mb=placement.required_vram_per_gpu_mb,
-                            planning_ram_mb=_planning_ram(profile),
-                            memory_placement=placement.as_dict(),
-                        )
-                        if status == "FIT":
-                            return plan
-                        if best_risky is None:
-                            best_risky = plan
-                    parallel -= 1
+                if status == "FIT":
+                    return plan
+                if best_risky is None:
+                    best_risky = plan
+            parallel -= 1
     if best_risky is not None:
         if preserved_fit_status == "FIT":
             raise RuntimeConfigUnresolvable("RUNTIME_CONFIG_UNRESOLVABLE")
         return best_risky
     # Diagnostic legacy plan for direct inspection; Stage 6 path raises below.
-    estimate = estimate_model_memory(entry, context_length=4096, concurrency=1)
+    estimate = estimate_model_memory(entry, context_length=context, concurrency=1)
     if backend_profile == "llamacpp-cpu":
         placement = _place_cpu(estimate, _gpu_count(profile))
         layers = 0
@@ -976,22 +988,22 @@ def _plan_llamacpp(
         fit_status=status,
         reason=reason,
         priority_preset=preset,
-        context_length=4096,
-        ctx_size_per_slot=4096,
-        server_ctx_size=4096,
+        context_length=context,
+        ctx_size_per_slot=context,
+        server_ctx_size=context,
         configured_context_cap=int(
             getattr(profile, "configured_context_cap", 16384) or 16384
         ),
         concurrency=1,
         parallel=1,
         max_num_seqs=1,
-        max_num_batched_tokens=4096,
-        cache_type_k="f16",
-        cache_type_v="f16",
+        max_num_batched_tokens=context,
+        cache_type_k=DEFAULT_KV_CACHE_TYPE,
+        cache_type_v=DEFAULT_KV_CACHE_TYPE,
         kv_cache_placement="ram",
         gpu_layers=layers,
         n_gpu_layers=layers,
-        threads=_threads(profile, preset),
+        threads=_threads(profile),
         batch_size=batch_size,
         ubatch_size=ubatch_size,
         tensor_parallel_size=1,
@@ -1009,18 +1021,41 @@ def _plan_llamacpp(
     )
 
 
+def _vllm_max_concurrency(entry: Any, profile: Any, context: int) -> int:
+    # KV cache memory scales exactly linearly with concurrency at a fixed
+    # context length, while weights/overhead don't -- so the largest safe
+    # concurrency can be solved directly instead of searched for. Reuses
+    # _split_evenly, the same function _place_vllm uses, so this estimate
+    # can't drift from what _place_vllm/_pool_fit verify right afterward.
+    gpu_count = max(1, _gpu_count(profile))
+    free = _gpu_free_list(profile)
+    per_slot = estimate_model_memory(
+        entry, context_length=context, concurrency=1, use_cuda=True
+    )
+    weights_per_gpu = _split_evenly(per_slot.weight_memory_mb, gpu_count)
+    kv_per_gpu_per_slot = _split_evenly(per_slot.kv_cache_memory_mb, gpu_count)
+    fixed_overhead = GPU_RUNTIME_OVERHEAD_MB + CUDA_CONTEXT_OVERHEAD_MB
+
+    caps = []
+    for index in range(gpu_count):
+        available = free[index] if index < len(free) else 0
+        fixed_vram = weights_per_gpu[index] + fixed_overhead
+        budget = available / HEADROOM_MULTIPLIER - fixed_vram
+        kv_slot = kv_per_gpu_per_slot[index]
+        caps.append(
+            math.floor(budget / kv_slot) if kv_slot > 0 else MAX_PLANNED_CONCURRENCY
+        )
+    return max(1, min(caps)) if caps else 1
+
+
 def _plan_vllm(
     entry: Any,
     profile: Any,
     preset: str,
     preserved_fit_status: str | None,
 ) -> ServingPlan:
-    context = min(
-        convert_policy(preset).target_context,
-        int(entry.model_metadata.max_context_length),
-        int(getattr(profile, "configured_context_cap", 16384) or 16384),
-    )
-    parallel = convert_policy(preset).target_concurrency
+    context = _context_target(entry, profile)
+    parallel = _vllm_max_concurrency(entry, profile, context)
     estimate = estimate_model_memory(
         entry,
         context_length=context,
@@ -1066,9 +1101,9 @@ def _plan_vllm(
         kv_cache_placement="vram",
         gpu_layers=entry.model_metadata.num_hidden_layers,
         n_gpu_layers=entry.model_metadata.num_hidden_layers,
-        threads=_threads(profile, preset),
-        batch_size=_resolve_llamacpp_batch_pair(preset)[0],
-        ubatch_size=_resolve_llamacpp_batch_pair(preset)[1],
+        threads=_threads(profile),
+        batch_size=DEFAULT_BATCH_SIZE,
+        ubatch_size=DEFAULT_UBATCH_SIZE,
         tensor_parallel_size=max(1, _gpu_count(profile)),
         gpu_memory_utilization=0.9,
         weight_memory_mb=estimate.weight_memory_mb,

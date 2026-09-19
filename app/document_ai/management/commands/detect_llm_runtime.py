@@ -26,7 +26,6 @@ from llm_installation.planner import (
     PRIORITY_PRESETS,
     assess_catalog_entry,
     build_serving_plan,
-    convert_policy,
 )
 from llm_installation.router import resolve_server_rag_target
 from llm_installation.runtime_lifecycle import make_generation_id
@@ -213,27 +212,10 @@ class Command(BaseCommand):
             self.stdout.write(f"Docker Available: {profile.docker_available} (Compose: {profile.docker_compose_available})")
             self.stdout.write("==================================================\n")
 
-            self.stdout.write(self.style.MIGRATE_HEADING("=== 2. Operating Policy Policy Setting ==="))
-            self.stdout.write("Please select your desired LLM operating policy:")
-            self.stdout.write("1) Speed (Optimized for fastest token generation, lower context)")
-            self.stdout.write("2) Balanced (Balance speed, context, and quality. Default)")
-            self.stdout.write("3) Quality (Optimized for maximum capability, higher context)")
-            
-            policy_choice = input("Enter choice (1-3, default: 2): ").strip()
-            if policy_choice == "1":
-                priority_preset = "speed"
-            elif policy_choice == "3":
-                priority_preset = "quality"
-            else:
-                priority_preset = "balanced"
-
-            policy_config = convert_policy(priority_preset)
-            self.stdout.write(f"Selected Policy configuration:")
-            self.stdout.write(f"- Target Context: {policy_config.target_context} tokens")
-            self.stdout.write(f"- Target Concurrency: {policy_config.target_concurrency}")
-            self.stdout.write(f"- Memory Policy: {policy_config.memory_policy}")
-            self.stdout.write(f"- Engine Preference: {policy_config.engine_preference}")
-            self.stdout.write("")
+            # Model selection ranking no longer varies by preset (see
+            # llm_installation/selection.py, RRF over TPS + parameter count).
+            # priority_preset is retained only as a stored/audit label.
+            priority_preset = "balanced"
 
             # Generate and calculate candidate fits
             selection_candidates = []
@@ -242,13 +224,12 @@ class Command(BaseCommand):
                 fit_evaluation = evaluate_catalog_fit(entry, profile)
                 selection_candidates.append(SelectionCandidate(entry, assessment, fit_evaluation))
 
+            self.stdout.write(self.style.MIGRATE_HEADING("=== 2. Model Selection ==="))
             self.stdout.write("Select model selection method:")
             self.stdout.write("1) Automatic recommendation (default)")
             self.stdout.write("2) Choose from the assessed model catalog")
             selection_choice = input("Enter choice (1-2, default: 1): ").strip()
             selection_mode = "manual" if selection_choice == "2" else "automatic"
-
-            self.stdout.write(self.style.MIGRATE_HEADING("=== 3. Model Ranking & Automatic Selection ==="))
 
             selected_artifact_id = None
             if selection_mode == "manual":

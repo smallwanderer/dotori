@@ -110,7 +110,7 @@ def _metric_stat(rows: list[dict], key: str) -> dict:
 
 def _status_summary(rows: list[dict], duration_metric: str) -> dict:
     statuses = [str(row.get("status") or "") for row in rows]
-    terminal = [status for status in statuses if status in {AIStatus.COMPLETED, AIStatus.FAILED, AIStatus.CANCELED}]
+    terminal = [status for status in statuses if status in {AIStatus.COMPLETED, AIStatus.FAILED, AIStatus.CANCELED, "interrupted"}]
     success_count = statuses.count(AIStatus.COMPLETED)
     timeout_count = sum(
         1 for row in rows if (row.get("performance_metrics") or {}).get("timeout") is True
