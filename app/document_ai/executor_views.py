@@ -90,14 +90,18 @@ def _target_key(work_kind: str, payload: dict[str, Any]) -> str:
 
 def _execute_parser(envelope: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     from document_ai.processing.parsing import ParseExecutionFailed, execute_parse_node, get_parser_for_execution
+    from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
+    from document_ai.services.capability_admission import capability_enabled
 
     node_id = envelope["payload"]["node_id"]
     from document_ai.models import ExecutorJobReceipt
-    followups = [{
-        "job_id": derive_job_id(envelope["job_id"], WorkKind.PLAN_DOCUMENT_EMBEDDING, str(node_id)),
-        "work_kind": WorkKind.PLAN_DOCUMENT_EMBEDDING.value,
-        "payload": {"node_id": node_id}, "parent_job_id": envelope["job_id"],
-    }]
+    followups = []
+    if capability_enabled(DOCUMENT_SEMANTIC_SEARCH):
+        followups = [{
+            "job_id": derive_job_id(envelope["job_id"], WorkKind.PLAN_DOCUMENT_EMBEDDING, str(node_id)),
+            "work_kind": WorkKind.PLAN_DOCUMENT_EMBEDDING.value,
+            "payload": {"node_id": node_id}, "parent_job_id": envelope["job_id"],
+        }]
     def persisted(result):
         from document_ai.services.executor_snapshot import validate_execution
         validate_execution()
@@ -119,13 +123,7 @@ def _execute_parser(envelope: dict[str, Any]) -> tuple[dict[str, Any], list[dict
         raise exc.cause
     if result.get("status") != "success":
         return result, []
-    child_job_id = derive_job_id(envelope["job_id"], WorkKind.PLAN_DOCUMENT_EMBEDDING, str(node_id))
-    return result, [{
-        "job_id": child_job_id,
-        "work_kind": WorkKind.PLAN_DOCUMENT_EMBEDDING.value,
-        "payload": {"node_id": node_id},
-        "parent_job_id": envelope["job_id"],
-    }]
+    return result, followups
 
 
 def _execute_embedding(envelope: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:

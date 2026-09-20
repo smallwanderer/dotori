@@ -3,6 +3,8 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from files.models import FileBlob
 from document_ai.orchestration import enqueue_parse
+from capabilities.registry import DOCUMENT_EXTRACT
+from document_ai.services.capability_admission import capability_enabled
 from document_ai.tracing_utils import enqueue_kwargs
 
 logger = logging.getLogger(__name__)
@@ -15,6 +17,12 @@ def trigger_document_parsing(sender, instance, created, **kwargs):
     자동으로 파싱(및 이어서 임베딩)을 수행하는 Celery 태스크를 호출합니다.
     """
     if created:
+        if not capability_enabled(DOCUMENT_EXTRACT):
+            logger.info(
+                "New file uploaded (Node ID: %s). Document extraction capability disabled; skipping parse task.",
+                instance.node_id,
+            )
+            return
         if not instance.node.ai_processing_enabled:
             logger.info(
                 "New file uploaded (Node ID: %s). AI processing disabled; skipping parse task.",

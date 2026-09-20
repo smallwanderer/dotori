@@ -13,10 +13,15 @@ from accounts.decorators import email_verification_required
 from accounts.api_responses import api_error_response
 from config.enums import AIStatus, FileOperation
 from config.tracing import get_trace_id
+from capabilities.registry import DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH
 from document_ai.models import DocumentChunk, DocumentParseResult, RAGJob
 from document_ai.performance import elapsed_ms, put_metric
 from document_ai.orchestration import enqueue_embedding, enqueue_parse
 from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+from document_ai.services.capability_admission import (
+    CapabilityAdmissionError,
+    require_capability,
+)
 from document_ai.tracing_utils import enqueue_kwargs
 from files.models import FileOperationLog, Node, NodeType, UserStorage
 from files.services import file_service
@@ -26,6 +31,11 @@ from workspaces.models import WorkspaceMembership
 from workspaces.decorators import workspace_member_required as login_required
 
 logger = logging.getLogger(__name__)
+
+
+def _capability_admission_error_response(exc: CapabilityAdmissionError):
+    status = 503 if exc.code in {"CAPABILITY_UNAVAILABLE", "CAPABILITY_CONFIG_INVALID"} else 409
+    return api_error_response(exc.code, str(exc), status=status)
 
 
 def _json_body(request):
@@ -721,10 +731,17 @@ def retry_ai_processing(request, uid):
     parse_status = ai_status.get("parse_status")
     embedding_status = ai_status.get("embedding_status")
 
-    if parse_status in {AIStatus.PENDING, AIStatus.PROCESSING} or embedding_status == AIStatus.PROCESSING:
+    if (
+        hasattr(node, "parse_result")
+        and parse_status in {AIStatus.PENDING, AIStatus.PROCESSING}
+    ) or embedding_status == AIStatus.PROCESSING:
         return JsonResponse({"ok": False, "errors": ["AI processing is already queued or running."]}, status=409)
 
     if not hasattr(node, "parse_result") or parse_status == AIStatus.FAILED:
+        try:
+            require_capability(DOCUMENT_EXTRACT)
+        except CapabilityAdmissionError as exc:
+            return _capability_admission_error_response(exc)
         if hasattr(node, "parse_result"):
             node.parse_result.status = AIStatus.PENDING
             node.parse_result.errors = []
@@ -732,7 +749,30 @@ def retry_ai_processing(request, uid):
         enqueue_parse(node.id, **enqueue_kwargs())
         return JsonResponse({"ok": True, "action": "parse_requeued", "message": "Parsing retry has been queued."})
 
+    if (
+        embedding_status == AIStatus.FAILED
+        and (node.parse_result.metadata or {}).get("chunking_strategy")
+        == "hierarchical"
+    ):
+        try:
+            require_capability(DOCUMENT_SEMANTIC_SEARCH)
+        except CapabilityAdmissionError as exc:
+            return _capability_admission_error_response(exc)
+        node.parse_result.status = AIStatus.PENDING
+        node.parse_result.errors = []
+        node.parse_result.save(update_fields=["status", "errors", "updated_at"])
+        enqueue_parse(node.id, **enqueue_kwargs())
+        return JsonResponse({
+            "ok": True,
+            "action": "parse_requeued",
+            "message": "Reprocessing for semantic search has been queued.",
+        })
+
     if embedding_status == AIStatus.FAILED:
+        try:
+            require_capability(DOCUMENT_SEMANTIC_SEARCH)
+        except CapabilityAdmissionError as exc:
+            return _capability_admission_error_response(exc)
         contract_status = ai_status.get("embedding_contract_status")
         chunks_to_retry = DocumentChunk.objects.filter(parse_result=node.parse_result)
         if contract_status != "stale_contract":

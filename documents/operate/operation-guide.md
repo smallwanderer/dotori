@@ -2,7 +2,7 @@
 
 Dotori for Document(이하 Dotori)는 자가 호스팅 서비스로, 개인 PC·NAS·클라우드 서버 등에 설치해 RAG 기능과 고급 검색(IR) 기능을 이용합니다. 이 문서는 이미 설치된 서버를 운영하는 방법을 설명합니다 — 상태 확인, 계정 관리, 문서 파이프라인 운영, 검색·RAG 파라미터 조정, 보안 점검을 다룹니다.
 
-설치가 아직이라면 [설치 가이드](./installation-guide.md)를 먼저 참고하세요.
+설치가 아직이라면 [설치 가이드](../install/installation-guide.md)를 먼저 참고하세요.
 
 ---
 
@@ -256,7 +256,7 @@ python install.py --accounts list
 | `RAG_SEARCH_TOP_K` | `3` | RAG 답변 생성 시 근거로 사용할 검색 결과 개수. |
 | `RAG_RETRIEVAL_THRESHOLD` | (미설정) | 이 값 미만의 유사도 점수를 가진 결과는 RAG 근거에서 제외합니다. 비워두면 기준을 적용하지 않습니다. |
 
-두 값 모두 `.env`에서 조정 후 `python install.py --restart`가 필요합니다. 요청 단위로 다른 값을 쓰고 싶다면(예: CLI의 `dotori ask`) API 호출 시 `top_k`/`threshold`를 직접 지정할 수 있습니다 — 자세한 요청 형식은 [API 계약](./api-contract-v1.md)을 참고하세요.
+두 값 모두 `.env`에서 조정 후 `python install.py --restart`가 필요합니다. 요청 단위로 다른 값을 쓰고 싶다면(예: CLI의 `dotori ask`) API 호출 시 `top_k`/`threshold`를 직접 지정할 수 있습니다 — 자세한 요청 형식은 [API 계약](../reference/api-contract-v1.md)을 참고하세요.
 
 ### Contextual Compression 설정
 
@@ -278,7 +278,7 @@ RAG 답변 품질이 컨텍스트 과다로 떨어진다고 판단될 때만 켜
 
 ## LLM 런타임 관리
 
-현재 설정 확인, 모델 변경, 상세 설치 절차는 [LLM 설치 가이드](./llm-installation-guide.md)에서 다룹니다.
+현재 설정 확인, 모델 변경, 상세 설치 절차는 [LLM 설치 가이드](../install/llm-installation-guide.md)에서 다룹니다.
 
 ### LLM 운용 동시성 Calibration
 
@@ -314,7 +314,7 @@ python scripts/calibrate_llm_concurrency.py \
 
 ### HTTPS / Let's Encrypt 설정
 
-외부 접속을 켤 계획이라면 HTTPS는 선택이 아니라 필수입니다(HTTP만으로 외부에 노출하는 구성은 지원하지 않습니다). 설정 파일 준비부터 인증서 발급·갱신까지 전체 절차는 [설치 가이드](./installation-guide.md#외부-접속-연결-선택)에 정리되어 있습니다. 요약하면:
+외부 접속을 켤 계획이라면 HTTPS는 선택이 아니라 필수입니다(HTTP만으로 외부에 노출하는 구성은 지원하지 않습니다). 설정 파일 준비부터 인증서 발급·갱신까지 전체 절차는 [설치 가이드](../install/installation-guide.md#외부-접속-연결-선택)에 정리되어 있습니다. 요약하면:
 
 1. `python install.py --network-access-create` / `--network-access-open`으로 `data/config/network_access/provider.env`를 채웁니다.
 2. `bash scripts/init-letsencrypt.sh`로 최초 인증서를 발급받습니다. **이 단계 없이 `--network-access-connect`만 실행하면 인증서 파일이 없어 Nginx가 시작되지 않습니다.**
@@ -323,7 +323,7 @@ python scripts/calibrate_llm_concurrency.py \
 
 ### 허용 호스트 및 CSRF 설정
 
-외부 도메인을 연결하기 전에 `data/config/network_access/provider.env`의 `DOTORI_DJANGO_ALLOWED_HOSTS`와 `DOTORI_DJANGO_CSRF_TRUSTED_ORIGINS`에 그 도메인을 반드시 등록해야 합니다(자세한 설명은 [설치 가이드](./installation-guide.md#외부-접속-연결-선택) 참고).
+외부 도메인을 연결하기 전에 `data/config/network_access/provider.env`의 `DOTORI_DJANGO_ALLOWED_HOSTS`와 `DOTORI_DJANGO_CSRF_TRUSTED_ORIGINS`에 그 도메인을 반드시 등록해야 합니다(자세한 설명은 [설치 가이드](../install/installation-guide.md#외부-접속-연결-선택) 참고).
 
 - `DOTORI_DJANGO_ALLOWED_HOSTS`에 도메인이 없으면 Django가 모든 요청을 `DisallowedHost` 오류로 거부합니다.
 - `DOTORI_DJANGO_CSRF_TRUSTED_ORIGINS`에 `https://<도메인>`이 없으면 로그인·업로드 등 CSRF 토큰이 필요한 요청이 모두 `403 CSRF_FAILED`로 실패합니다.
@@ -346,8 +346,8 @@ python manage.py repair_document_pipeline --apply
 
 ## 더 보기
 
-- [설치 가이드](./installation-guide.md) — 서버 설치와 운영 모드
-- [LLM 설치 가이드](./llm-installation-guide.md) — 로컬 LLM 선택, 변경, 상세 설정
+- [설치 가이드](../install/installation-guide.md) — 서버 설치와 운영 모드
+- [LLM 설치 가이드](../install/llm-installation-guide.md) — 로컬 LLM 선택, 변경, 상세 설정
 - [임베딩 런타임 가이드](./embedding-guide.md) — 임베딩 모델 전환, 외부 엔드포인트 연결
 - [모니터링 가이드](./monitoring-and-quality-guide.md) — trace_id 추적, 로그 조회, 검색 품질 점검
-- [API 계약](./api-contract-v1.md) — 검색·RAG 요청 형식과 파라미터
+- [API 계약](../reference/api-contract-v1.md) — 검색·RAG 요청 형식과 파라미터

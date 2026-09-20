@@ -4,6 +4,3 @@
 sentence-transformers==5.6.0
 FlagEmbedding==1.4.0
 kiwipiepy>=0.20.0
-
-python-hwpx==2.29.1
-pyhwp==0.1b15

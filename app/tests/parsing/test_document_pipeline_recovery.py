@@ -168,6 +168,26 @@ class DocumentPipelineRecoveryTests(TestCase):
         self.assertIn(stale_failed.id, chunk_ids)
         self.assertNotIn(completed_chunk.id, chunk_ids)
 
+    def test_semantic_recovery_reparses_hierarchical_results_before_embedding(self):
+        node = self._create_file_node("extract-only.txt")
+        parse_result = DocumentParseResult.objects.create(
+            node=node,
+            status=AIStatus.COMPLETED,
+            chunk_count=1,
+            metadata={"chunking_strategy": "hierarchical"},
+        )
+        chunk = DocumentChunk.objects.create(
+            parse_result=parse_result,
+            chunk_index=0,
+            text="extract-only chunk",
+            status=AIStatus.PENDING,
+        )
+        old_time = timezone.now() - timedelta(hours=1)
+        DocumentChunk.objects.filter(pk=chunk.pk).update(created_at=old_time)
+
+        self.assertIn(node.id, get_parse_recovery_node_ids(limit=1000))
+        self.assertNotIn(chunk.id, get_embedding_recovery_chunk_ids(limit=1000))
+
     def test_enqueue_embedding_tasks_skips_ai_disabled_node(self):
         node = self._create_file_node("ai-disabled-queue.txt")
         node.ai_processing_enabled = False

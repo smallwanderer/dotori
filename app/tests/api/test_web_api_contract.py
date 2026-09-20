@@ -543,21 +543,24 @@ class WebApiContractTests(TestCase):
             distance_strategy="inner_product",
         )
         with patch(
-            "document_ai.status_views.target_from_persisted_config",
+            "document_ai.services.server_policy.target_from_persisted_config",
             return_value=target,
         ), patch(
-            "document_ai.status_views.load_llm_runtime_status",
+            "document_ai.services.server_policy.load_llm_runtime_status",
             return_value={
                 "status": "healthy",
                 "reason_code": "",
                 "updated_at": "2026-08-26T00:00:00+00:00",
             },
         ), patch(
-            "document_ai.status_views.load_embedding_runtime",
+            "document_ai.services.server_policy.load_embedding_runtime",
             return_value=embedding,
         ), patch(
-            "document_ai.status_views.probe_server_rag_runtime",
+            "document_ai.services.server_policy.probe_server_rag_runtime",
             return_value=True,
+        ), patch(
+            "document_ai.services.server_policy._deployed_operation_mode",
+            return_value="rag",
         ):
             response = self.client.get(reverse("document_ai:server-policy"))
 
@@ -568,6 +571,11 @@ class WebApiContractTests(TestCase):
         self.assertTrue(payload["rag"]["available"])
         self.assertEqual(payload["rag"]["serving_concurrency"], 2)
         self.assertEqual(payload["embedding"]["model"], "BAAI/bge-m3")
+        self.assertTrue(payload["capabilities"]["documents.extract"]["registered"])
+        self.assertTrue(payload["capabilities"]["documents.extract"]["enabled"])
+        self.assertTrue(
+            payload["capabilities"]["documents.semantic_search"]["enabled"]
+        )
         self.assertNotIn("base_url", payload["rag"])
         self.assertNotIn("runtime_fingerprint", payload["embedding"])
 

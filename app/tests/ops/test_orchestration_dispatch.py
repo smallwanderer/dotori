@@ -1,5 +1,10 @@
 from unittest.mock import patch
+from types import SimpleNamespace
 
+import pytest
+
+from capabilities.config import write_capability_config
+from document_ai.services.capability_admission import CapabilityAdmissionError
 from document_ai.orchestration import TASK_ENVELOPE_VERSION, TASK_ROUTES, WorkKind
 
 
@@ -98,3 +103,51 @@ def test_route_contract_matches_worker_queues_and_task_names():
     assert TASK_ROUTES[WorkKind.EMBED_DOCUMENT_BATCH].queue == "embed"
     assert TASK_ROUTES[WorkKind.EVALUATE_RETRIEVAL].queue == "embed"
     assert all(route.task_name.startswith("document_ai.tasks.") for route in TASK_ROUTES.values())
+
+
+def test_dispatch_rejects_disabled_capability_before_publication(tmp_path, monkeypatch):
+    config_path = tmp_path / "capabilities.json"
+    write_capability_config([], path=config_path)
+    monkeypatch.setenv("DOTORI_CAPABILITIES_CONFIG_PATH", str(config_path))
+
+    from document_ai.orchestration import enqueue_parse
+
+    with patch("document_ai.tasks.parse_document_with_docling.apply_async") as task:
+        with pytest.raises(CapabilityAdmissionError) as error:
+            enqueue_parse(1)
+
+    assert error.value.code == "CAPABILITY_DISABLED"
+    task.assert_not_called()
+
+
+def test_consumer_finalizes_queued_work_when_capability_was_disabled():
+    from document_ai.tasks import _dispatch_or_retry
+
+    task = SimpleNamespace(request=SimpleNamespace(headers={}, retries=0))
+    error = CapabilityAdmissionError(
+        "documents.extract",
+        "CAPABILITY_DISABLED",
+        "Document extraction is disabled",
+    )
+    with patch(
+        "document_ai.services.capability_admission.require_capability",
+        side_effect=error,
+    ), patch(
+        "document_ai.processing.capability_state.finalize_capability_rejection"
+    ) as finalize:
+        result = _dispatch_or_retry(
+            task,
+            WorkKind.PARSE_DOCUMENT,
+            envelope={"job_id": "job-1"},
+            payload={"node_id": 7},
+        )
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "CAPABILITY_DISABLED"
+    assert result["retryable"] is False
+    finalize.assert_called_once_with(
+        WorkKind.PARSE_DOCUMENT.value,
+        {"node_id": 7},
+        error_code="CAPABILITY_DISABLED",
+        message="Document extraction is disabled",
+    )

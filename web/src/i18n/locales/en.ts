@@ -671,6 +671,8 @@ const en: Record<keyof typeof ko, string> = {
   'operations.operatorDescription': 'Change models, memory, concurrency, and quantization through installation and operator commands. Accuracy checks are still in progress.',
   'operations.tracePlaceholderTitle': 'Trace explorer',
   'operations.tracePlaceholderDescription': 'Trace ID workflow lookup will be connected here.',
+  'capability.documentsDisabledTitle': 'Document AI capabilities are disabled.',
+  'capability.documentsDisabledDescription': 'File management remains available. Enable Documents on the server to use search and RAG.',
 }
 
 export default en

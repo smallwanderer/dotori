@@ -4,7 +4,7 @@
 
 업로드된 문서는 임베딩 모델에 의해 벡터 차원의 좌표로 인덱싱되어 저장되며, 검색 시에 이용됩니다. 임베딩 모델은 서버 전체에 **단일 모델**로 활성화되고, 이를 임베딩 런타임이라고 부릅니다.
 
-카탈로그 목록에 없는 모델을 새로 추가하려면 [임베딩 설치 가이드](./embedding-installation-guide.md)를 먼저 참고하세요.
+카탈로그 목록에 없는 모델을 새로 추가하려면 [임베딩 설치 가이드](../install/embedding-installation-guide.md)를 먼저 참고하세요.
 
 ---
 
@@ -51,7 +51,7 @@ Select embedding source:
 
 ### 카탈로그 모델 선택
 
-`[1]`을 고르면 Dotori가 기본 제공하는 카탈로그에서 동작 검증이 완료된 **로컬** 모델을 선택할 수 있습니다. 직접 다운받거나 카탈로그를 작성한 모델은 [임베딩 설치 가이드](./embedding-installation-guide.md)에 따라 직접 프로필을 추가해야 합니다.
+`[1]`을 고르면 Dotori가 기본 제공하는 카탈로그에서 동작 검증이 완료된 **로컬** 모델을 선택할 수 있습니다. 직접 다운받거나 카탈로그를 작성한 모델은 [임베딩 설치 가이드](../install/embedding-installation-guide.md)에 따라 직접 프로필을 추가해야 합니다.
 
 목록이 한 페이지(8개)를 넘으면 페이징됩니다 — `[n]` 다음 페이지, `[p]` 이전 페이지, 번호 입력으로 바로 선택(지금 보이는 페이지가 아니어도 전체 목록 기준 번호), `[q]` 취소. 목록이 8개 이하면 페이징 없이 전부 한 번에 보여줍니다 (지금은 정확히 8개라 아직 한 화면에 다 나옵니다). Enter만 누르면 항상 `[1]`(권장 모델)이 선택됩니다.
 
@@ -82,7 +82,7 @@ Select embedding source:
 >
 > `qwen3-embedding-0.6b`는 2026년에 나온 최신 모델로, 파라미터 대비 검색 성능이 좋다고 알려져 있습니다(가성비 위주로 고르신다면 `gte-qwen2-1.5b`보다 먼저 검토해볼 만합니다 — 파라미터가 약 1/2.6 수준입니다). `gte-qwen2-1.5b`와 같은 계열이라 `query_prefix`도 동일한 instruct 형식입니다.
 
-> 설치 마법사(`python install.py --change-embedding`)와 `docker compose exec app python manage.py embedding_model_catalog`도 각 모델 옆에 이 추정치를 함께 보여줍니다. 계산 방식은 [임베딩 설치 가이드의 메모리 예약](./embedding-installation-guide.md#다음-단계)을 참고하세요.
+> 설치 마법사(`python install.py --change-embedding`)와 `docker compose exec app python manage.py embedding_model_catalog`도 각 모델 옆에 이 추정치를 함께 보여줍니다. 계산 방식은 [임베딩 설치 가이드의 메모리 예약](../install/embedding-installation-guide.md#다음-단계)을 참고하세요.
 
 두 명령 모두 추정치 아래에 `Fit` 판정도 함께 보여줍니다. 실제 서버 하드웨어(RAM 총량, GPU 여부와 VRAM 여유분)를 탐지해서 위 필요량과 비교한 결과입니다.
 
@@ -92,7 +92,7 @@ Select embedding source:
 | `RISKY` | 감당은 되지만 25% 여유가 없습니다. |
 | `NOFIT` | 필요량 자체가 가용량을 넘습니다. |
 
-GPU가 없으면 `GPU not detected`로 표시되고 CPU 판정만 나옵니다. LLM 설치 마법사의 `FIT`/`RISKY`/`NOFIT`([LLM 설치 가이드](./llm-installation-guide.md) 참고)과 같은 기준(필요량 × 1.25 vs 가용량)을 씁니다. 다만 LLM 쪽과 달리 이 판정이 선택을 막지는 않습니다 — `NOFIT`이어도 마법사가 해당 모델 선택 자체를 거부하지 않으므로, 실제로 활성화하기 전에 이 표시를 보고 직접 판단해야 합니다.
+GPU가 없으면 `GPU not detected`로 표시되고 CPU 판정만 나옵니다. LLM 설치 마법사의 `FIT`/`RISKY`/`NOFIT`([LLM 설치 가이드](../install/llm-installation-guide.md) 참고)과 같은 기준(필요량 × 1.25 vs 가용량)을 씁니다. 다만 LLM 쪽과 달리 이 판정이 선택을 막지는 않습니다 — `NOFIT`이어도 마법사가 해당 모델 선택 자체를 거부하지 않으므로, 실제로 활성화하기 전에 이 표시를 보고 직접 판단해야 합니다.
 
 목록 마지막 항목은 `Select by Preset`입니다. 모델 이름 대신 `speed`, `balanced`(기본값), `quality` 중 하나를 고르면 각 특성에 맞게 배정된 프로필이 선택됩니다:
 
@@ -102,7 +102,7 @@ GPU가 없으면 `GPU not detected`로 표시되고 CPU 판정만 나옵니다. 
 | `balanced` (기본값) | `bge-m3-hybrid` | BAAI/bge-m3 | 568M 파라미터 기반 밀집(Dense) + 어휘(Sparse) 하이브리드 검색 지원 (1024차원) |
 | `quality` | `gte-qwen2-1.5b` | Alibaba-NLP/gte-Qwen2-1.5B-instruct | 1.5B 대형 파라미터와 1536차원으로 가장 높은 검색 품질 제공 |
 
-> 프리셋 배정을 변경하거나 새 모델을 등록하는 방법은 [임베딩 설치 가이드](./embedding-installation-guide.md)를 참고하세요.
+> 프리셋 배정을 변경하거나 새 모델을 등록하는 방법은 [임베딩 설치 가이드](../install/embedding-installation-guide.md)를 참고하세요.
 
 전환 시 아래 두 가지가 달라질 수 있습니다.
 
@@ -304,7 +304,7 @@ python install.py --change-embedding \
 }
 ```
 
-외부 엔드포인트로 만든 계약은 `catalog_revision`과 `model_revision`이 `external`입니다. Hugging Face 리비전으로 고정할 수 없기 때문이며, 엔드포인트 쪽에서 모델이 교체되어도 Dotori는 알 수 없습니다. 한 번 쓰인 계약 파일은 바뀌지 않습니다. 각 필드가 어떻게 결정되는지는 [임베딩 설치 가이드](./embedding-installation-guide.md)에 정리되어 있습니다.
+외부 엔드포인트로 만든 계약은 `catalog_revision`과 `model_revision`이 `external`입니다. Hugging Face 리비전으로 고정할 수 없기 때문이며, 엔드포인트 쪽에서 모델이 교체되어도 Dotori는 알 수 없습니다. 한 번 쓰인 계약 파일은 바뀌지 않습니다. 각 필드가 어떻게 결정되는지는 [임베딩 설치 가이드](../install/embedding-installation-guide.md)에 정리되어 있습니다.
 
 ### 문제가 있다면
 
@@ -316,14 +316,14 @@ python install.py --change-embedding \
 | 전환 후 기존 문서가 검색되지 않음 | 재임베딩을 건너뛴 상태입니다. `--force-reembed`로 다시 실행합니다. |
 | 세대 상태가 `FAILED` | 재임베딩이 전량 완료되지 않았습니다. 이전 런타임은 유지되어 있으므로, 원인을 확인한 뒤 다시 전환합니다. 로그 조회는 [모니터링 가이드](./monitoring-and-quality-guide.md)를 참고하세요. |
 | 하이브리드 검색이 동작하지 않음 | 활성 프로필의 `supports_sparse`를 확인합니다. `bge-m3-hybrid`가 아니면 밀집 벡터 검색만 동작합니다. |
-| 원하는 모델이 카탈로그 목록에 없음 | [임베딩 설치 가이드](./embedding-installation-guide.md)의 절차로 등록한 뒤 `python install.py --rebuild`를 실행합니다. |
+| 원하는 모델이 카탈로그 목록에 없음 | [임베딩 설치 가이드](../install/embedding-installation-guide.md)의 절차로 등록한 뒤 `python install.py --rebuild`를 실행합니다. |
 
 ---
 
 ## 더 보기
 
-- [임베딩 설치 가이드](./embedding-installation-guide.md) — 카탈로그에 새 모델 등록하기
-- [설치 가이드](./installation-guide.md) — 서버 설치와 운영 모드
-- [LLM 설치 가이드](./llm-installation-guide.md) — 로컬 LLM 선택과 설치
+- [임베딩 설치 가이드](../install/embedding-installation-guide.md) — 카탈로그에 새 모델 등록하기
+- [설치 가이드](../install/installation-guide.md) — 서버 설치와 운영 모드
+- [LLM 설치 가이드](../install/llm-installation-guide.md) — 로컬 LLM 선택과 설치
 - [운영 가이드](./operation-guide.md) — 임베딩 동시성, 타임아웃, 청크 토큰 한계 조정
 - [모니터링 가이드](./monitoring-and-quality-guide.md) — 재임베딩 진행 상황과 검색 품질 확인

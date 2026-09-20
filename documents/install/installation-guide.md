@@ -2,7 +2,7 @@
 
 이 가이드를 따라 하면 Dotori 서버를 Docker Compose로 설치하고, 브라우저에서 접속을 확인하고, 필요하다면 외부 접속까지 연결할 수 있습니다.
 
-로컬 LLM 모델 선택·교체 등 AI 런타임에 특화된 내용은 [LLM 설치 가이드](./llm-installation-guide.md)를, 설치 이후의 운영(시작/중지/계정/백업/보안)은 [운영 가이드](./operation-guide.md)를 참고하세요.
+로컬 LLM 모델 선택·교체 등 AI 런타임에 특화된 내용은 [LLM 설치 가이드](./llm-installation-guide.md)를, 설치 이후의 운영(시작/중지/계정/백업/보안)은 [운영 가이드](../operate/operation-guide.md)를 참고하세요.
 
 ---
 
@@ -65,7 +65,7 @@ python install.py --run
 | `[2] Hybrid/Search AI 모드` (기본값) | LLM 답변 생성 없이 임베딩과 하이브리드 검색만 사용 |
 | `[3] 기본 모드` | AI 기능 없이 파일 업로드·관리만 사용 |
 
-`[1]`, `[2]`를 선택하면 임베딩 모델(`BAAI/bge-m3` 기본, 또는 경량 모델)을 고르는 단계가 이어집니다. `[1]`을 선택하면 이어서 RAG 우선순위(`speed` / `balanced`(기본값) / `quality`)도 고릅니다.
+`[1]`, `[2]`를 선택하면 임베딩 모델(`BAAI/bge-m3` 기본, 또는 경량 모델)을 고르는 단계가 이어집니다. `[1]`을 선택하면 이어서 RAG 우선순위(`speed` / `balanced`(기본값) / `quality`)도 고릅니다 — 이 값은 초기 임베딩 프리셋을 결정하며, 뒤이어 자동 진행되는 로컬 LLM 선택에는 더 이상 영향을 주지 않습니다(어떤 LLM을 쓸지는 하드웨어 기준 자동 순위로 정해집니다. [LLM 설치 가이드](./llm-installation-guide.md) 참고).
 
 ### .env 값
 
@@ -84,10 +84,10 @@ python install.py --run
 
 | 항목 | 설명 |
 |------|------|
-| `LOGIN_REQUIRED` | 기본값은 `0`(로그인 없이 로컬 관리자로 자동 접속)입니다. 외부에서 접속 가능하게 만들 계획이라면 `1`로 전환해야 합니다 — [외부 접속 연결](#외부-접속-연결-선택)과 [운영 가이드](./operation-guide.md)를 참고하세요. |
+| `LOGIN_REQUIRED` | 기본값은 `0`(로그인 없이 로컬 관리자로 자동 접속)입니다. 외부에서 접속 가능하게 만들 계획이라면 `1`로 전환해야 합니다 — [외부 접속 연결](#외부-접속-연결-선택)과 [운영 가이드](../operate/operation-guide.md)를 참고하세요. |
 | 그 외 `EMBEDDING_*`, `RAG_*`, `QUERY_*` 값들 | 설치 마법사가 운영 모드에 맞춰 채워주는 기본값으로 시작 가능하며, 검색/RAG 품질을 튜닝할 때만 조정하면 됩니다. |
-| `CONTEXTUAL_COMPRESSION_*` (8개) | 검색 결과를 압축해 RAG 컨텍스트를 줄이는 기능의 세부 파라미터입니다. `.env.example`에 기본값이 이미 채워져 있고 `CONTEXTUAL_COMPRESSION_ENABLED=0`(비활성)이 기본값입니다. 켜는 방법과 각 값의 의미는 [운영 가이드](./operation-guide.md)를 참고하세요. |
-| `DOCUMENT_AI_WORKER_CONCURRENCY`, `EMBEDDING_HTTP_THREADS` | 문서 파싱·임베딩 처리 동시성입니다. 기본값 그대로 시작해도 되며, 대기열이 계속 쌓일 때 조정하는 방법은 [운영 가이드](./operation-guide.md)를 참고하세요. |
+| `CONTEXTUAL_COMPRESSION_*` (8개) | 검색 결과를 압축해 RAG 컨텍스트를 줄이는 기능의 세부 파라미터입니다. `.env.example`에 기본값이 이미 채워져 있고 `CONTEXTUAL_COMPRESSION_ENABLED=0`(비활성)이 기본값입니다. 켜는 방법과 각 값의 의미는 [운영 가이드](../operate/operation-guide.md)를 참고하세요. |
+| `DOCUMENT_AI_WORKER_CONCURRENCY`, `EMBEDDING_HTTP_THREADS` | 문서 파싱·임베딩 처리 동시성입니다. 기본값 그대로 시작해도 되며, 대기열이 계속 쌓일 때 조정하는 방법은 [운영 가이드](../operate/operation-guide.md)를 참고하세요. |
 
 `.env`를 직접 수정한 뒤에는 컨테이너 재시작이 있어야 반영됩니다(`python install.py --restart`).
 
@@ -144,7 +144,7 @@ python install.py --run
 
 ## Verify
 
-브라우저에서 `http://127.0.0.1:8000`으로 접속합니다. 기본 설정(`LOGIN_REQUIRED=0`)에서는 별도의 회원가입/로그인 없이 로컬 관리자 프로필로 자동 접속됩니다. 계정 전환이나 로그인 필수 전환 방법은 [운영 가이드](./operation-guide.md)에서 다룹니다.
+브라우저에서 `http://127.0.0.1:8000`으로 접속합니다. 기본 설정(`LOGIN_REQUIRED=0`)에서는 별도의 회원가입/로그인 없이 로컬 관리자 프로필로 자동 접속됩니다. 계정 전환이나 로그인 필수 전환 방법은 [운영 가이드](../operate/operation-guide.md)에서 다룹니다.
 
 서비스 상태(컨테이너, LLM 런타임, 검색/임베딩 기능 활성화 여부)를 확인하려면:
 
@@ -164,7 +164,7 @@ python install.py --network-access-status
 
 - 로컬 LLM 모델을 선택·변경하려면 [LLM 설치 가이드](./llm-installation-guide.md)로 이동합니다.
 - 카탈로그에 없는 임베딩 모델을 쓰려면 [임베딩 설치 가이드](./embedding-installation-guide.md)를 참고합니다.
-- 서비스 시작/중지, 계정 관리, 백업, 보안 체크리스트는 [운영 가이드](./operation-guide.md)에서 다룹니다.
+- 서비스 시작/중지, 계정 관리, 백업, 보안 체크리스트는 [운영 가이드](../operate/operation-guide.md)에서 다룹니다.
 
 ### 문제가 있다면
 
@@ -181,4 +181,4 @@ python install.py --network-access-status
 
 - [LLM 설치 가이드](./llm-installation-guide.md) — 로컬 LLM 모델 선택·변경·상세 설정
 - [임베딩 설치 가이드](./embedding-installation-guide.md) — 임베딩 모델을 카탈로그에 등록
-- [운영 가이드](./operation-guide.md) — 서비스 시작/중지, 계정 관리, 백업, 보안 체크리스트
+- [운영 가이드](../operate/operation-guide.md) — 서비스 시작/중지, 계정 관리, 백업, 보안 체크리스트

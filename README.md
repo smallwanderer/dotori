@@ -26,7 +26,7 @@ For Korean documentation, see [README.ko.md](README.ko.md). For the full documen
 
 ## Installation Mode
 
-The included installation assistant, `start.bat`, lets operators set up the server without writing code. See the [installation guide](documents/installation-guide.md) for details.
+The included installation assistant, `start.bat`, lets operators set up the server without writing code. See the [installation guide](documents/install/installation-guide.md) for details.
 
 The installer provides the following options:
 

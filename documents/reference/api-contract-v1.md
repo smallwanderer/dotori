@@ -3,7 +3,7 @@
 > 기준일: 2026-08-29
 
 이 문서는 `web/` SPA와 `clients/dotori-cli/` CLI가 실제로 사용하는 HTTP 계약을 고정한 참조 자료입니다. Dotori 서버에 대해 직접 HTTP 클라이언트를 작성하려는 경우에도 이 문서가 기준입니다.
-실제 사용 절차가 필요하다면 [설치 가이드](./installation-guide.md), [운영 가이드](./operation-guide.md), CLI 사용법(`clients/dotori-cli/README.md`)을 참고하세요.
+실제 사용 절차가 필요하다면 [설치 가이드](../install/installation-guide.md), [운영 가이드](../operate/operation-guide.md), CLI 사용법(`clients/dotori-cli/README.md`)을 참고하세요.
 
 ## 목차
 
@@ -149,7 +149,7 @@ bootstrap 응답:
 | `POST` | `/api/document-ai/v1/tuning/` | 저수준 retrieval 가중치와 후보 설정 | sandbox | 일반 SPA 제외 |
 | `GET` | `/api/document-ai/sandbox/` | template HTML | sandbox | SPA API 아님 |
 
-검색 endpoint는 명시적 `mode=basic|advanced` 계약을 사용하며, 검색 tuning 파라미터는 일반 사용자 설정 UI로 노출하지 않습니다. sandbox의 용도와 접근 시 주의사항은 [운영 가이드](./operation-guide.md#하이브리드-검색-튜닝)를 참고하세요.
+검색 endpoint는 명시적 `mode=basic|advanced` 계약을 사용하며, 검색 tuning 파라미터는 일반 사용자 설정 UI로 노출하지 않습니다. sandbox의 용도와 접근 시 주의사항은 [운영 가이드](../operate/operation-guide.md#하이브리드-검색-튜닝)를 참고하세요.
 
 ### 서버 운영 API
 
@@ -334,7 +334,7 @@ SPA TypeScript 계약은 `web/src/api/types.ts`의 `ApiErrorResponse`, `SessionB
 ```
 
 - `question`: 필수 문자열
-- `top_k`: 기본 서버 설정값(`RAG_SEARCH_TOP_K`, [운영 가이드](./operation-guide.md#rag-파라미터-조정) 참고), 범위 1–10
+- `top_k`: 기본 서버 설정값(`RAG_SEARCH_TOP_K`, [운영 가이드](../operate/operation-guide.md#rag-파라미터-조정) 참고), 범위 1–10
 - `threshold`: 선택, 0 이상
 - `language`: `ko` 또는 `en`, 기본 `ko`
 - `node_ids`: 선택 UUID 배열. 검색과 같은 소유권·폴더 확장 규칙을 사용합니다.

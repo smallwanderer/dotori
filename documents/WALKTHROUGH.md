@@ -46,28 +46,28 @@ Dotori는 웹 UI뿐만 아니라 CLI와 HTTP API로도 확장됩니다. 서버�
 
 ![문서 상세](./statics/dotori-specific.png)
 
-**운영 요약** — 관리자는 서버 상태와 최근 처리 성능을 한 화면에서 확인합니다. 자세한 내용은 [모니터링 가이드](./monitoring-and-quality-guide.md)를 참고하세요.
+**운영 요약** — 관리자는 서버 상태와 최근 처리 성능을 한 화면에서 확인합니다. 자세한 내용은 [모니터링 가이드](./operate/monitoring-and-quality-guide.md)를 참고하세요.
 
 ![운영 요약](./statics/dotori-management-screen.png)
 
 ## 처음 설치한다면
 
-- [설치 가이드](./installation-guide.md) — Docker Compose 기반 서버 설치와 세 가지 설치 모드
-- [LLM 설치 가이드](./llm-installation-guide.md) — 서버 하드웨어에 맞는 로컬 LLM 선택과 설치
+- [설치 가이드](./install/installation-guide.md) — Docker Compose 기반 서버 설치와 세 가지 설치 모드
+- [LLM 설치 가이드](./install/llm-installation-guide.md) — 서버 하드웨어에 맞는 로컬 LLM 선택과 설치
 
 ## 이미 운영 중이라면
 
-- [운영 가이드](./operation-guide.md) — 계정·권한 관리, 문서 파이프라인 운용, 검색·RAG 파라미터 조정
-- [임베딩 런타임 가이드](./embedding-guide.md) — 임베딩 모델 전환, 외부 엔드포인트 연결, 기존 문서 재임베딩
-- [임베딩 설치 가이드](./embedding-installation-guide.md) — 카탈로그에 없는 임베딩 모델을 직접 등록하기
-- [임베딩 설치 가이드](./embedding-installation-guide.md) — 원하는 임베딩 모델을 카탈로그에 등록하기
+- [운영 가이드](./operate/operation-guide.md) — 계정·권한 관리, 문서 파이프라인 운용, 검색·RAG 파라미터 조정
+- [임베딩 런타임 가이드](./operate/embedding-guide.md) — 임베딩 모델 전환, 외부 엔드포인트 연결, 기존 문서 재임베딩
+- [임베딩 설치 가이드](./install/embedding-installation-guide.md) — 카탈로그에 없는 임베딩 모델을 직접 등록하기
+- [임베딩 설치 가이드](./install/embedding-installation-guide.md) — 원하는 임베딩 모델을 카탈로그에 등록하기
 
 ## 상태와 품질을 확인하고 싶다면
 
-- [품질 관리와 평가, 그리고 모니터링 가이드](./monitoring-and-quality-guide.md) — trace_id로 요청 추적, 로그 조회, 검색 품질(Recall/nDCG) 점검
+- [품질 관리와 평가, 그리고 모니터링 가이드](./operate/monitoring-and-quality-guide.md) — trace_id로 요청 추적, 로그 조회, 검색 품질(Recall/nDCG) 점검
 
 ## 직접 연동한다면
 
-- [API 계약](./api-contract-v1.md) — SPA와 CLI가 사용하는 HTTP API 전체 명세
+- [API 계약](./reference/api-contract-v1.md) — SPA와 CLI가 사용하는 HTTP API 전체 명세
 - [Dotori CLI](../clients/dotori-cli/README.md) — 터미널에서 업로드·검색·RAG 질의
 - [Dotori Sync](../clients/dotori-sync/README.md) — 로컬 폴더를 워크스페이스와 동기화

@@ -4,3 +4,8 @@
 torchvision==0.28.0
 
 docling==2.113.0
+
+# Korean document container readers are parser dependencies, not embedding
+# runtime dependencies.
+python-hwpx==2.29.1
+pyhwp==0.1b15

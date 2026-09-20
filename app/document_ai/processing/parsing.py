@@ -16,7 +16,6 @@ from document_ai.parsers.config import (
     get_chunk_max_tokens,
     get_embedding_backend,
     get_embedding_max_tokens,
-    get_embedding_model,
     get_parser_tokenizer_id,
 )
 from document_ai.parsers.text_utils import normalize_extracted_text, serialize_meta
@@ -39,6 +38,31 @@ class ParseExecutionFailed(Exception):
         self.result = result
 
 
+def _parse_metadata(
+    *, parser_backend: str, parser_version: str | None, file_ext: str
+) -> dict:
+    from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
+    from document_ai.services.capability_admission import capability_enabled
+
+    metadata = {
+        "parser_backend": parser_backend,
+        "parser_version": parser_version,
+        "file_ext": file_ext,
+        "chunking_strategy": "hierarchical",
+    }
+    if capability_enabled(DOCUMENT_SEMANTIC_SEARCH):
+        metadata.update(
+            {
+                "tokenizer_name": get_parser_tokenizer_id(),
+                "chunk_max_tokens": get_chunk_max_tokens(),
+                "embedding_max_tokens": get_embedding_max_tokens(),
+                "embedding_backend": get_embedding_backend(),
+                "chunking_strategy": "hybrid",
+            }
+        )
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
 def get_parser_for_execution():
     """Resolve the configured parser without coupling callers to its registry."""
     from document_ai.parsers.registry import get_document_parser
@@ -50,16 +74,28 @@ def save_parse_result(node, pr: ParseResult) -> DocumentParseResult:
     """Persist a parser result and atomically replace the node's chunks."""
     from document_ai.services.executor_snapshot import validate_execution
     validate_execution()
-    metadata = {
-        "parser_backend": pr.parser_backend,
-        "parser_version": pr.parser_version,
-        "tokenizer_name": get_parser_tokenizer_id(),
-        "chunk_max_tokens": get_chunk_max_tokens(),
-        "embedding_max_tokens": get_embedding_max_tokens(),
-        "embedding_backend": get_embedding_backend(),
-        "file_ext": pr.file_ext,
-    }
-    metadata = {key: value for key, value in metadata.items() if value is not None}
+    metadata = _parse_metadata(
+        parser_backend=pr.parser_backend,
+        parser_version=pr.parser_version,
+        file_ext=pr.file_ext,
+    )
+    from document_ai.services.result_envelope import (
+        DOCUMENT_EXTRACT_RESULT_SCHEMA,
+        processing_fingerprint,
+    )
+
+    metadata.update(
+        {
+            "result_schema": DOCUMENT_EXTRACT_RESULT_SCHEMA,
+            "source_blob_uuid": str(node.blob.uuid),
+            "source_checksum": str(node.blob.sha256 or pr.input_document_hash or ""),
+        }
+    )
+    metadata["processing_fingerprint"] = processing_fingerprint(
+        parser_name=pr.parser_backend,
+        parser_mode=pr.parser_mode or "",
+        metadata=metadata,
+    )
 
     raw_status = (pr.status or "").lower()
     parse_status = AIStatus.FAILED
@@ -256,12 +292,11 @@ def execute_parse_node(
                 "status": AIStatus.FAILED,
                 "errors": [{"message": str(exc)}],
                 "performance_metrics": failure_metrics,
-                "metadata": {
-                    "tokenizer_name": get_embedding_model(),
-                    "chunk_max_tokens": get_chunk_max_tokens(),
-                    "embedding_max_tokens": get_embedding_max_tokens(),
-                    "embedding_backend": get_embedding_backend(),
-                },
+                "metadata": _parse_metadata(
+                    parser_backend=parser.spec.backend,
+                    parser_version=None,
+                    file_ext="",
+                ),
                 "parsed_at": timezone.now(),
             },
         )

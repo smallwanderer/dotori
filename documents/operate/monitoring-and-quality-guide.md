@@ -167,4 +167,4 @@ RAG 답변 생성 쪽 동시성을 실측 데이터로 조정하고 싶다면 [�
 ## 관련 문서
 
 - [운영 가이드](./operation-guide.md) — 서비스 기동, 계정 관리, 문서 파이프라인, LLM 런타임 설정 등 전체 운영 절차
-- [API 계약](./api-contract-v1.md) — 검색·RAG API 요청/응답 형식
+- [API 계약](../reference/api-contract-v1.md) — 검색·RAG API 요청/응답 형식

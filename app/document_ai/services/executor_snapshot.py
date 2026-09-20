@@ -24,6 +24,8 @@ def validate_execution():
 
 
 def capture_snapshot(envelope):
+    from capabilities.config import load_capability_config
+    from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
     from files.models import FileBlob
 
     payload = envelope["payload"]
@@ -35,5 +37,18 @@ def capture_snapshot(envelope):
                  .values("node_id", "uuid", "file", "size"))
     for blob in blobs:
         blob["uuid"] = str(blob["uuid"])
-    return ({"payload": payload, "node_ids": sorted(node_ids), "blobs": blobs},
-            {"fingerprint": load_embedding_runtime().runtime_fingerprint})
+    capability_config = load_capability_config()
+    if (
+        envelope.get("work_kind") == "parse_document"
+        and not capability_config.is_enabled(DOCUMENT_SEMANTIC_SEARCH)
+    ):
+        runtime = {
+            "capability_revision": capability_config.revision,
+            "chunking_strategy": "hierarchical",
+        }
+    else:
+        runtime = {"fingerprint": load_embedding_runtime().runtime_fingerprint}
+    return (
+        {"payload": payload, "node_ids": sorted(node_ids), "blobs": blobs},
+        runtime,
+    )

@@ -148,6 +148,8 @@ function App() {
   const runtimeMeta = serverPolicy?.rag.runtime
     ? t('runtime.meta', { runtime: serverPolicy.rag.runtime, concurrency: serverPolicy.rag.servingConcurrency || 1 })
     : t('runtime.serverManaged')
+  const documentExtractEnabled = serverPolicy?.capabilities['documents.extract']?.enabled ?? true
+  const semanticSearchEnabled = serverPolicy?.capabilities['documents.semantic_search']?.available ?? true
 
   return <div className="app-frame">
     <aside className={`sidebar ${mobileNav ? 'is-open' : ''}`}>
@@ -174,7 +176,7 @@ function App() {
         <button className="mobile-menu" onClick={() => setMobileNav(true)}><Icon name="menu" /></button>
         <div className="topbar-title"><span className="topbar-mark"><Icon name="database" size={16}/></span><strong>Dotori</strong></div>
         {section === 'workspace' && <nav className="workspace-tabs" aria-label={t('nav.workMenu')}>
-          {([['documents', t('nav.documents')], ['retrieval', t('nav.searchTest')], ['chat', t('nav.ragChat')], ['workspaceSettings', t('nav.workspaceSettings')]] as [KnowledgeTab, string][]).map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => navigate('workspace', key)}>{label}</button>)}
+          {([['documents', t('nav.documents')], ...(semanticSearchEnabled ? [['retrieval', t('nav.searchTest')], ['chat', t('nav.ragChat')]] : []), ['workspaceSettings', t('nav.workspaceSettings')]] as [KnowledgeTab, string][]).map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => navigate('workspace', key)}>{label}</button>)}
         </nav>}
         {section === 'operations' && session?.user?.is_staff && <nav className="workspace-tabs" aria-label={t('operations.navLabel')}>
           {([['summary', t('operations.navSummary')], ['ai', t('operations.navAi')], ['traces', t('operations.navTraces')]] as [OperationsTab, string][]).map(([key, label]) => <button key={key} className={operationsTab === key ? 'active' : ''} onClick={() => navigate('operations', 'documents', key)}>{label}</button>)}
@@ -183,9 +185,9 @@ function App() {
       </header>
 
       {section === 'home' ? <HomeFeature onOpen={() => navigate('workspace', 'documents')} userName={displayName} tenantEnabled={Boolean(session?.auth.authenticated && session.user?.email_verified)} /> : section === 'operations' ? <div className="workspace-page">{operationsTab === 'summary' ? <OperationsFeature authorized={Boolean(session?.user?.is_staff)} authResolved={!systemLoading} /> : operationsTab === 'ai' ? <OperationsAiSettings policy={serverPolicy} loading={systemLoading} failed={systemError} authorized={Boolean(session?.user?.is_staff)} authResolved={!systemLoading} /> : <OperationsPlaceholder authorized={Boolean(session?.user?.is_staff)} authResolved={!systemLoading} />}</div> : <div className="workspace-page">
-        {tab === 'documents' && <DocumentsFeature onSearch={() => navigate('workspace', 'retrieval')} onAsk={() => navigate('workspace', 'chat')} pendingOpenUid={pendingOpenUid} onPendingOpenHandled={() => setPendingOpenUid(null)} />}
-        {tab === 'retrieval' && <SearchFeature onOpenDocument={openDocumentDetail} />}
-        {tab === 'chat' && <ChatFeature conversationUid={conversationUid} onConversationChange={(uid) => navigate('workspace', 'chat', 'summary', uid)} onOpenDocument={openDocumentDetail} />}
+        {tab === 'documents' && <DocumentsFeature documentExtractEnabled={documentExtractEnabled} semanticSearchEnabled={semanticSearchEnabled} onSearch={() => navigate('workspace', 'retrieval')} onAsk={() => navigate('workspace', 'chat')} pendingOpenUid={pendingOpenUid} onPendingOpenHandled={() => setPendingOpenUid(null)} />}
+        {tab === 'retrieval' && (semanticSearchEnabled ? <SearchFeature onOpenDocument={openDocumentDetail} /> : <div className="async-state empty" role="status"><strong>{t('capability.documentsDisabledTitle')}</strong><p>{t('capability.documentsDisabledDescription')}</p></div>)}
+        {tab === 'chat' && (semanticSearchEnabled ? <ChatFeature conversationUid={conversationUid} onConversationChange={(uid) => navigate('workspace', 'chat', 'summary', uid)} onOpenDocument={openDocumentDetail} /> : <div className="async-state empty" role="status"><strong>{t('capability.documentsDisabledTitle')}</strong><p>{t('capability.documentsDisabledDescription')}</p></div>)}
         {tab === 'accountSettings' && <AccountSettingsFeature session={session} loading={systemLoading} failed={systemError} />}
         {tab === 'workspaceSettings' && <WorkspaceSettingsFeature policy={serverPolicy} loading={systemLoading} failed={systemError} />}
       </div>}

@@ -110,8 +110,10 @@ def _file_io_status(*, skip: bool) -> dict:
 
 
 def _embedding_status() -> dict:
-    operation_mode = os.environ.get("DOTORI_OPERATION_MODE", "search").strip().lower()
-    enabled = operation_mode in {"rag", "search"}
+    from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
+    from document_ai.services.capability_admission import capability_enabled
+
+    enabled = capability_enabled(DOCUMENT_SEMANTIC_SEARCH)
     try:
         runtime = load_embedding_runtime()
     except EmbeddingRuntimeConfigError as exc:

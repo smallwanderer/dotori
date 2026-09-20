@@ -95,6 +95,24 @@ def test_response_loss_replay_reads_receipt_without_reexecuting():
     post.assert_not_called()
 
 
+def test_extract_only_parse_does_not_create_embedding_followup():
+    task_envelope = envelope()
+    with patch(
+        "document_ai.services.capability_admission.capability_enabled",
+        return_value=False,
+    ), patch(
+        "document_ai.processing.parsing.get_parser_for_execution",
+        return_value=object(),
+    ), patch(
+        "document_ai.processing.parsing.execute_parse_node",
+        return_value={"status": "success", "node_id": 1, "chunk_count": 2},
+    ):
+        result, followups = executor_views._execute_parser(task_envelope)
+
+    assert result["status"] == "success"
+    assert followups == []
+
+
 def test_stale_snapshot_prevents_domain_persistence(monkeypatch):
     """An executor must reject work whose document/runtime changed in flight."""
     from document_ai.services import executor_snapshot
@@ -115,6 +133,27 @@ def test_stale_snapshot_prevents_domain_persistence(monkeypatch):
             executor_snapshot.validate_execution()
     finally:
         executor_snapshot.active_execution.reset(token)
+
+
+@pytest.mark.django_db
+def test_extract_only_snapshot_does_not_require_embedding_runtime(tmp_path, monkeypatch):
+    from capabilities.config import write_capability_config
+    from capabilities.registry import DOCUMENT_EXTRACT
+    from document_ai.services import executor_snapshot
+
+    config_path = tmp_path / "capabilities.json"
+    write_capability_config([DOCUMENT_EXTRACT], path=config_path)
+    monkeypatch.setenv("DOTORI_CAPABILITIES_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(
+        executor_snapshot,
+        "load_embedding_runtime",
+        Mock(side_effect=AssertionError("embedding runtime must not be read")),
+    )
+
+    _source, runtime = executor_snapshot.capture_snapshot(envelope())
+
+    assert runtime["chunking_strategy"] == "hierarchical"
+    assert runtime["capability_revision"].startswith("cap-")
 
 
 def test_legacy_message_uses_celery_request_id():

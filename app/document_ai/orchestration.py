@@ -19,6 +19,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from django.utils import timezone
 
 from config.tracing import get_trace_id, new_trace_id
+from capabilities.registry import DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH
 from document_ai.services.environment import get_positive_int_env
 
 
@@ -101,9 +102,22 @@ TASK_ROUTES = MappingProxyType(
     }
 )
 
+WORK_CAPABILITIES = MappingProxyType(
+    {
+        WorkKind.PARSE_DOCUMENT: DOCUMENT_EXTRACT,
+        WorkKind.PLAN_DOCUMENT_EMBEDDING: DOCUMENT_SEMANTIC_SEARCH,
+        WorkKind.EMBED_DOCUMENT_BATCH: DOCUMENT_SEMANTIC_SEARCH,
+        WorkKind.EVALUATE_RETRIEVAL: DOCUMENT_SEMANTIC_SEARCH,
+    }
+)
+
 
 def get_task_route(kind: WorkKind) -> TaskRoute:
     return TASK_ROUTES[kind]
+
+
+def get_work_capability(kind: WorkKind) -> str:
+    return WORK_CAPABILITIES[kind]
 
 
 def derive_job_id(parent_job_id: str, kind: WorkKind, target: str) -> str:
@@ -113,6 +127,9 @@ def derive_job_id(parent_job_id: str, kind: WorkKind, target: str) -> str:
 
 
 def _dispatch(task, kind: WorkKind, *, args: list[Any], kwargs: dict[str, Any]):
+    from document_ai.services.capability_admission import require_capability
+
+    require_capability(get_work_capability(kind))
     route = get_task_route(kind)
     envelope_keys = {
         "job_id",

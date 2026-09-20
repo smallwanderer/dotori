@@ -14,6 +14,7 @@ from document_ai.orchestration import (
     enqueue_embedding,
     enqueue_parse,
     enqueue_retrieval_evaluation,
+    get_work_capability,
 )
 from document_ai.services.environment import get_positive_int_env as _get_positive_int_env
 
@@ -87,7 +88,29 @@ def _publish_executor_followups(response: dict) -> None:
 
 
 def _dispatch_or_retry(task, kind: WorkKind, *, envelope: dict, payload: dict) -> dict:
+    from document_ai.services.capability_admission import (
+        CapabilityAdmissionError,
+        require_capability,
+    )
     from document_ai.services.executor_transport import ExecutorDispatchError, dispatch_executor_job
+
+    try:
+        require_capability(get_work_capability(kind))
+    except CapabilityAdmissionError as exc:
+        from document_ai.processing.capability_state import finalize_capability_rejection
+
+        finalize_capability_rejection(
+            kind.value,
+            payload,
+            error_code=exc.code,
+            message=str(exc),
+        )
+        return {
+            "status": "failed",
+            "error_code": exc.code,
+            "error": str(exc),
+            "retryable": False,
+        }
 
     headers = dict(getattr(task.request, "headers", None) or {})
     deadline = headers.setdefault("executor_deadline", time.time() + 1800)

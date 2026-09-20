@@ -7,6 +7,7 @@ from docling.document_converter import InputFormat
 from docling_core.transforms.chunker.hierarchical_chunker import (
     ChunkingDocSerializer,
     ChunkingSerializerProvider,
+    HierarchicalChunker,
 )
 from docling_core.transforms.serializer.markdown import (
     MarkdownTableSerializer,
@@ -65,10 +66,19 @@ def _parse_docling_document(
     parser_mode: str,
 ) -> ParseResult:
 
-    tokenizer = get_hf_tokenizer()
-    chunker = get_hybrid_hf_chunker(
-        serializer_provider=CustomSerializerProvider()
-    )
+    from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
+    from document_ai.services.capability_admission import capability_enabled
+
+    semantic_search_enabled = capability_enabled(DOCUMENT_SEMANTIC_SEARCH)
+    tokenizer = get_hf_tokenizer() if semantic_search_enabled else None
+    if semantic_search_enabled:
+        chunker = get_hybrid_hf_chunker(
+            serializer_provider=CustomSerializerProvider()
+        )
+    else:
+        chunker = HierarchicalChunker(
+            serializer_provider=CustomSerializerProvider()
+        )
 
     # Chunker
     chunk_iter = chunker.chunk(result.document)
@@ -88,7 +98,11 @@ def _parse_docling_document(
             ChunkPayload(
                 chunk_index=len(chunks),
                 serialized_text=serialized_text,
-                tokens=tokenizer.count_tokens(serialized_text),
+                tokens=(
+                    tokenizer.count_tokens(serialized_text)
+                    if tokenizer is not None
+                    else None
+                ),
                 meta=meta,
             )
         )

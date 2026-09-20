@@ -3,6 +3,8 @@ from dataclasses import replace
 
 import pytest
 
+from capabilities.registry import DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH
+
 from installation.deployment import (
     ALL_WORKER_SERVICES,
     CORE_SERVICES,
@@ -88,6 +90,11 @@ def _runtime(tmp_path, scope="production"):
             ALL_WORKER_SERVICES,
             (),
         ),
+        (
+            "extract",
+            ("parser-executor",),
+            ("embedding-executor",),
+        ),
     ],
 )
 def test_plan_selects_workers_for_non_rag_modes(mode, enabled, disabled):
@@ -97,6 +104,13 @@ def test_plan_selects_workers_for_non_rag_modes(mode, enabled, disabled):
     assert tuple(worker.compose_service for worker in plan.enabled_workers) == enabled
     assert plan.disabled_worker_services == disabled
     assert plan.runtime is None
+    expected_capabilities = {
+        "basic": (),
+        "extract": (DOCUMENT_EXTRACT,),
+        "search": (DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH),
+    }[mode]
+    assert plan.enabled_capabilities == expected_capabilities
+    assert plan.capability_revision.startswith("cap-")
 
 
 def test_rag_plan_keeps_the_complete_document_processing_topology(tmp_path):
@@ -109,6 +123,14 @@ def test_rag_plan_keeps_the_complete_document_processing_topology(tmp_path):
     assert active.runtime.scope == active.scope
 
 
+def test_documents_alias_selects_extract_only_topology():
+    plan = build_deployment_plan("documents")
+
+    assert plan.mode == "extract"
+    assert plan.enabled_services == (*CORE_SERVICES, "parser-executor")
+    assert plan.enabled_capabilities == (DOCUMENT_EXTRACT,)
+
+
 def test_document_processing_specs_match_compose_roles():
     plan = build_deployment_plan("search")
     specs = {worker.compose_service: worker for worker in plan.workers}
@@ -118,13 +140,17 @@ def test_document_processing_specs_match_compose_roles():
     assert specs["embedding-executor"].health_strategy == "http-readyz"
     assert specs["parser-executor"].queues == ()
     assert specs["parser-executor"].health_strategy == "http-readyz"
-    assert specs["dotori-orchestrator"].queues == ("parse", "embed")
-    assert specs["dotori-orchestrator"].health_strategy == "celery-ping"
+    assert "dotori-orchestrator" in plan.core_services
+    assert "dotori-orchestrator" not in specs
 
 
 def test_document_runtime_lifecycle_constants_cover_all_services():
     assert DOCUMENT_QUEUE_SERVICES == ("dotori-orchestrator",)
-    assert DOCUMENT_RUNTIME_RESTART_SERVICES == ("app", *ALL_WORKER_SERVICES)
+    assert DOCUMENT_RUNTIME_RESTART_SERVICES == (
+        "app",
+        *DOCUMENT_QUEUE_SERVICES,
+        *ALL_WORKER_SERVICES,
+    )
 
 
 def test_old_saved_plan_cannot_omit_current_workers_from_lifecycle():
@@ -137,7 +163,10 @@ def test_old_saved_plan_cannot_omit_current_workers_from_lifecycle():
         ]
     }
 
-    assert worker_services_for_lifecycle(old_plan) == ALL_WORKER_SERVICES
+    assert worker_services_for_lifecycle(old_plan) == (
+        *DOCUMENT_QUEUE_SERVICES,
+        *ALL_WORKER_SERVICES,
+    )
 
 
 def test_lifecycle_ignores_removed_legacy_service_names():
@@ -148,7 +177,10 @@ def test_lifecycle_ignores_removed_legacy_service_names():
         ]
     }
 
-    assert worker_services_for_lifecycle(saved_plan) == ALL_WORKER_SERVICES
+    assert worker_services_for_lifecycle(saved_plan) == (
+        *DOCUMENT_QUEUE_SERVICES,
+        *ALL_WORKER_SERVICES,
+    )
 
 
 def test_plan_rejects_runtime_from_another_scope(tmp_path):
@@ -185,6 +217,8 @@ def test_runtime_dependent_worker_cannot_be_enabled_without_runtime():
             runtime=None,
             network_access="local",
             generation_id="plan-test",
+            capability_revision="cap-test",
+            enabled_capabilities=(),
         )
 
 

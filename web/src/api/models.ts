@@ -3,6 +3,8 @@ export type DocumentProcessingStatus = 'ready' | 'processing' | 'failed' | 'stal
 export type DocumentNodeType = 'file' | 'directory'
 
 export interface DocumentAiStatus {
+  processingAvailable: boolean
+  reasonCode: string
   parseStatus: string
   parseLabel: string
   embeddingStatus: string
@@ -241,6 +243,15 @@ export interface RagConversationMessage {
 
 export interface ServerPolicySummary {
   operationMode: string
+  capabilities: Record<string, {
+    registered: boolean
+    installed: boolean
+    enabled: boolean
+    available: boolean
+    status: string
+    reasonCode: string
+    contractVersion: number
+  }>
   policy: {
     searchStrategy: string
     searchTopK: number

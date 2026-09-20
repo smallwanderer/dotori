@@ -1,13 +1,20 @@
 name: dotori
 
-x-dotori-ai-build: &dotori-ai-build
+x-dotori-embedding-build: &dotori-embedding-build
   context: .
   dockerfile: app/Dockerfile
   target: backend
   args:
-    # Parser and embedding both use Torch.  Keep one shared AI image while
-    # separating their runtime roles and model ownership by process.
     INSTALL_AI_DEPS: "1"
+    INSTALL_PARSER_DOCLING: "0"
+    INSTALL_TEST_DEPS: "0"
+
+x-dotori-parser-build: &dotori-parser-build
+  context: .
+  dockerfile: app/Dockerfile
+  target: backend
+  args:
+    INSTALL_AI_DEPS: "0"
     INSTALL_PARSER_DOCLING: "1"
     INSTALL_TEST_DEPS: "0"
 
@@ -84,8 +91,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      embedding-executor:
-        condition: service_healthy
     networks:
       - default
       - rag-runtime
@@ -117,6 +122,7 @@ services:
       - .env
     volumes:
       - ./installation:/app/installation:ro
+      - ./install.py:/workspace/install.py:ro
       - ./docker-compose.yml:/workspace/docker-compose.yml:ro
     # Resource-snapshot tests need the production config mount point to exist,
     # but must never inspect or mutate the host's real runtime configuration.
@@ -132,8 +138,8 @@ services:
 
   embedding-executor:
     # The only process that loads local embedding model, parsing model(if needed).
-    image: dotori-app:local
-    build: *dotori-ai-build
+    image: dotori-embedding:local
+    build: *dotori-embedding-build
     container_name: embedding-executor
     restart: unless-stopped
     # Allocating GPU to embedding-executor may induce OOM when dotori-llm 
@@ -182,7 +188,8 @@ services:
       start_period: 60s
 
   parser-executor:
-    image: dotori-app:local
+    image: dotori-parser:local
+    build: *dotori-parser-build
     container_name: parser-executor
     restart: unless-stopped
     cpu_shares: ${PARSE_WORKER_CPU_SHARES:-256}
@@ -242,10 +249,6 @@ services:
       db:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      parser-executor:
-        condition: service_healthy
-      embedding-executor:
         condition: service_healthy
     command: [ "celery", "-A", "config", "worker", "-P", "threads", "-l", "info", "-Q", "parse,embed", "--concurrency=${ORCHESTRATOR_CONCURRENCY:-2}", "--prefetch-multiplier=1", "--hostname=orchestrator@%h" ]
     healthcheck:

@@ -669,6 +669,8 @@ const ko = {
   'operations.operatorDescription': '모델, 메모리, 동시성 및 양자화 변경은 설치·운영 명령에서 수행합니다. 정확도 확인 기능은 준비 중입니다.',
   'operations.tracePlaceholderTitle': 'Trace 탐색',
   'operations.tracePlaceholderDescription': 'trace_id로 작업 흐름을 조회하는 기능을 연결할 예정입니다.',
+  'capability.documentsDisabledTitle': '문서 AI 기능이 비활성화되어 있습니다.',
+  'capability.documentsDisabledDescription': '파일 관리는 계속 사용할 수 있습니다. 문서 검색과 RAG를 사용하려면 서버에서 Documents 기능을 활성화하세요.',
 } as const
 
 export default ko

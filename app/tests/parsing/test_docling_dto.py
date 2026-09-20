@@ -145,6 +145,31 @@ def test_parse_docling_document_returns_parse_result(mock_dependencies):
     assert dto.chunks[1].tokens == 4
     assert dto.chunks[1].meta == {"section": "body"}
 
+
+def test_extract_only_uses_hierarchical_chunking_without_tokenizer(monkeypatch):
+    from document_ai.parsers import docling_parser
+
+    monkeypatch.setattr(
+        "document_ai.services.capability_admission.capability_enabled",
+        lambda _capability_id: False,
+    )
+    monkeypatch.setattr(docling_parser, "HierarchicalChunker", lambda serializer_provider=None: FakeChunker())
+    monkeypatch.setattr(
+        docling_parser,
+        "get_hf_tokenizer",
+        lambda: pytest.fail("extract-only parsing must not load an embedding tokenizer"),
+    )
+    monkeypatch.setattr(docling_parser, "serialize_meta", lambda meta: meta)
+
+    dto = _parse_docling_document(
+        result=FakeResult(),
+        file_path="/tmp/sample.pdf",
+        parser_mode="convert",
+    )
+
+    assert len(dto.chunks) == 2
+    assert [chunk.tokens for chunk in dto.chunks] == [None, None]
+
 def test_parse_docling_document_dump_json(mock_dependencies):
     result = FakeResult()
 

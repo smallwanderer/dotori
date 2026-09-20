@@ -127,6 +127,7 @@ from installation.network_access import (
 from installation.network_access.files import configuration_directory, read_env_file as read_network_env_file
 from installation.deployment import (
     ALL_WORKER_SERVICES,
+    DOCUMENT_QUEUE_SERVICES,
     DOCUMENT_RUNTIME_RESTART_SERVICES,
     build_deployment_plan,
     compose_up_command,
@@ -135,15 +136,20 @@ from installation.deployment import (
     worker_services_for_lifecycle,
     write_deployment_plan,
 )
+from capabilities.config import capability_config_path, write_capability_config
 
 def select_rag_priority():
     print_header("RAG LLM Priority")
+    print("Selects the initial embedding model preset. It is also stored as a")
+    print("label on the LLM runtime config, but no longer affects which LLM")
+    print("model gets selected or its runtime settings (those are chosen")
+    print("automatically from hardware, independent of this choice).")
     print(f"{BOLD}[1] Speed{RESET}")
-    print("    - Prefer models and runtime settings with lower latency on this hardware.")
+    print("    - Lightweight embedding preset, fastest embedding throughput.")
     print(f"{BOLD}[2] Balanced{RESET}")
-    print("    - Balance speed, memory headroom, and response quality.")
+    print("    - Balanced embedding preset (dense + sparse hybrid).")
     print(f"{BOLD}[3] Quality{RESET}")
-    print("    - Prefer model quality and context length within safe hardware limits.")
+    print("    - Highest-quality embedding preset.")
     selected = input("Select an option (default: 2): ").strip()
     return {"1": "speed", "2": "balanced", "3": "quality"}.get(
         selected or "2",
@@ -491,7 +497,14 @@ def remove_llm_runtime_cli(assume_yes=False):
     print(f"{GREEN}• LLM runtime removal complete.{RESET}")
 
 
-STATUS_SERVICES = ["db", "redis", "app", "nginx", *ALL_WORKER_SERVICES]
+STATUS_SERVICES = [
+    "db",
+    "redis",
+    "app",
+    "nginx",
+    *DOCUMENT_QUEUE_SERVICES,
+    *ALL_WORKER_SERVICES,
+]
 STATUS_PUBLISHED_PORTS = {"local_http": 8000, "external_http": 80, "external_https": 443}
 
 
@@ -659,7 +672,7 @@ def handle_server_status_cli(json_output=False, skip_file_io=False, scope="produ
 def _saved_operation_mode():
     env_settings = read_env_file(ENV_FILE)
     configured_mode = env_settings.get("DOTORI_OPERATION_MODE", "").strip().lower()
-    mode_aliases = {"rag": "1", "search": "2", "basic": "3"}
+    mode_aliases = {"rag": "1", "search": "2", "basic": "3", "extract": "4"}
     if configured_mode in mode_aliases:
         return mode_aliases[configured_mode]
 
@@ -672,6 +685,41 @@ def _saved_operation_mode():
     # query-understanding feature, so it can't be used to infer the mode here;
     # fall back to whether an embedding model was configured at all.
     return "2" if env_settings.get("EMBEDDING_MODEL") else "3"
+
+
+def _restore_capability_payload(path, payload):
+    if payload is None:
+        path.unlink(missing_ok=True)
+        return
+    temporary = path.with_suffix(f"{path.suffix}.rollback.tmp")
+    temporary.write_bytes(payload)
+    os.replace(temporary, path)
+
+
+def _deployment_services(plan):
+    if not plan:
+        return []
+    services = list(plan.get("core_services") or [])
+    services.extend(
+        worker.get("compose_service")
+        for worker in plan.get("workers", [])
+        if worker.get("enabled") and worker.get("compose_service")
+    )
+    return list(dict.fromkeys(services))
+
+
+def _restore_previous_deployment(previous_plan, capability_path, capability_payload):
+    _restore_capability_payload(capability_path, capability_payload)
+    previous_services = _deployment_services(previous_plan)
+    if not previous_services:
+        return True, ""
+    rollback_command = compose_up_command(
+        COMPOSE_COMMAND,
+        previous_services,
+        build_images=False,
+    )
+    restored, _stdout, restore_error = run_command(rollback_command)
+    return restored, restore_error
 
 
 def run_services(
@@ -691,9 +739,39 @@ def run_services(
 
     manager = RuntimeLifecycleManager()
 
+    previous_plan = read_deployment_plan("production")
     initial_plan = build_deployment_plan(mode, scope="production")
+    capability_path = capability_config_path()
+    previous_capability_payload = (
+        capability_path.read_bytes() if capability_path.exists() else None
+    )
+    write_capability_config(initial_plan.enabled_capabilities, path=capability_path)
     services = list(initial_plan.enabled_services)
     if initial_plan.disabled_worker_services:
+        drain_timeout = max(
+            1,
+            int(os.getenv("DOTORI_CAPABILITY_DRAIN_TIMEOUT_SECONDS", "1800")),
+        )
+        drained, _stdout, drain_error = run_command(
+            f"{COMPOSE_COMMAND} exec -T app python manage.py "
+            f"wait_for_document_processing --timeout {drain_timeout}"
+        )
+        if not drained:
+            restored, restore_error = _restore_previous_deployment(
+                previous_plan,
+                capability_path,
+                previous_capability_payload,
+            )
+            print(
+                f"{RED}[ERROR] Document processing could not be drained; "
+                f"the deployment transition was canceled: {drain_error}{RESET}"
+            )
+            if not restored:
+                print(
+                    f"{RED}[ERROR] Previous deployment services could not be "
+                    f"restored: {restore_error}{RESET}"
+                )
+            return False
         run_command(
             f"{COMPOSE_COMMAND} stop "
             + " ".join(initial_plan.disabled_worker_services)
@@ -718,7 +796,7 @@ def run_services(
 
     if process.returncode == 0:
         runtime_ready = False
-        if initialize_llm:
+        if initialize_llm and initial_plan.mode == "rag":
             runtime_ready = initialize_llm_runtime_config(
                 mode, priority_mode=rag_priority
             )
@@ -793,6 +871,16 @@ def run_services(
         print(f"• {BOLD}To pause the services, run:{RESET} {YELLOW}python install.py --stop{RESET}")
         return True
     else:
+        restored, restore_error = _restore_previous_deployment(
+            previous_plan,
+            capability_path,
+            previous_capability_payload,
+        )
+        if not restored:
+            print(
+                f"{RED}[ERROR] Previous deployment services could not be restored: "
+                f"{restore_error}{RESET}"
+            )
         if build_images:
             detail = "Verify that Docker Desktop is running and review the build output."
         else:
@@ -1534,6 +1622,9 @@ def main():
     print()
     print(f"{BOLD}[3] Basic Mode{RESET}")
     print("    - Run file input and output features without AI services.")
+    print()
+    print(f"{BOLD}[4] Documents Extraction Mode{RESET}")
+    print("    - Parse and read documents without embeddings or answer generation.")
     print("-" * 60)
     
     mode = input("Select an option (default: 2): ").strip()
@@ -1546,6 +1637,7 @@ def main():
         "1": "rag",
         "2": "search",
         "3": "basic",
+        "4": "extract",
     }[mode]
 
     if mode in ("1", "2"):

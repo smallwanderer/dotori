@@ -11,7 +11,10 @@ from django.utils import timezone
 
 from config.enums import AIStatus
 from document_ai.models import DocumentChunk, DocumentParseResult
-from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+from document_ai.services.embedding_runtime_config import (
+    EmbeddingRuntimeConfigError,
+    get_active_embedding_runtime,
+)
 from document_ai.services.operation_metrics import _safe_error_summary
 from document_ai.services.server_policy import build_server_policy_payload
 
@@ -43,8 +46,18 @@ def _database_status() -> dict:
 
 
 def _processing_status() -> dict:
-    active_runtime = get_active_embedding_runtime()
-    active_generation_id = active_runtime.generation_id
+    from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
+    from document_ai.services.capability_admission import capability_enabled
+
+    try:
+        active_runtime = (
+            get_active_embedding_runtime()
+            if capability_enabled(DOCUMENT_SEMANTIC_SEARCH)
+            else None
+        )
+    except EmbeddingRuntimeConfigError:
+        active_runtime = None
+    active_generation_id = active_runtime.generation_id if active_runtime else ""
     parse_counts = _status_counts(DocumentParseResult.objects.all())
     embedding_counts = _status_counts(DocumentChunk.objects.all())
     stale_before = timezone.now() - timedelta(
@@ -56,17 +69,19 @@ def _processing_status() -> dict:
     embedding_stale = DocumentChunk.objects.filter(
         status__in=[AIStatus.PENDING, AIStatus.PROCESSING], updated_at__lt=stale_before
     ).count()
-    embedding_contract_mismatch = (
-        DocumentChunk.objects.filter(
-            status=AIStatus.COMPLETED,
+    embedding_contract_mismatch = 0
+    if active_runtime is not None:
+        embedding_contract_mismatch = (
+            DocumentChunk.objects.filter(
+                status=AIStatus.COMPLETED,
+            )
+            .exclude(parse_result__embedding_generation_id="")
+            .exclude(
+                parse_result__embedding_generation_id=active_generation_id,
+                parse_result__embedding_runtime_fingerprint=active_runtime.runtime_fingerprint,
+            )
+            .count()
         )
-        .exclude(parse_result__embedding_generation_id="")
-        .exclude(
-            parse_result__embedding_generation_id=active_generation_id,
-            parse_result__embedding_runtime_fingerprint=active_runtime.runtime_fingerprint,
-        )
-        .count()
-    )
 
     failures = []
     for row in DocumentParseResult.objects.filter(status=AIStatus.FAILED).select_related("node").order_by("-updated_at")[:5]:

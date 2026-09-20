@@ -7,22 +7,25 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from capabilities.config import LEGACY_DOCUMENT_CAPABILITIES, build_capability_config
+from capabilities.registry import DOCUMENT_EXTRACT
+
 if TYPE_CHECKING:
     from llm_installation.runtime_lifecycle import RuntimeSpec
 
 
 SCOPES = ("production",)
-MODES = ("rag", "search", "basic")
+MODES = ("rag", "search", "extract", "basic")
 NETWORK_ACCESS_MODES = ("local", "direct_https")
-CORE_SERVICES = ("db", "redis", "app")
+CORE_SERVICES = ("db", "redis", "app", "dotori-orchestrator")
 DOCUMENT_MODEL_SERVICE = "embedding-executor"
 DOCUMENT_QUEUE_SERVICES = ("dotori-orchestrator",)
 DOCUMENT_EXECUTOR_SERVICES = ("parser-executor", "embedding-executor")
 # Kept under the existing public name because install.py and saved deployment
 # tooling already import it. It represents every non-core Compose service that
 # must follow the document-processing lifecycle, including the model endpoint.
-ALL_WORKER_SERVICES = (*DOCUMENT_EXECUTOR_SERVICES, *DOCUMENT_QUEUE_SERVICES)
-DOCUMENT_RUNTIME_RESTART_SERVICES = ("app", *ALL_WORKER_SERVICES)
+ALL_WORKER_SERVICES = DOCUMENT_EXECUTOR_SERVICES
+DOCUMENT_RUNTIME_RESTART_SERVICES = ("app", *DOCUMENT_QUEUE_SERVICES, *ALL_WORKER_SERVICES)
 
 
 def worker_services_for_lifecycle(saved_plan: dict | None = None) -> tuple[str, ...]:
@@ -41,7 +44,7 @@ def worker_services_for_lifecycle(saved_plan: dict | None = None) -> tuple[str, 
             if worker.get("enabled")
             and worker.get("compose_service") in ALL_WORKER_SERVICES
         ]
-    return tuple(dict.fromkeys((*planned_services, *ALL_WORKER_SERVICES)))
+    return tuple(dict.fromkeys((*planned_services, *DOCUMENT_QUEUE_SERVICES, *ALL_WORKER_SERVICES)))
 
 
 def compose_up_command(
@@ -140,6 +143,8 @@ class DeploymentPlan:
     runtime: RuntimeSpec | None
     network_access: str
     generation_id: str
+    capability_revision: str
+    enabled_capabilities: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if self.scope not in SCOPES:
@@ -187,6 +192,8 @@ class DeploymentPlan:
             "runtime": runtime,
             "network_access": self.network_access,
             "generation_id": self.generation_id,
+            "capability_revision": self.capability_revision,
+            "enabled_capabilities": list(self.enabled_capabilities),
         }
 
 
@@ -195,6 +202,8 @@ def normalize_mode(mode: str) -> str:
         "1": "rag",
         "2": "search",
         "3": "basic",
+        "4": "extract",
+        "documents": "extract",
         "full": "rag",
         "full-rag": "rag",
     }
@@ -205,7 +214,8 @@ def normalize_mode(mode: str) -> str:
 
 
 def _worker_specs(mode: str, *, runtime_available: bool) -> tuple[WorkerSpec, ...]:
-    ai_enabled = mode in {"rag", "search"}
+    parser_enabled = mode in {"rag", "search", "extract"}
+    embedding_enabled = mode in {"rag", "search"}
     return (
         WorkerSpec(
             name="parser-executor",
@@ -213,7 +223,7 @@ def _worker_specs(mode: str, *, runtime_available: bool) -> tuple[WorkerSpec, ..
             queues=(),
             concurrency=1,
             prefetch_multiplier=1,
-            enabled=ai_enabled,
+            enabled=parser_enabled,
             requires_runtime=False,
             dependencies=("db", "redis"),
             health_strategy="http-readyz",
@@ -224,21 +234,10 @@ def _worker_specs(mode: str, *, runtime_available: bool) -> tuple[WorkerSpec, ..
             queues=(),
             concurrency=1,
             prefetch_multiplier=1,
-            enabled=ai_enabled,
+            enabled=embedding_enabled,
             requires_runtime=False,
             dependencies=("db", "redis"),
             health_strategy="http-readyz",
-        ),
-        WorkerSpec(
-            name="orchestrator",
-            compose_service=DOCUMENT_QUEUE_SERVICES[0],
-            queues=("parse", "embed"),
-            concurrency=2,
-            prefetch_multiplier=1,
-            enabled=ai_enabled,
-            requires_runtime=False,
-            dependencies=("db", "redis", "parser-executor", DOCUMENT_MODEL_SERVICE),
-            health_strategy="celery-ping",
         ),
     )
 
@@ -256,6 +255,13 @@ def build_deployment_plan(
     network_access: str = "local",
 ) -> DeploymentPlan:
     normalized_mode = normalize_mode(mode)
+    if normalized_mode in {"rag", "search"}:
+        enabled_capabilities = LEGACY_DOCUMENT_CAPABILITIES
+    elif normalized_mode == "extract":
+        enabled_capabilities = (DOCUMENT_EXTRACT,)
+    else:
+        enabled_capabilities = ()
+    capabilities = build_capability_config(enabled_capabilities)
     workers = _worker_specs(normalized_mode, runtime_available=runtime is not None)
     unsigned = {
         "scope": scope,
@@ -264,6 +270,8 @@ def build_deployment_plan(
         "workers": [worker.as_dict() for worker in workers],
         "runtime_generation": runtime.generation_id if runtime else None,
         "network_access": network_access,
+        "capability_revision": capabilities.revision,
+        "enabled_capabilities": capabilities.enabled_capabilities,
     }
     return DeploymentPlan(
         scope=scope,
@@ -273,6 +281,8 @@ def build_deployment_plan(
         runtime=runtime,
         network_access=network_access,
         generation_id=_generation_id(unsigned),
+        capability_revision=capabilities.revision,
+        enabled_capabilities=capabilities.enabled_capabilities,
     )
 
 

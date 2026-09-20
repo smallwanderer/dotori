@@ -31,16 +31,28 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     poppler-utils; \
     fi
 
-COPY app/requirements.web.txt app/requirements.ai.txt app/requirements.torch.txt app/requirements.parser-docling.txt app/requirements.test.txt app/requirements.txt ./
+# Each requirements group is copied and installed in its own layer. Production
+# parser and embedding executors select only their own group; the test image
+# installs both groups.
+COPY app/requirements.web.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    pip install -r requirements.web.txt \
-    && if [ "$INSTALL_AI_DEPS" = "1" ]; then \
+    pip install -r requirements.web.txt
+
+COPY app/requirements.torch.txt app/requirements.ai.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    if [ "$INSTALL_AI_DEPS" = "1" ]; then \
     pip install -r requirements.ai.txt; \
-    fi \
-    && if [ "$INSTALL_PARSER_DOCLING" = "1" ]; then \
+    fi
+
+COPY app/requirements.parser-docling.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    if [ "$INSTALL_PARSER_DOCLING" = "1" ]; then \
     pip install -r requirements.parser-docling.txt; \
-    fi \
-    && if [ "$INSTALL_TEST_DEPS" = "1" ]; then \
+    fi
+
+COPY app/requirements.test.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    if [ "$INSTALL_TEST_DEPS" = "1" ]; then \
     pip install -r requirements.test.txt; \
     fi
 

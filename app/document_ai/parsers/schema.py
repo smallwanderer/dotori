@@ -19,7 +19,7 @@ class ChunkPayload(BaseModel):
     """단일 청크. 어떤 backend가 만들었든 이 모양이어야 한다."""
     chunk_index: int
     serialized_text: str
-    tokens: int
+    tokens: Optional[int] = None
     meta: Optional[Dict[str, Any]] = None
 
 

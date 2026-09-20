@@ -127,12 +127,42 @@ class Node(models.Model):
         if not self.is_file:
             return None
 
+        from capabilities.registry import DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH
+        from document_ai.services.capability_admission import capability_enabled
+
+        extract_enabled = capability_enabled(DOCUMENT_EXTRACT)
+        semantic_search_enabled = capability_enabled(DOCUMENT_SEMANTIC_SEARCH)
+        if not hasattr(self, "parse_result") and not extract_enabled:
+            return {
+                "processing_available": False,
+                "reason_code": "CAPABILITY_DISABLED",
+                "parse_status": "unavailable",
+                "parse_label": "Document extraction is disabled on this server",
+                "embedding_status": "unavailable",
+                "embedding_label": "Semantic search is disabled on this server",
+                "embedding_completed": False,
+                "chunk_count": 0,
+                "completed_chunks": 0,
+                "processing_chunks": 0,
+                "pending_chunks": 0,
+                "failed_chunks": 0,
+                "embedding_backend": None,
+                "embedding_contract_status": "unavailable",
+                "active_embedding_generation_id": "",
+                "active_embedding_runtime_fingerprint": "",
+                "embedded_generation_ids": [],
+                "reembedding_required": False,
+                "searchable": False,
+            }
+
         from document_ai.services.embedding_runtime_config import (
             EmbeddingRuntimeConfigError,
             get_active_embedding_runtime,
         )
 
         try:
+            if not semantic_search_enabled:
+                raise EmbeddingRuntimeConfigError("Semantic search is disabled")
             active_runtime = get_active_embedding_runtime()
             active_generation_id = active_runtime.generation_id
             active_runtime_fingerprint = active_runtime.runtime_fingerprint
@@ -157,10 +187,12 @@ class Node(models.Model):
 
         if not hasattr(self, "parse_result"):
             return {
+                "processing_available": True,
+                "reason_code": "",
                 "parse_status": parse_status,
                 "parse_label": parse_label,
-                "embedding_status": embedding_status,
-                "embedding_label": embedding_label,
+                "embedding_status": embedding_status if semantic_search_enabled else "unavailable",
+                "embedding_label": embedding_label if semantic_search_enabled else "Semantic search is disabled on this server",
                 "embedding_completed": False,
                 "chunk_count": chunk_count,
                 "completed_chunks": completed_chunks,
@@ -168,7 +200,7 @@ class Node(models.Model):
                 "pending_chunks": pending_chunks,
                 "failed_chunks": failed_chunks,
                 "embedding_backend": embedding_backend,
-                "embedding_contract_status": embedding_contract_status,
+                "embedding_contract_status": embedding_contract_status if semantic_search_enabled else "unavailable",
                 "active_embedding_generation_id": active_generation_id,
                 "active_embedding_runtime_fingerprint": active_runtime_fingerprint,
                 "embedded_generation_ids": embedded_generation_ids,
@@ -189,12 +221,21 @@ class Node(models.Model):
         }
         parse_label = parse_label_map.get(parse_status, "Parsing queued")
 
-        if parse_status == AIStatus.FAILED:
+        chunking_strategy = (parse_result.metadata or {}).get("chunking_strategy", "")
+        if not semantic_search_enabled:
+            embedding_status = "unavailable"
+            embedding_label = "Semantic search is disabled on this server"
+            embedding_contract_status = "unavailable"
+        elif parse_status == AIStatus.FAILED:
             embedding_status = AIStatus.FAILED
             embedding_label = "Embedding unavailable because parsing failed"
         elif parse_status in {AIStatus.PENDING, AIStatus.PROCESSING}:
             embedding_status = AIStatus.PENDING
             embedding_label = "Waiting for parsing"
+        elif chunking_strategy == "hierarchical":
+            embedding_status = AIStatus.FAILED
+            embedding_label = "Document must be reprocessed for semantic search"
+            embedding_contract_status = "stale_contract"
         else:
             prefetched_chunks = getattr(parse_result, "_prefetched_objects_cache", {}).get("chunks")
             if prefetched_chunks is not None:
@@ -267,6 +308,8 @@ class Node(models.Model):
                 embedding_contract_status = "missing"
 
         return {
+            "processing_available": True,
+            "reason_code": "",
             "parse_status": parse_status,
             "parse_label": parse_label,
             "embedding_status": embedding_status,
@@ -284,6 +327,7 @@ class Node(models.Model):
             "embedded_generation_ids": embedded_generation_ids,
             "reembedding_required": embedding_contract_status
             in {"stale_contract", "failed", "missing"}
+            and semantic_search_enabled
             and parse_status == AIStatus.COMPLETED
             and chunk_count > 0,
             "searchable": embedding_contract_status == "current",

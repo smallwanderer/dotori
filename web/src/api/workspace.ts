@@ -55,6 +55,8 @@ export interface WorkspaceApi {
 }
 
 interface ApiAiStatus {
+  processing_available?: boolean
+  reason_code?: string
   parse_status?: string
   parse_label?: string
   embedding_status?: string
@@ -239,6 +241,8 @@ function formatDate(value: string): string {
 function mapAiStatus(raw?: ApiAiStatus | null): DocumentAiStatus | null {
   if (!raw) return null
   return {
+    processingAvailable: raw.processing_available !== false,
+    reasonCode: raw.reason_code ?? '',
     parseStatus: raw.parse_status ?? 'pending',
     parseLabel: raw.parse_label ?? '',
     embeddingStatus: raw.embedding_status ?? 'pending',
@@ -258,9 +262,10 @@ function mapStatus(node: ApiNode): DocumentSummary['status'] {
   if (!node.ai_processing_enabled && node.node_type === 'file') return 'disabled'
   if (node.node_type === 'directory') return 'ready'
   const aiStatus = node.ai_status
+  if (aiStatus?.processing_available === false) return 'disabled'
   if (aiStatus?.embedding_contract_status === 'stale_contract') return 'stale'
   if (aiStatus?.parse_status === 'failed' || aiStatus?.embedding_status === 'failed') return 'failed'
-  if (aiStatus?.parse_status === 'completed' && aiStatus?.embedding_status === 'completed') return 'ready'
+  if (aiStatus?.parse_status === 'completed' && ['completed', 'unavailable'].includes(aiStatus?.embedding_status ?? '')) return 'ready'
   return 'processing'
 }
 

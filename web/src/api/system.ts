@@ -4,6 +4,15 @@ import type { SessionBootstrapResponse } from './types'
 
 interface ApiServerPolicyResponse {
   operation_mode: string
+  capabilities: Record<string, {
+    registered: boolean
+    installed: boolean
+    enabled: boolean
+    available: boolean
+    status: string
+    reason_code: string
+    contract_version: number
+  }>
   policy: {
     search_strategy: string
     search_top_k: number
@@ -42,6 +51,20 @@ export const systemApi = {
     const payload = await apiRequest<ApiServerPolicyResponse>('/api/document-ai/v1/server-policy/')
     return {
       operationMode: payload.operation_mode,
+      capabilities: Object.fromEntries(
+        Object.entries(payload.capabilities ?? {}).map(([capabilityId, capability]) => [
+          capabilityId,
+          {
+            registered: capability.registered,
+            installed: capability.installed,
+            enabled: capability.enabled,
+            available: capability.available,
+            status: capability.status,
+            reasonCode: capability.reason_code,
+            contractVersion: capability.contract_version,
+          },
+        ]),
+      ),
       policy: {
         searchStrategy: payload.policy.search_strategy,
         searchTopK: payload.policy.search_top_k,

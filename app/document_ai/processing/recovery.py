@@ -52,6 +52,8 @@ def recovery_cutoff():
 
 
 def get_parse_recovery_node_ids(limit: int) -> list[int]:
+    from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
+    from document_ai.services.capability_admission import capability_enabled
     from files.models import Node
 
     cutoff = recovery_cutoff()
@@ -85,6 +87,9 @@ def get_parse_recovery_node_ids(limit: int) -> list[int]:
         .order_by("id")
         .values_list("id", flat=True)
     )
+    completed_result_filter = Q(actual_chunk_rows__lt=F("chunk_count"))
+    if capability_enabled(DOCUMENT_SEMANTIC_SEARCH):
+        completed_result_filter |= Q(metadata__chunking_strategy="hierarchical")
     chunk_gap_ids = (
         DocumentParseResult.objects.filter(
             node__trashed=False,
@@ -94,7 +99,7 @@ def get_parse_recovery_node_ids(limit: int) -> list[int]:
             recovery_attempts__lt=max_attempts,
         )
         .annotate(actual_chunk_rows=Count("chunks", distinct=True))
-        .filter(actual_chunk_rows__lt=F("chunk_count"))
+        .filter(completed_result_filter)
         .values_list("node_id", flat=True)
     )
     node_ids.update(chunk_gap_ids)
@@ -115,6 +120,10 @@ def get_embedding_recovery_chunk_ids(limit: int) -> list[int]:
             parse_result__node__ai_processing_enabled=True,
             parse_result__status=AIStatus.COMPLETED,
             recovery_attempts__lt=max_attempts,
+        )
+        .filter(
+            Q(parse_result__metadata__chunking_strategy="hybrid")
+            | ~Q(parse_result__metadata__has_key="chunking_strategy")
         )
         .filter(
             Q(status=AIStatus.PENDING, updated_at__lte=cutoff)
@@ -185,6 +194,11 @@ def release_recovery_lock(redis_client, key: str) -> None:
 
 
 def recover_document_pipeline_backlog_sync() -> dict:
+    from capabilities.registry import DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH
+    from document_ai.services.capability_admission import capability_enabled
+
+    extract_enabled = capability_enabled(DOCUMENT_EXTRACT)
+    semantic_search_enabled = capability_enabled(DOCUMENT_SEMANTIC_SEARCH)
     parse_limit = get_recovery_parse_batch_size()
     embed_limit = get_recovery_embedding_batch_size()
     stale_minutes = get_recovery_stale_minutes()
@@ -198,7 +212,7 @@ def recover_document_pipeline_backlog_sync() -> dict:
         )
         redis = None
 
-    parse_node_ids = get_parse_recovery_node_ids(parse_limit)
+    parse_node_ids = get_parse_recovery_node_ids(parse_limit) if extract_enabled else []
     recovered_parse_count = 0
     skipped_parse_count = 0
     failed_parse_publish_count = 0
@@ -232,7 +246,11 @@ def recover_document_pipeline_backlog_sync() -> dict:
             last_recovered_at=now,
         )
 
-    chunk_ids = get_embedding_recovery_chunk_ids(embed_limit)
+    chunk_ids = (
+        get_embedding_recovery_chunk_ids(embed_limit)
+        if semantic_search_enabled
+        else []
+    )
     reset_count = 0
     chunk_to_node = (
         dict(

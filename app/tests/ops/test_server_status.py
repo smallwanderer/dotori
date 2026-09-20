@@ -96,6 +96,7 @@ class FileIOPipelineCheckTests(TestCase):
     [
         ("rag", True),
         ("search", True),
+        ("extract", False),
         ("basic", False),
     ],
 )
@@ -104,7 +105,12 @@ def test_embedding_status_enabled_matches_operation_mode(
 ):
     monkeypatch.setenv("DOTORI_OPERATION_MODE", operation_mode)
 
-    status = _embedding_status()
+    with pytest.MonkeyPatch.context() as capability_patch:
+        capability_patch.setattr(
+            "document_ai.services.capability_admission.capability_enabled",
+            lambda _capability_id: expected_enabled,
+        )
+        status = _embedding_status()
 
     assert status["enabled"] is expected_enabled
     assert status["model"]

@@ -39,14 +39,21 @@ class DoclingParser:
         return docling_parser.parse_document_entry(file_path)
 
     def healthcheck(self) -> dict:
-        from document_ai.parsers.config import get_hf_tokenizer, get_parser_tokenizer_id
+        from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
+        from document_ai.parsers.config import get_converter, get_hf_tokenizer, get_parser_tokenizer_id
+        from document_ai.services.capability_admission import capability_enabled
 
         try:
-            get_hf_tokenizer()
+            get_converter()
+            if capability_enabled(DOCUMENT_SEMANTIC_SEARCH):
+                get_hf_tokenizer()
         except Exception as exc:
             return {"backend": self.backend, "status": "error", "message": str(exc)}
-        return {
+        result = {
             "backend": self.backend,
             "status": "ok",
-            "tokenizer": get_parser_tokenizer_id(),
+            "chunking": "hybrid" if capability_enabled(DOCUMENT_SEMANTIC_SEARCH) else "hierarchical",
         }
+        if capability_enabled(DOCUMENT_SEMANTIC_SEARCH):
+            result["tokenizer"] = get_parser_tokenizer_id()
+        return result

@@ -273,6 +273,72 @@ class FileAIStatusTests(TestCase):
         self.assertEqual(ai_status["processing_chunks"], 1)
         self.assertEqual(status_display, "Ready (Embedding in progress)")
 
+    def test_unprocessed_file_is_not_reported_pending_when_documents_disabled(self):
+        with patch(
+            "document_ai.services.capability_admission.capability_enabled",
+            return_value=False,
+        ):
+            status = self.file_node.get_ai_status()
+            status_display = self.file_node.get_status_display
+
+        self.assertFalse(status["processing_available"])
+        self.assertEqual(status["reason_code"], "CAPABILITY_DISABLED")
+        self.assertEqual(status["parse_status"], "unavailable")
+        self.assertEqual(status_display, "Ready")
+
+    def test_extract_only_reports_parse_ready_and_semantic_search_unavailable(self):
+        from capabilities.registry import DOCUMENT_EXTRACT
+
+        parse_result = DocumentParseResult.objects.create(
+            node=self.file_node,
+            status=AIStatus.COMPLETED,
+            chunk_count=1,
+            metadata={"chunking_strategy": "hierarchical"},
+        )
+        DocumentChunk.objects.create(
+            parse_result=parse_result,
+            chunk_index=0,
+            text="extracted text",
+            status=AIStatus.PENDING,
+        )
+
+        with patch(
+            "document_ai.services.capability_admission.capability_enabled",
+            side_effect=lambda capability_id: capability_id == DOCUMENT_EXTRACT,
+        ):
+            status = self.file_node.get_ai_status()
+
+        self.assertTrue(status["processing_available"])
+        self.assertEqual(status["parse_status"], AIStatus.COMPLETED)
+        self.assertEqual(status["embedding_status"], "unavailable")
+        self.assertEqual(status["embedding_contract_status"], "unavailable")
+        self.assertFalse(status["reembedding_required"])
+        self.assertFalse(status["searchable"])
+
+    def test_hierarchical_extract_requires_reparse_when_semantic_search_is_enabled(self):
+        parse_result = DocumentParseResult.objects.create(
+            node=self.file_node,
+            status=AIStatus.COMPLETED,
+            chunk_count=1,
+            metadata={"chunking_strategy": "hierarchical"},
+        )
+        DocumentChunk.objects.create(
+            parse_result=parse_result,
+            chunk_index=0,
+            text="extracted text",
+            status=AIStatus.PENDING,
+        )
+
+        with patch(
+            "document_ai.services.embedding_runtime_config.get_active_embedding_runtime",
+            side_effect=active_embedding_runtime,
+        ):
+            status = self.file_node.get_ai_status()
+
+        self.assertEqual(status["embedding_status"], AIStatus.FAILED)
+        self.assertEqual(status["embedding_contract_status"], "stale_contract")
+        self.assertTrue(status["reembedding_required"])
+
     def test_to_dict_exposes_embedding_completion_summary(self):
         parse_result = DocumentParseResult.objects.create(
             node=self.file_node,
@@ -440,6 +506,18 @@ class SyncApiUploadTests(TestCase):
         self.assertEqual(response.status_code, 200)
         node = Node.objects.get(uid=response.json()["node_uid"])
         self.assertFalse(node.ai_processing_enabled)
+        delay.assert_not_called()
+
+    def test_sync_upload_succeeds_without_publishing_when_documents_disabled(self):
+        upload = SimpleUploadedFile("core-only.txt", b"core", content_type="text/plain")
+
+        with patch("document_ai.signals.capability_enabled", return_value=False), patch(
+            "document_ai.signals.enqueue_parse"
+        ) as delay:
+            response = self.post_upload(upload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(Node.objects.filter(uid=response.json()["node_uid"]).exists())
         delay.assert_not_called()
 
     def test_sync_update_preserves_existing_ai_setting_when_omitted(self):
@@ -832,6 +910,19 @@ class FileBulkApiTests(TestCase):
             TEST_ACTIVE_GENERATION_ID,
         )
 
+    def test_operation_status_supports_core_only_without_embedding_config(self):
+        from document_ai.services.embedding_runtime_config import EmbeddingRuntimeConfigError
+        from document_ai.services.operation_status import _processing_status
+
+        with patch(
+            "document_ai.services.operation_status.get_active_embedding_runtime",
+            side_effect=EmbeddingRuntimeConfigError("not configured"),
+        ):
+            status = _processing_status()
+
+        self.assertEqual(status["embedding"]["active_generation_id"], "")
+        self.assertEqual(status["embedding"]["contract_mismatch_count"], 0)
+
     def test_rag_scope_nodes_returns_files_and_folders(self):
         file_node = self.create_file_with_blob("scope-doc.txt")
         folder = Node.objects.create(
@@ -879,6 +970,57 @@ class FileBulkApiTests(TestCase):
         self.file_node.parse_result.refresh_from_db()
         self.assertEqual(self.file_node.parse_result.status, AIStatus.PENDING)
 
+    def test_retry_ai_processing_reports_disabled_capability(self):
+        from document_ai.services.capability_admission import CapabilityAdmissionError
+
+        DocumentParseResult.objects.create(
+            node=self.file_node,
+            status=AIStatus.FAILED,
+            errors=[{"message": "parse failed"}],
+        )
+        error = CapabilityAdmissionError(
+            "documents.extract",
+            "CAPABILITY_DISABLED",
+            "Capability documents.extract is disabled on this server",
+        )
+
+        with patch("files.api_v1.file_views.require_capability", side_effect=error), patch(
+            "files.api_v1.file_views.enqueue_parse"
+        ) as enqueue:
+            response = self.post_json(f"/files/api/v1/{self.file_node.uid}/ai/retry/", {})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "CAPABILITY_DISABLED")
+        enqueue.assert_not_called()
+        self.file_node.parse_result.refresh_from_db()
+        self.assertEqual(self.file_node.parse_result.status, AIStatus.FAILED)
+
+    def test_retry_ai_processing_reports_unavailable_capability(self):
+        from document_ai.services.capability_admission import CapabilityAdmissionError
+
+        DocumentParseResult.objects.create(
+            node=self.file_node,
+            status=AIStatus.FAILED,
+            errors=[{"message": "parse failed"}],
+        )
+        error = CapabilityAdmissionError(
+            "documents.extract",
+            "CAPABILITY_UNAVAILABLE",
+            "Capability documents.extract is temporarily unavailable",
+            retryable=True,
+        )
+
+        with patch("files.api_v1.file_views.require_capability", side_effect=error), patch(
+            "files.api_v1.file_views.enqueue_parse"
+        ) as enqueue:
+            response = self.post_json(f"/files/api/v1/{self.file_node.uid}/ai/retry/", {})
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "CAPABILITY_UNAVAILABLE")
+        enqueue.assert_not_called()
+        self.file_node.parse_result.refresh_from_db()
+        self.assertEqual(self.file_node.parse_result.status, AIStatus.FAILED)
+
     @patch("files.api_v1.file_views.enqueue_embedding")
     def test_retry_ai_processing_requeues_failed_embedding(self, delay_mock):
         parse_result = DocumentParseResult.objects.create(
@@ -902,3 +1044,28 @@ class FileBulkApiTests(TestCase):
         chunk.refresh_from_db()
         self.assertEqual(chunk.status, AIStatus.PENDING)
         self.assertEqual(chunk.error_message, {})
+
+    @patch("files.api_v1.file_views.enqueue_embedding")
+    @patch("files.api_v1.file_views.enqueue_parse")
+    def test_retry_hierarchical_extract_requeues_parse(self, parse_mock, embedding_mock):
+        parse_result = DocumentParseResult.objects.create(
+            node=self.file_node,
+            status=AIStatus.COMPLETED,
+            chunk_count=1,
+            metadata={"chunking_strategy": "hierarchical"},
+        )
+        DocumentChunk.objects.create(
+            parse_result=parse_result,
+            chunk_index=0,
+            text="extract-only chunk",
+            status=AIStatus.PENDING,
+        )
+
+        response = self.post_json(f"/files/api/v1/{self.file_node.uid}/ai/retry/", {})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["action"], "parse_requeued")
+        parse_mock.assert_called_once()
+        embedding_mock.assert_not_called()
+        parse_result.refresh_from_db()
+        self.assertEqual(parse_result.status, AIStatus.PENDING)

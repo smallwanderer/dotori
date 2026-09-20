@@ -2,7 +2,7 @@
 
 이 가이드를 따라 하면 카탈로그에 없는 임베딩 모델을 등록해서 `install.py` 마법사의 선택지에 나타나게 만들 수 있습니다. 등록을 마치면 그 모델을 고르는 순간 필요한 값이 자동으로 채워집니다.
 
-이미 카탈로그에 있는 모델로 바꾸거나 외부 엔드포인트를 연결하려면 [임베딩 런타임 가이드](./embedding-guide.md)를 참고하세요. 외부 엔드포인트는 카탈로그 등록 없이 연결할 수 있습니다.
+이미 카탈로그에 있는 모델로 바꾸거나 외부 엔드포인트를 연결하려면 [임베딩 런타임 가이드](../operate/embedding-guide.md)를 참고하세요. 외부 엔드포인트는 카탈로그 등록 없이 연결할 수 있습니다.
 
 ---
 
@@ -213,7 +213,7 @@ openai-text-embedding-3-small: model=openai/text-embedding-3-small@main000 provi
 python install.py --change-embedding --catalog-id <프로필 id>
 ```
 
-이후 절차는 [임베딩 런타임 가이드](./embedding-guide.md)를 참고하세요.
+이후 절차는 [임베딩 런타임 가이드](../operate/embedding-guide.md)를 참고하세요.
 
 ### 참고: 선택 시 자동으로 결정되는 값
 
@@ -262,7 +262,7 @@ docker compose exec app python manage.py sync_memory_reservations --scope produc
 CHUNK_MAX_TOKENS = EMBEDDING_MAX_TOKENS - EMBEDDING_TOKEN_HEADROOM
 ```
 
-기본값은 `1280 - 128 = 1152`입니다. 값 조정은 [운영 가이드](./operation-guide.md)를 참고하세요.
+기본값은 `1280 - 128 = 1152`입니다. 값 조정은 [운영 가이드](../operate/operation-guide.md)를 참고하세요.
 
 ### 참고: 생성되는 산출물
 
@@ -303,7 +303,7 @@ docker compose exec app python manage.py inspect_embedding_runtime --scope produ
 
 ## 더 보기
 
-- [임베딩 런타임 가이드](./embedding-guide.md) — 등록된 모델로 전환하기, 외부 엔드포인트 연결
+- [임베딩 런타임 가이드](../operate/embedding-guide.md) — 등록된 모델로 전환하기, 외부 엔드포인트 연결
 - [LLM 설치 가이드](./llm-installation-guide.md) — 로컬 LLM 선택과 설치
-- [운영 가이드](./operation-guide.md) — 임베딩 동시성과 타임아웃 조정
+- [운영 가이드](../operate/operation-guide.md) — 임베딩 동시성과 타임아웃 조정
 - [설치 가이드](./installation-guide.md) — 서버 설치와 운영 모드

@@ -2,7 +2,7 @@
 
 이 가이드를 따라 하면 Dotori의 RAG(검색 증강 생성) 기능이 사용할 로컬 LLM을 설정하고, 나중에 모델을 바꾸거나 상태를 확인할 수 있습니다.
 
-Dotori는 하드웨어를 자동으로 진단해 맞는 모델과 실행 파라미터를 고릅니다. 운영자가 직접 고르는 것은 우선순위(speed / balanced / quality) 하나뿐이며, 컨텍스트 길이·동시 처리 수·배치 크기·양자화 방식은 모두 자동으로 결정됩니다.
+Dotori는 하드웨어를 자동으로 진단해 맞는 모델과 실행 파라미터를 고릅니다. 운영자가 직접 고르는 것은 자동/수동 중 모델 선택 방식뿐이며, 어떤 모델을 자동 추천할지(속도·모델 크기 기준 순위)와 컨텍스트 길이·동시 처리 수·배치 크기·양자화 방식은 모두 하드웨어를 기준으로 시스템이 자동으로 결정합니다.
 
 지원 런타임은 두 가지이며, 동시에 띄우지 않습니다. 선택한 엔진에 맞춰 단일 컨테이너(`dotori-llm`)의 이미지와 실행 인자가 교체됩니다.
 
@@ -82,11 +82,8 @@ docker compose exec app python manage.py llm_model_catalog list --json-output
 서버 하드웨어에 맞는 최적 모델과 파라미터를 자동으로 선택하고 저장합니다.
 
 ```bash
-# balanced 우선순위로 자동 선택 후 저장
+# 자동 선택 후 저장
 docker compose exec app python manage.py detect_llm_runtime --write
-
-# 우선순위 지정
-docker compose exec app python manage.py detect_llm_runtime --write --priority speed
 
 # 저장하지 않고 미리보기만 (dry-run)
 docker compose exec app python manage.py detect_llm_runtime
@@ -94,17 +91,14 @@ docker compose exec app python manage.py detect_llm_runtime
 
 > `--write` 없이 실행하면 어떤 모델이 선택될지 미리 볼 수 있습니다. 실제 저장은 되지 않습니다.
 
-우선순위는 모델 선택과 실행 파라미터에 함께 반영됩니다.
+자동 선택은 하드웨어에 맞는(`FIT`/`RISKY`) 모델 중 예상 처리 속도(TPS)와 파라미터 수를 함께 고려한 순위(RRF)로 최상위 모델을 고릅니다. `speed`/`balanced`/`quality` 같은 우선순위 구분은 더 이상 이 순위나 컨텍스트 길이·동시 처리 수·배치 크기·양자화 방식에 영향을 주지 않습니다 — 모두 하드웨어를 기준으로 한 고정 로직으로 정해집니다.
 
-| 우선순위 | 선택 기준 | 주요 효과 |
-|---------|-----------|----------|
-| `speed` | 개별 응답 지연 우선 | 컨텍스트 감소, 엄격한 latency 기준 |
-| `balanced` | 속도/품질/메모리 균형 (기본값) | 중간 컨텍스트, 처리량과 latency 균형 |
-| `quality` | 답변 품질 최우선 | 컨텍스트 최대화, 더 큰 모델과 메모리 여유 우선 |
+```bash
+# 비대화형 명령은 --priority를 여전히 받지만, 저장되는 값(감사용 라벨)만 남기고 어떤 모델이 선택되는지는 바꾸지 않습니다
+docker compose exec app python manage.py detect_llm_runtime --write --priority speed
+```
 
-> 처음 설치라면 `balanced`를 권장합니다. 하드웨어에 여유가 있는 경우에만 `quality`를 선택하세요.
-
-설치 시 우선순위에 따라 컨텍스트 길이와 메모리 안전 동시성 상한을 계산하지만, 실제 운용 동시성은 성능 calibration 전까지 `1`로 유지합니다.
+설치 시 계산되는 것은 메모리 안전 동시성 상한이며, 실제 운용 동시성은 성능 calibration 전까지 `1`로 유지합니다.
 
 ### Interactive 마법사
 
@@ -112,7 +106,7 @@ docker compose exec app python manage.py detect_llm_runtime
 docker compose exec app python manage.py detect_llm_runtime --interactive
 ```
 
-마법사는 4단계로 진행됩니다.
+마법사는 3단계로 진행됩니다. 이전에는 모델 순위를 정하기 전에 우선순위(speed/balanced/quality)를 먼저 물었지만, 순위가 우선순위와 무관한 고정 기준(RRF)으로 바뀌면서 이 질문은 사라졌습니다 — 하드웨어 진단 다음 바로 모델 선택으로 넘어갑니다.
 
 **Step 1 — 하드웨어 진단 출력**
 ```
@@ -121,23 +115,17 @@ RAM: Total 32768 MB, Available 24576 MB
 GPU: NVIDIA RTX 3080 (10240 MB VRAM, 8192 MB Free)
 ```
 
-**Step 2 — 운영 정책 선택**
-```
-1) Speed   2) Balanced   3) Quality
-Enter choice (1-3, default: 2):
-```
-
-**Step 3 — 모델 순위 및 선택**
+**Step 2 — 모델 선택**
 ```
 1) Automatic recommendation (default)
 2) Choose from the assessed model catalog
 ```
 
-자동을 선택하면 최상위 FIT 모델이 자동 선택됩니다. 수동을 선택하면 카탈로그 목록이 표시되고 번호로 직접 고를 수 있습니다.
+자동을 선택하면 예상 처리 속도(TPS)와 파라미터 수를 함께 반영한 순위(RRF)에서 최상위 FIT 모델이 자동 선택됩니다. 수동을 선택하면 같은 순위로 정렬된 카탈로그 목록이 표시되고 번호로 직접 고를 수 있습니다.
 
 > **RISKY** 모델을 수동 선택하면 확인 프롬프트가 나타납니다. `y`를 입력해야만 선택이 확정됩니다. 메모리 여유가 없을 수 있다는 의미입니다. 서버가 RAG 전용이고 다른 부하가 없다면 선택할 수 있지만, 일반 운영 서버라면 `FIT` 모델을 선택하는 것이 안전합니다.
 
-**Step 4 — 컨테이너 재시작 및 헬스체크**
+**Step 3 — 컨테이너 재시작 및 헬스체크**
 
 설정이 저장된 후 런타임 컨테이너를 자동으로 시작하고 30초간 헬스체크를 수행합니다.
 
@@ -188,7 +176,7 @@ priority_preset: balanced
 serving_profile: {'context_length': 8192, 'safe_concurrency_ceiling': 4, 'serving_concurrency': 1, 'calibration_status': 'pending', ...}
 ```
 
-`base_url`은 선택된 엔진과 무관하게 항상 같은 네트워크 별칭(`rag-runtime`)을 가리킵니다. `safe_concurrency_ceiling`은 선택한 우선순위와 메모리 계산으로 확인한 calibration 상한이고, `serving_concurrency`는 실제 runtime과 RAG admission에 적용되는 값이며 성능 calibration 전에는 안전한 기본값 `1`을 사용합니다.
+`base_url`은 선택된 엔진과 무관하게 항상 같은 네트워크 별칭(`rag-runtime`)을 가리킵니다. `safe_concurrency_ceiling`은 선택된 모델과 하드웨어의 메모리 여유만으로 계산한 calibration 상한이며(우선순위와 무관), `serving_concurrency`는 실제 runtime과 RAG admission에 적용되는 값이며 성능 calibration 전에는 안전한 기본값 `1`을 사용합니다.
 
 ### 현재 서버 상태와 함께 확인 (라이브 탐지)
 
@@ -277,4 +265,4 @@ Dotori는 런타임 컨테이너를 **하나만** 운영합니다. llama.cpp와 
 
 - [설치 가이드](./installation-guide.md) — 서버 설치와 운영 모드
 - [임베딩 설치 가이드](./embedding-installation-guide.md) — 임베딩 모델 등록
-- [운영 가이드](./operation-guide.md) — 서비스 시작/중지, 계정 관리
+- [운영 가이드](../operate/operation-guide.md) — 서비스 시작/중지, 계정 관리
