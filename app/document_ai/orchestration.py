@@ -14,16 +14,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
-from uuid import NAMESPACE_URL, uuid4, uuid5
-
-from django.utils import timezone
-
-from config.tracing import get_trace_id, new_trace_id
-from capabilities.registry import DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH
+from capabilities.work_dispatch import TASK_ENVELOPE_VERSION, TaskEnvelope, derive_job_id, publish_registered_work
+from capabilities.work_registry import WORK_REGISTRY, get_work_definition, require_registered_work
 from document_ai.services.environment import get_positive_int_env
 
 
-TASK_ENVELOPE_VERSION = 1
 logger = logging.getLogger(__name__)
 
 
@@ -40,96 +35,39 @@ class TaskRoute:
     queue: str
 
 
-@dataclass(frozen=True)
-class TaskEnvelope:
-    """Versioned identity carried by every task published by this facade."""
+TASK_ROUTES = MappingProxyType({
+    WorkKind(kind): TaskRoute(definition.task_name, definition.queue)
+    for kind, definition in WORK_REGISTRY.items()
+})
 
-    version: int
-    job_id: str
-    parent_job_id: str | None
-    trace_id: str
-    work_kind: str
-    enqueued_at: str
-
-    @classmethod
-    def create(
-        cls,
-        kind: WorkKind,
-        *,
-        job_id: str | None = None,
-        parent_job_id: str | None = None,
-        trace_id: str | None = None,
-        enqueued_at: str | None = None,
-    ) -> TaskEnvelope:
-        return cls(
-            version=TASK_ENVELOPE_VERSION,
-            job_id=job_id or str(uuid4()),
-            parent_job_id=parent_job_id,
-            trace_id=trace_id or get_trace_id() or new_trace_id(),
-            work_kind=kind.value,
-            enqueued_at=enqueued_at or timezone.now().isoformat(),
-        )
-
-    def as_task_kwargs(self) -> dict[str, Any]:
-        return {
-            "envelope_version": self.version,
-            "job_id": self.job_id,
-            "parent_job_id": self.parent_job_id,
-            "trace_id": self.trace_id,
-            "work_kind": self.work_kind,
-            "enqueued_at": self.enqueued_at,
-        }
-
-
-TASK_ROUTES = MappingProxyType(
-    {
-        WorkKind.PARSE_DOCUMENT: TaskRoute(
-            task_name="document_ai.tasks.parse_document_with_docling",
-            queue="parse",
-        ),
-        WorkKind.PLAN_DOCUMENT_EMBEDDING: TaskRoute(
-            task_name="document_ai.tasks.enqueue_embedding_tasks",
-            queue="embed",
-        ),
-        WorkKind.EMBED_DOCUMENT_BATCH: TaskRoute(
-            task_name="document_ai.tasks.embedding_document_batch_with_bge",
-            queue="embed",
-        ),
-        WorkKind.EVALUATE_RETRIEVAL: TaskRoute(
-            task_name="document_ai.tasks.run_quality_evaluation_task",
-            queue="embed",
-        ),
-    }
-)
-
-WORK_CAPABILITIES = MappingProxyType(
-    {
-        WorkKind.PARSE_DOCUMENT: DOCUMENT_EXTRACT,
-        WorkKind.PLAN_DOCUMENT_EMBEDDING: DOCUMENT_SEMANTIC_SEARCH,
-        WorkKind.EMBED_DOCUMENT_BATCH: DOCUMENT_SEMANTIC_SEARCH,
-        WorkKind.EVALUATE_RETRIEVAL: DOCUMENT_SEMANTIC_SEARCH,
-    }
-)
+WORK_CAPABILITIES = MappingProxyType({
+    WorkKind(kind): definition.capability_id
+    for kind, definition in WORK_REGISTRY.items()
+})
 
 
 def get_task_route(kind: WorkKind) -> TaskRoute:
-    return TASK_ROUTES[kind]
+    definition = get_work_definition(kind.value)
+    return TaskRoute(definition.task_name, definition.queue)
 
 
 def get_work_capability(kind: WorkKind) -> str:
-    return WORK_CAPABILITIES[kind]
+    return get_work_definition(kind.value).capability_id
 
 
-def derive_job_id(parent_job_id: str, kind: WorkKind, target: str) -> str:
-    """Return a stable child identity across parent-message redelivery."""
-
-    return str(uuid5(NAMESPACE_URL, f"dotori:{parent_job_id}:{kind.value}:{target}"))
+enqueue_registered_work = publish_registered_work
 
 
 def _dispatch(task, kind: WorkKind, *, args: list[Any], kwargs: dict[str, Any]):
-    from document_ai.services.capability_admission import require_capability
+    from document_ai.services.capability_admission import CapabilityAdmissionError, require_capability
 
     require_capability(get_work_capability(kind))
+    try:
+        require_registered_work(kind.value)
+    except ValueError as exc:
+        raise CapabilityAdmissionError(
+            get_work_capability(kind), "CAPABILITY_UNAVAILABLE", str(exc), retryable=True
+        ) from exc
     route = get_task_route(kind)
     envelope_keys = {
         "job_id",

@@ -14,6 +14,8 @@ from typing import Any
 import requests
 from django.conf import settings
 
+from capabilities.execution import executor_url
+from capabilities.work_registry import get_work_definition
 from document_ai.orchestration import WorkKind
 
 
@@ -28,9 +30,11 @@ class ExecutorDispatchError(RuntimeError):
 
 
 def _base_url(kind: WorkKind) -> str:
-    if kind is WorkKind.PARSE_DOCUMENT:
-        return os.getenv("PARSER_EXECUTOR_URL", "http://parser-executor:8002").rstrip("/")
-    return os.getenv("EMBEDDING_SERVICE_URL", "http://embedding-executor:8001").rstrip("/")
+    try:
+        role = get_work_definition(kind.value).execution_role
+    except (AttributeError, ValueError) as exc:
+        raise ValueError(f"Unknown executor work kind: {kind}") from exc
+    return executor_url(role)
 
 
 def _timeout_seconds() -> float:

@@ -6,6 +6,7 @@ import os
 import requests
 from django.conf import settings
 
+from capabilities.execution import executor_url
 from .base import EmbeddingBusyError, EmbeddingProviderSpec, EmbeddingResult
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ def _parse_retry_after(response) -> float:
 
 
 def _embedding_service_url() -> str:
-    return os.getenv("EMBEDDING_SERVICE_URL", "http://embedding-executor:8001")
+    return executor_url("embedding")
 
 
 def _embedding_service_timeout() -> float:

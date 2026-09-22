@@ -194,8 +194,11 @@ def release_recovery_lock(redis_client, key: str) -> None:
 
 
 def recover_document_pipeline_backlog_sync() -> dict:
+    from capabilities.input_resolver import InputResolutionError
     from capabilities.registry import DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH
     from document_ai.services.capability_admission import capability_enabled
+    from document_ai.processing.input_routing import resolve_blob_work
+    from files.models import FileBlob
 
     extract_enabled = capability_enabled(DOCUMENT_EXTRACT)
     semantic_search_enabled = capability_enabled(DOCUMENT_SEMANTIC_SEARCH)
@@ -218,6 +221,14 @@ def recover_document_pipeline_backlog_sync() -> dict:
     failed_parse_publish_count = 0
     queued_parse_node_ids = []
     for node_id in parse_node_ids:
+        blob = FileBlob.objects.filter(node_id=node_id).first()
+        try:
+            if blob is None or not resolve_blob_work(blob, (DOCUMENT_EXTRACT,)):
+                skipped_parse_count += 1
+                continue
+        except InputResolutionError:
+            skipped_parse_count += 1
+            continue
         if node_has_active_execution(node_id):
             skipped_parse_count += 1
             continue

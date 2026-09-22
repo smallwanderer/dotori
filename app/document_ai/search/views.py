@@ -30,6 +30,7 @@ from document_ai.search.profiles import (
 )
 from document_ai.parsers.text_utils import normalize_extracted_text
 from document_ai.services.llm_endpoint_service import build_rag_llm_snapshot
+from document_ai.services.capability_admission import CapabilityAdmissionError
 from document_ai.services.rag_admission import (
     acquire_rag_admission_token_async,
     rag_retry_after_seconds,
@@ -67,6 +68,20 @@ def _workspace_access_error(request):
     if getattr(request, "workspace", None) is None:
         return api_error_response("WORKSPACE_REQUIRED", "No active workspace.", status=403)
     return None
+
+
+def _capability_admission_error_response(exc: CapabilityAdmissionError):
+    response_status = (
+        503
+        if exc.code in {"CAPABILITY_UNAVAILABLE", "CAPABILITY_CONFIG_INVALID"}
+        else 409
+    )
+    return api_error_response(
+        exc.code,
+        str(exc),
+        status=response_status,
+        details={"retryable": exc.retryable},
+    )
 
 
 def _llm_runtime_unavailable_response(runtime_status: dict | None = None) -> JsonResponse:
@@ -216,6 +231,8 @@ class VectorSearchView(APIView):
                     "order_by": orm.get("order_by") or [],
                 },
             )
+        except CapabilityAdmissionError as exc:
+            return _capability_admission_error_response(exc)
         except EmbeddingBusyError as exc:
             response = api_error_response(
                 "EMBEDDING_BUSY",

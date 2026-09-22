@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from capabilities.config import LEGACY_DOCUMENT_CAPABILITIES, build_capability_config
+from capabilities.execution import EXECUTION_ROLES
+from capabilities.work_registry import WORK_REGISTRY
 from capabilities.registry import DOCUMENT_EXTRACT
 
 if TYPE_CHECKING:
@@ -194,6 +196,23 @@ class DeploymentPlan:
             "generation_id": self.generation_id,
             "capability_revision": self.capability_revision,
             "enabled_capabilities": list(self.enabled_capabilities),
+            "execution_roles": {
+                role: {
+                    "transport": spec.transport,
+                    "config_source": spec.config_source,
+                    "compose_service": spec.compose_service,
+                }
+                for role, spec in EXECUTION_ROLES.items()
+                if (
+                    (spec.compose_service and spec.compose_service in self.enabled_services)
+                    or (role == "llm" and self.runtime is not None)
+                )
+            },
+            "work_routes": {
+                kind: definition.deployment_entry()
+                for kind, definition in WORK_REGISTRY.items()
+                if definition.capability_id in self.enabled_capabilities
+            },
         }
 
 

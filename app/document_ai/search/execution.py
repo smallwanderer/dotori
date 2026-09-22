@@ -39,8 +39,11 @@ def search_documents_sync(
     orm_constraints: dict | None = None,
 ) -> tuple[list[dict], dict]:
     """Run retrieval in the request process without a Celery job boundary."""
+    from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
     from document_ai.search.retriever import VectorRetriever
+    from document_ai.services.capability_admission import require_capability
 
+    require_capability(DOCUMENT_SEMANTIC_SEARCH)
     started = perf_counter()
     metrics: dict = {}
     results = VectorRetriever().retrieve(

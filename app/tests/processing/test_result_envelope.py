@@ -72,6 +72,9 @@ class DocumentResultEnvelopeTests(TestCase):
         self.assertFalse(envelope["stale"])
         self.assertEqual(envelope["source"]["id"], str(self.node.uid))
         self.assertEqual(envelope["source"]["revision"], str(self.blob.uuid))
+        self.assertEqual(envelope["inputs"][0], envelope["source"])
+        self.assertEqual(envelope["derived_from"], [])
+        self.assertEqual(envelope["occurrences"], [])
         self.assertEqual(envelope["processing"]["fingerprint"], "parser-config-v1")
         self.assertEqual(
             envelope["payload"]["chunks"][0]["locator"],

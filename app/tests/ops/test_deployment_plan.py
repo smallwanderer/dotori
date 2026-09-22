@@ -77,6 +77,28 @@ def _runtime(tmp_path, scope="production"):
     )
 
 
+def test_deployment_json_records_only_active_execution_roles(tmp_path):
+    core = build_deployment_plan("basic").as_dict()
+    assert core["execution_roles"] == {}
+    assert core["work_routes"] == {}
+
+    extract = build_deployment_plan("extract").as_dict()
+    assert set(extract["execution_roles"]) == {"parser"}
+    assert set(extract["work_routes"]) == {"parse_document"}
+
+    search = build_deployment_plan("search").as_dict()
+    assert set(search["execution_roles"]) == {"parser", "embedding"}
+    assert set(search["work_routes"]) == {"parse_document", "plan_document_embedding", "embed_document_batch", "evaluate_retrieval"}
+
+    rag = build_deployment_plan("rag", runtime=_runtime(tmp_path)).as_dict()
+    assert set(rag["execution_roles"]) == {"parser", "embedding", "llm"}
+    assert rag["execution_roles"]["llm"] == {
+        "transport": "request_http",
+        "config_source": "llm_runtime.json",
+        "compose_service": None,
+    }
+
+
 @pytest.mark.parametrize(
     "mode,enabled,disabled",
     [

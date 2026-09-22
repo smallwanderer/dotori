@@ -6,6 +6,7 @@ from django.views.decorators.http import require_GET
 from rest_framework import permissions
 
 from accounts.cli_tokens import (
+    CLI_DOCUMENTS_READ_SCOPE,
     CLI_RAG_SCOPE,
     CLI_SEARCH_SCOPE,
     CLI_STATUS_SCOPE,
@@ -18,6 +19,13 @@ from accounts.cli_tokens import (
 )
 from accounts.client_identity import serialize_client_identity
 from document_ai.search.views import RAGStreamView, VectorSearchView
+from document_ai.services.result_access import (
+    ResultAccessError,
+    get_result,
+    list_results,
+    list_source_results,
+)
+from document_ai.services.server_policy import build_server_policy_payload
 from document_ai.status_views import server_policy
 
 
@@ -31,6 +39,73 @@ def cli_status(request):
 @require_GET
 def cli_identity(request):
     return JsonResponse(serialize_client_identity(request.cli_token))
+
+
+def _result_access_error(exc: ResultAccessError) -> JsonResponse:
+    return JsonResponse(
+        {
+            "ok": False,
+            "error": {"code": exc.code, "message": exc.message, "details": {}},
+        },
+        status=exc.status,
+    )
+
+
+@cli_token_required(CLI_STATUS_SCOPE)
+@require_GET
+def cli_capabilities(request):
+    policy = build_server_policy_payload()
+    return JsonResponse({"ok": True, "capabilities": policy["capabilities"]})
+
+
+@cli_token_required(CLI_DOCUMENTS_READ_SCOPE)
+@require_GET
+def cli_source_results(request, source_uid):
+    try:
+        results = list_source_results(
+            workspace=request.workspace,
+            membership=request.workspace_membership,
+            source_uid=source_uid,
+        )
+    except ResultAccessError as exc:
+        return _result_access_error(exc)
+    return JsonResponse(
+        {"ok": True, "source_uid": str(source_uid), "results": results}
+    )
+
+
+@cli_token_required(CLI_DOCUMENTS_READ_SCOPE)
+@require_GET
+def cli_results(request):
+    try:
+        limit = min(max(int(request.GET.get("limit", 50)), 1), 100)
+    except (TypeError, ValueError):
+        limit = 50
+    source_uid = request.GET.get("source_uid") or None
+    try:
+        results = list_results(
+            workspace=request.workspace,
+            membership=request.workspace_membership,
+            source_uid=source_uid,
+            limit=limit,
+        )
+    except ResultAccessError as exc:
+        return _result_access_error(exc)
+    return JsonResponse({"ok": True, "results": results, "limit": limit})
+
+
+@cli_token_required(CLI_DOCUMENTS_READ_SCOPE)
+@require_GET
+def cli_result_detail(request, result_id):
+    try:
+        result = get_result(
+            workspace=request.workspace,
+            membership=request.workspace_membership,
+            result_id=result_id,
+        )
+    except ResultAccessError as exc:
+        return _result_access_error(exc)
+    return JsonResponse({"ok": True, "result": result})
 
 
 class CLIVectorSearchView(VectorSearchView):

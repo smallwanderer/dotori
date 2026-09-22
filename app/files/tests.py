@@ -520,6 +520,44 @@ class SyncApiUploadTests(TestCase):
         self.assertTrue(Node.objects.filter(uid=response.json()["node_uid"]).exists())
         delay.assert_not_called()
 
+    def test_blob_signal_records_unsupported_input_without_publishing(self):
+        node = Node.objects.create(
+            owner=self.user, workspace=self.workspace,
+            name="archive.zip", ext=".zip", node_type=NodeType.FILE,
+        )
+        with patch("document_ai.signals.enqueue_parse") as enqueue:
+            FileBlob.objects.create(
+                node=node,
+                file=SimpleUploadedFile("archive.zip", b"content", content_type="application/zip"),
+                original_name="archive.zip",
+                mime_type="application/zip",
+            )
+
+        self.assertTrue(FileBlob.objects.filter(node=node).exists())
+        enqueue.assert_not_called()
+        result = DocumentParseResult.objects.get(node=node)
+        self.assertEqual(result.status, AIStatus.FAILED)
+        self.assertEqual(result.errors[0]["code"], "UNSUPPORTED_INPUT")
+
+    def test_sync_upload_keeps_file_and_records_failed_parse_when_route_unavailable(self):
+        from capabilities.registry import DOCUMENT_EXTRACT
+        from document_ai.services.capability_admission import CapabilityAdmissionError
+
+        upload = SimpleUploadedFile("route-unavailable.txt", b"saved", content_type="text/plain")
+        unavailable = CapabilityAdmissionError(
+            DOCUMENT_EXTRACT, "CAPABILITY_UNAVAILABLE", "parse route is not registered"
+        )
+        with patch("document_ai.signals.capability_enabled", return_value=True), patch(
+            "document_ai.signals.enqueue_parse", side_effect=unavailable
+        ):
+            response = self.post_upload(upload)
+
+        self.assertEqual(response.status_code, 200)
+        node = Node.objects.get(uid=response.json()["node_uid"])
+        parse_result = DocumentParseResult.objects.get(node=node)
+        self.assertEqual(parse_result.status, AIStatus.FAILED)
+        self.assertEqual(parse_result.errors[0]["code"], "CAPABILITY_UNAVAILABLE")
+
     def test_sync_update_preserves_existing_ai_setting_when_omitted(self):
         sync_root = Node.objects.create(owner=self.user, workspace=self.workspace, name="sync", ext="", node_type=NodeType.FOLDER)
         sync_folder = Node.objects.create(owner=self.user, workspace=self.workspace, name="local", ext="", node_type=NodeType.FOLDER, parent=sync_root)
@@ -956,6 +994,13 @@ class FileBulkApiTests(TestCase):
 
     @patch("files.api_v1.file_views.enqueue_parse")
     def test_retry_ai_processing_requeues_failed_parse(self, delay_mock):
+        with patch("document_ai.signals.enqueue_parse"):
+            FileBlob.objects.create(
+                node=self.file_node,
+                file=SimpleUploadedFile("doc.txt", b"retry", content_type="text/plain"),
+                original_name="doc.txt",
+                mime_type="text/plain",
+            )
         DocumentParseResult.objects.create(
             node=self.file_node,
             status=AIStatus.FAILED,
@@ -1048,6 +1093,13 @@ class FileBulkApiTests(TestCase):
     @patch("files.api_v1.file_views.enqueue_embedding")
     @patch("files.api_v1.file_views.enqueue_parse")
     def test_retry_hierarchical_extract_requeues_parse(self, parse_mock, embedding_mock):
+        with patch("document_ai.signals.enqueue_parse"):
+            FileBlob.objects.create(
+                node=self.file_node,
+                file=SimpleUploadedFile("doc.txt", b"retry", content_type="text/plain"),
+                original_name="doc.txt",
+                mime_type="text/plain",
+            )
         parse_result = DocumentParseResult.objects.create(
             node=self.file_node,
             status=AIStatus.COMPLETED,

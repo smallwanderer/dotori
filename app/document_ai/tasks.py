@@ -6,6 +6,9 @@ import time
 import threading
 
 from celery import shared_task
+from capabilities.admission import CapabilityAdmissionError
+from capabilities.work_dispatch import WorkContractError, validate_followups
+from capabilities.work_registry import WORK_REGISTRY, get_work_definition, require_registered_work
 
 from document_ai.orchestration import (
     WorkKind,
@@ -14,6 +17,7 @@ from document_ai.orchestration import (
     enqueue_embedding,
     enqueue_parse,
     enqueue_retrieval_evaluation,
+    enqueue_registered_work,
     get_work_capability,
 )
 from document_ai.services.environment import get_positive_int_env as _get_positive_int_env
@@ -21,7 +25,10 @@ from document_ai.services.environment import get_positive_int_env as _get_positi
 from config.tracing import get_trace_id, new_trace_id, set_trace_id
 
 logger = logging.getLogger(__name__)
-_DISPATCH_SLOTS = {"parse": threading.BoundedSemaphore(1), "embed": threading.BoundedSemaphore(1)}
+_DISPATCH_SLOTS = {
+    queue: threading.BoundedSemaphore(1)
+    for queue in {definition.queue for definition in WORK_REGISTRY.values()}
+}
 
 
 # Compatibility names for extensions/tests that historically imported these
@@ -70,21 +77,14 @@ def _executor_envelope(
 
 
 def _publish_executor_followups(response: dict) -> None:
-    for followup in response.get("followups") or []:
-        kind = WorkKind(followup["work_kind"])
-        payload = followup["payload"]
-        kwargs = {
-            "job_id": followup["job_id"],
-            "parent_job_id": followup.get("parent_job_id"),
-        }
-        if kind is WorkKind.PARSE_DOCUMENT:
-            enqueue_parse(payload["node_id"], **kwargs)
-        elif kind is WorkKind.PLAN_DOCUMENT_EMBEDDING:
-            enqueue_embedding(payload["node_id"], **kwargs)
-        elif kind is WorkKind.EMBED_DOCUMENT_BATCH:
-            enqueue_embedding_batch(payload["chunk_ids"], **kwargs)
-        elif kind is WorkKind.EVALUATE_RETRIEVAL:
-            enqueue_retrieval_evaluation(payload["run_uid"], **kwargs)
+    followups = response.get("followups", [])
+    validate_followups(followups)
+    for followup in followups:
+        enqueue_registered_work(
+            followup["work_kind"], followup["payload"],
+            job_id=followup["job_id"],
+            parent_job_id=followup.get("parent_job_id"),
+        )
 
 
 def _dispatch_or_retry(task, kind: WorkKind, *, envelope: dict, payload: dict) -> dict:
@@ -96,6 +96,12 @@ def _dispatch_or_retry(task, kind: WorkKind, *, envelope: dict, payload: dict) -
 
     try:
         require_capability(get_work_capability(kind))
+        try:
+            require_registered_work(kind.value)
+        except ValueError as exc:
+            raise CapabilityAdmissionError(
+                get_work_capability(kind), "CAPABILITY_UNAVAILABLE", str(exc), retryable=True
+            ) from exc
     except CapabilityAdmissionError as exc:
         from document_ai.processing.capability_state import finalize_capability_rejection
 
@@ -124,7 +130,7 @@ def _dispatch_or_retry(task, kind: WorkKind, *, envelope: dict, payload: dict) -
         raise task.retry(exc=exc, countdown=min(delay + random.uniform(0, 1), max(0, deadline - time.time())),
                          headers=headers, max_retries=100000)
 
-    slot = _DISPATCH_SLOTS["parse" if kind == WorkKind.PARSE_DOCUMENT else "embed"]
+    slot = _DISPATCH_SLOTS[get_work_definition(kind.value).queue]
     if not slot.acquire(blocking=False):
         retry(ExecutorDispatchError("Transport slot busy"))
     try:
@@ -136,6 +142,14 @@ def _dispatch_or_retry(task, kind: WorkKind, *, envelope: dict, payload: dict) -
             return {"status": "failed", "error": str(exc)}
         try:
             _publish_executor_followups(response)
+        except WorkContractError as exc:
+            logger.error("Executor returned an invalid followup: %s", exc)
+            return {"status": "failed", "error_code": "INVALID_FOLLOWUP", "error": str(exc), "retryable": False}
+        except CapabilityAdmissionError as exc:
+            if not exc.retryable:
+                logger.warning("Executor followup admission rejected: %s", exc)
+                return {"status": "failed", "error_code": exc.code, "error": str(exc), "retryable": False}
+            retry(exc)
         except Exception as exc:
             # Replay reads the durable parent and republishes identical child IDs.
             retry(exc)

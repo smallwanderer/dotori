@@ -15,6 +15,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from document_ai.orchestration import TASK_ENVELOPE_VERSION, WorkKind, derive_job_id
+from capabilities.work_registry import WORK_REGISTRY, require_registered_work
+from capabilities.work_dispatch import validate_followups
 from document_ai.services.executor_jobs import (
     ExecutorJobConflict,
     claim_execution,
@@ -25,18 +27,14 @@ from document_ai.services.executor_jobs import (
 
 
 _ROLE_KINDS = {
-    "parser": {WorkKind.PARSE_DOCUMENT.value},
-    "embedding": {
-        WorkKind.PLAN_DOCUMENT_EMBEDDING.value,
-        WorkKind.EMBED_DOCUMENT_BATCH.value,
-        WorkKind.EVALUATE_RETRIEVAL.value,
-    },
+    role: {kind for kind, definition in WORK_REGISTRY.items() if definition.execution_role == role}
+    for role in {definition.execution_role for definition in WORK_REGISTRY.values()}
 }
 _JOB_SLOT = threading.BoundedSemaphore(1)
 
 
 def _executor_role() -> str:
-    return os.getenv("DOTORI_EXECUTOR_ROLE", "embedding")
+    return os.getenv("DOTORI_EXECUTOR_ROLE", "")
 
 
 def _authorized(request) -> bool:
@@ -102,6 +100,7 @@ def _execute_parser(envelope: dict[str, Any]) -> tuple[dict[str, Any], list[dict
             "work_kind": WorkKind.PLAN_DOCUMENT_EMBEDDING.value,
             "payload": {"node_id": node_id}, "parent_job_id": envelope["job_id"],
         }]
+    validate_followups(followups)
     def persisted(result):
         from document_ai.services.executor_snapshot import validate_execution
         validate_execution()
@@ -145,6 +144,7 @@ def _execute_embedding(envelope: dict[str, Any]) -> tuple[dict[str, Any], list[d
             "payload": {"chunk_ids": batch},
             "parent_job_id": envelope["job_id"],
         } for batch in batches]
+        validate_followups(followups)
         return result, followups
     if kind == WorkKind.EMBED_DOCUMENT_BATCH.value:
         from document_ai.embedding.executor import embed_document_chunks_batch_sync
@@ -198,6 +198,10 @@ def _execute_job(request):
     if envelope["work_kind"] not in _ROLE_KINDS.get(role, set()):
         return _error("UNSUPPORTED_WORK_KIND", "This executor does not own the requested work.", 422)
     try:
+        require_registered_work(envelope["work_kind"])
+    except ValueError as exc:
+        return _error("WORK_NOT_REGISTERED", str(exc), 422)
+    try:
         target_key = _target_key(envelope["work_kind"], envelope["payload"])
         from document_ai.services.executor_snapshot import capture_snapshot
         source, runtime = capture_snapshot(envelope)
@@ -229,6 +233,7 @@ def _execute_job(request):
         if envelope["work_kind"] == WorkKind.PLAN_DOCUMENT_EMBEDDING.value:
             with transaction.atomic():
                 result, followups = _execute_embedding(envelope)
+                validate_followups(followups)
                 if result.get("status") == "failed":
                     raise RuntimeError(result.get("error", "Planning failed"))
                 receipt = finish_execution(claim.receipt, result=result, followups=followups)
@@ -237,6 +242,7 @@ def _execute_job(request):
             result, followups = _execute_parser(envelope)
         else:
             result, followups = _execute_embedding(envelope)
+        validate_followups(followups)
         validate_execution()
     except Exception as exc:  # executor failures are classified by the transport retry policy
         receipt = fail_execution(claim.receipt, code="EXECUTION_FAILED", message=str(exc), retryable=not isinstance(exc, (ValueError, FileNotFoundError)))
@@ -277,6 +283,8 @@ def livez(_request):
 def readyz(request):
     if _executor_role() == "parser":
         return JsonResponse({"status": "ready", "role": "parser"})
+    if _executor_role() != "embedding":
+        return JsonResponse({"status": "unavailable", "reason": "Unknown executor role"}, status=503)
     from document_ai.embedding.internal_views import readyz as embedding_readyz
 
     return embedding_readyz(request)

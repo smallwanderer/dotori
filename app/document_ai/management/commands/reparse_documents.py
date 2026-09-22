@@ -4,6 +4,8 @@ from config.enums import NodeType
 from document_ai.tasks import parse_document_with_docling
 from document_ai.orchestration import enqueue_parse
 from document_ai.tracing_utils import enqueue_kwargs
+from document_ai.processing.input_routing import resolve_blob_work
+from capabilities.registry import DOCUMENT_EXTRACT
 from files.models import Node
 
 
@@ -94,6 +96,7 @@ class Command(BaseCommand):
         for index, node in enumerate(nodes, start=1):
             label = f"[{index}/{total}] node_id={node.id} name={node.name}"
             try:
+                resolve_blob_work(node.blob, (DOCUMENT_EXTRACT,))
                 if options["queue"]:
                     enqueue_parse(node.id, **enqueue_kwargs())
                     self.stdout.write(f"{label} queued")

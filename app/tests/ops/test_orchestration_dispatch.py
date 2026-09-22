@@ -105,6 +105,59 @@ def test_route_contract_matches_worker_queues_and_task_names():
     assert all(route.task_name.startswith("document_ai.tasks.") for route in TASK_ROUTES.values())
 
 
+def test_executor_followup_uses_registered_route_and_preserves_job_lineage():
+    from document_ai.tasks import _publish_executor_followups
+
+    response = {"followups": [{
+        "work_kind": "embed_document_batch",
+        "payload": {"chunk_ids": [20, 21]},
+        "job_id": "child-1",
+        "parent_job_id": "parent-1",
+    }]}
+    with patch("capabilities.work_dispatch.require_capability"), patch(
+        "capabilities.work_dispatch.require_registered_work"
+    ), patch("celery.current_app.send_task") as send:
+        _publish_executor_followups(response)
+
+    call = send.call_args
+    assert call.args == ("document_ai.tasks.embedding_document_batch_with_bge",)
+    assert call.kwargs["args"] == [[20, 21]]
+    assert call.kwargs["queue"] == "embed"
+    assert call.kwargs["task_id"] == "child-1"
+    assert call.kwargs["kwargs"]["parent_job_id"] == "parent-1"
+    assert call.kwargs["kwargs"]["work_kind"] == "embed_document_batch"
+
+
+def test_executor_followup_rejects_undeclared_payload_without_publication():
+    from document_ai.tasks import _publish_executor_followups
+
+    response = {"followups": [{
+        "work_kind": "plan_document_embedding",
+        "payload": {"node_id": 1, "unexpected": True},
+        "job_id": "child-1",
+    }]}
+    with patch("capabilities.work_dispatch.require_capability"), patch(
+        "capabilities.work_dispatch.require_registered_work"
+    ), patch("celery.current_app.send_task") as send:
+        with pytest.raises(ValueError, match="Invalid payload fields"):
+            _publish_executor_followups(response)
+    send.assert_not_called()
+
+
+def test_unknown_later_followup_prevents_partial_publication():
+    from document_ai.tasks import _publish_executor_followups
+    from capabilities.work_dispatch import WorkContractError
+
+    response = {"followups": [
+        {"work_kind": "plan_document_embedding", "payload": {"node_id": 1}, "job_id": "known"},
+        {"work_kind": "unknown_work", "payload": {"node_id": 1}, "job_id": "unknown"},
+    ]}
+    with patch("celery.current_app.send_task") as send:
+        with pytest.raises(WorkContractError, match="Unknown work kind"):
+            _publish_executor_followups(response)
+    send.assert_not_called()
+
+
 def test_dispatch_rejects_disabled_capability_before_publication(tmp_path, monkeypatch):
     config_path = tmp_path / "capabilities.json"
     write_capability_config([], path=config_path)

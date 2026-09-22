@@ -28,6 +28,19 @@ def test_followup_publish_failure_retries_parent_with_original_deadline():
     tasks._DISPATCH_SLOTS["parse"].release()
 
 
+def test_invalid_followup_fails_without_retrying_parent():
+    task = SimpleNamespace(request=SimpleNamespace(headers={}, retries=0), retry=Mock())
+    response = {
+        "result": {"status": "success"},
+        "followups": [{"work_kind": "unknown_work", "payload": {"node_id": 1}, "job_id": "child"}],
+    }
+    with patch("document_ai.services.executor_transport.dispatch_executor_job", return_value=response):
+        result = tasks._dispatch_or_retry(task, WorkKind.PARSE_DOCUMENT, envelope=envelope(), payload={"node_id": 1})
+    assert result["error_code"] == "INVALID_FOLLOWUP"
+    assert result["retryable"] is False
+    task.retry.assert_not_called()
+
+
 def test_parse_slot_busy_does_not_block_embed_dispatch():
     task = SimpleNamespace(request=SimpleNamespace(headers={}, retries=0), retry=Mock(side_effect=Retry()))
     tasks._DISPATCH_SLOTS["parse"].acquire()
@@ -72,6 +85,23 @@ def test_planning_receipt_failure_rolls_back_domain_write(settings, monkeypatch)
         response = executor_views.execute_job(request)
     assert response.status_code == 503
     assert not ExecutorJobReceipt.objects.filter(job_id="domain-write").exists()
+    assert ExecutorJobReceipt.objects.get(job_id="job").status == "failed"
+
+
+@pytest.mark.django_db
+def test_invalid_planning_followup_cannot_commit_success_receipt(settings, monkeypatch):
+    settings.EXECUTOR_INTERNAL_TOKEN = "token"
+    monkeypatch.setenv("DOTORI_EXECUTOR_ROLE", "embedding")
+    body = envelope()
+    body["work_kind"] = "plan_document_embedding"
+    request = RequestFactory().post("/", json.dumps(body), content_type="application/json", HTTP_AUTHORIZATION="Bearer token")
+    invalid = [{"work_kind": "unknown_work", "payload": {"node_id": 1}, "job_id": "child"}]
+    with patch("document_ai.services.executor_snapshot.capture_snapshot", return_value=({}, {})), patch.object(
+        executor_views, "_execute_embedding", return_value=({"status": "success"}, invalid)
+    ), patch.object(executor_views, "finish_execution") as finish:
+        response = executor_views.execute_job(request)
+    assert response.status_code == 503
+    finish.assert_not_called()
     assert ExecutorJobReceipt.objects.get(job_id="job").status == "failed"
 
 

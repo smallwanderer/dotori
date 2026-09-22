@@ -155,6 +155,7 @@ def _deployed_operation_mode() -> str:
 
 
 def build_capability_summaries(*, probe: bool = False) -> dict[str, dict]:
+    from capabilities.execution import executor_url, get_execution_role
     try:
         config = load_capability_config()
         config_error = ""
@@ -163,14 +164,13 @@ def build_capability_summaries(*, probe: bool = False) -> dict[str, dict]:
         config_error = str(exc)
     deployed_services, deployed_revision = _deployed_services()
     legacy_deployment = not deployed_revision
-    role_services = {"parser": "parser-executor", "embedding": "embedding-executor"}
     summaries = {}
     for capability_id, definition in CAPABILITY_REGISTRY.items():
         enabled = bool(config and config.is_enabled(capability_id))
         required_services = {
-            role_services[role]
+            service
             for role in definition.execution_roles
-            if role in role_services
+            if (service := get_execution_role(role).compose_service)
         }
         installed = enabled and (
             legacy_deployment or required_services.issubset(deployed_services)
@@ -196,17 +196,12 @@ def build_capability_summaries(*, probe: bool = False) -> dict[str, dict]:
             status = "configured"
             reason_code = ""
         if probe and available:
-            urls = {
-                "parser": os.getenv("PARSER_EXECUTOR_URL", "http://parser-executor:8002"),
-                "embedding": os.getenv("EMBEDDING_SERVICE_URL", "http://embedding-executor:8001"),
-            }
             try:
                 available = all(
-                    requests.get(f"{urls[role].rstrip('/')}/readyz", timeout=2).ok
+                    requests.get(f"{executor_url(role)}/readyz", timeout=2).ok
                     for role in definition.execution_roles
-                    if role in urls
                 )
-            except requests.RequestException:
+            except (requests.RequestException, ValueError):
                 available = False
             status = "ready" if available else "unavailable"
             reason_code = "" if available else "CAPABILITY_UNAVAILABLE"

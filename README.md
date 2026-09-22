@@ -3,10 +3,10 @@
 Dotori is a self-hosted document workspace for document management, hybrid search, and retrieval-augmented generation (RAG) on a single server. Documents, search indexes, and local AI runtimes remain in an operator-managed Docker Compose environment.
 
 <p align="center">
-  <img src="./documents/statics/dotori-files-eng.png" width="80%" alt="Dotori document workspace">
+  <img src="./docs/statics/dotori-files-eng.png" width="80%" alt="Dotori document workspace">
 </p>
 
-For Korean documentation, see [README.ko.md](README.ko.md). For the full documentation set (installation, operations, monitoring, etc), start at [documents/](documents/WALKTHROUGH.md).
+For Korean documentation, see [README.ko.md](README.ko.md). For the full documentation set (installation, operations, monitoring, etc), start at [docs/](docs/WALKTHROUGH.md).
 
 ## Key Features
 
@@ -26,7 +26,7 @@ For Korean documentation, see [README.ko.md](README.ko.md). For the full documen
 
 ## Installation Mode
 
-The included installation assistant, `start.bat`, lets operators set up the server without writing code. See the [installation guide](documents/install/installation-guide.md) for details.
+The included installation assistant, `start.bat`, lets operators set up the server without writing code. See the [installation guide](docs/install/installation-guide.md) for details.
 
 The installer provides the following options:
 

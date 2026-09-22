@@ -15,7 +15,7 @@ from document_ai.services.llm_endpoint_service import check_llm_endpoint
 from document_ai.rag.generation import generate_rag_response_sync
 from document_ai.search.views import EMPTY_SCOPE_SENTINEL, _expand_scope_node_ids
 from document_ai.search.query_frontend import prepare_retrieval_query
-from document_ai.search.execution import perform_vector_search_sync
+from document_ai.search.execution import perform_vector_search_sync, search_documents_sync
 from files.models import FileBlob, Node, NodeType
 
 pytestmark = pytest.mark.unit
@@ -101,6 +101,30 @@ class RAGFlowTests(TestCase):
         self.assertEqual(response.json()["results"][0]["node_name"], "policy.pdf")
         self.assertEqual(SearchJob.objects.count(), 0)
         search.assert_called_once()
+
+    def test_search_service_checks_semantic_search_admission_before_retrieval(self):
+        from document_ai.services.capability_admission import CapabilityAdmissionError
+
+        error = CapabilityAdmissionError(
+            "documents.semantic_search",
+            "CAPABILITY_DISABLED",
+            "Semantic search is disabled",
+        )
+        with patch(
+            "document_ai.services.capability_admission.require_capability",
+            side_effect=error,
+        ) as admission, patch(
+            "document_ai.search.retriever.VectorRetriever"
+        ) as retriever:
+            with self.assertRaises(CapabilityAdmissionError):
+                search_documents_sync(
+                    owner=self.user,
+                    workspace=self.workspace,
+                    query="policy",
+                )
+
+        admission.assert_called_once_with("documents.semantic_search")
+        retriever.assert_not_called()
 
     def test_perform_vector_search_sync_preserves_embedding_busy_marker(self):
         from document_ai.embedding.providers.base import EmbeddingBusyError

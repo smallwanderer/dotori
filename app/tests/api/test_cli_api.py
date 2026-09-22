@@ -10,7 +10,11 @@ from django.urls import reverse
 
 from accounts.cli_tokens import issue_cli_token
 from config.enums import NodeType
-from files.models import Node
+from config.enums import AIStatus
+from document_ai.models import DocumentChunk, DocumentParseResult
+from document_ai.services.capability_admission import CapabilityAdmissionError
+from files.models import FileBlob, Node
+from workspaces.models import Workspace, WorkspaceMembership
 
 
 pytestmark = pytest.mark.unit
@@ -40,13 +44,69 @@ class CLIHttpApiTests(TestCase):
     def authorization(self):
         return f"Bearer {self.secret}"
 
+    def _create_extraction_result(self, *, owner=None, workspace=None, trashed=False):
+        owner = owner or self.user
+        node = Node.objects.create(
+            owner=owner,
+            workspace=workspace,
+            name="result.txt",
+            ext=".txt",
+            node_type=NodeType.FILE,
+            trashed=trashed,
+        )
+        with patch("document_ai.signals.enqueue_parse"):
+            blob = FileBlob.objects.create(
+                node=node,
+                original_name="result.txt",
+                file=SimpleUploadedFile("result.txt", b"hello", content_type="text/plain"),
+                mime_type="text/plain",
+                size=5,
+                sha256="source-v1",
+                status="ready",
+            )
+        parse_result = DocumentParseResult.objects.create(
+            node=node,
+            parser_name="docling",
+            parser_mode="convert",
+            status=AIStatus.COMPLETED,
+            input_document_hash="source-v1",
+            chunk_count=1,
+            metadata={
+                "source_blob_uuid": str(blob.uuid),
+                "source_checksum": "source-v1",
+                "processing_fingerprint": "parser-config-v1",
+            },
+        )
+        DocumentChunk.objects.create(
+            parse_result=parse_result,
+            chunk_index=0,
+            text="hello",
+        )
+        return node, blob, parse_result
+
     def test_cli_routes_are_stable(self):
         self.assertEqual(reverse("cli_api:identity"), "/api/cli/v1/identity/")
         self.assertEqual(reverse("cli_api:status"), "/api/cli/v1/status/")
+        self.assertEqual(reverse("cli_api:capabilities"), "/api/cli/v1/capabilities/")
         self.assertEqual(reverse("cli_api:documents"), "/api/cli/v1/documents/")
         self.assertEqual(reverse("cli_api:upload"), "/api/cli/v1/upload/")
         self.assertEqual(reverse("cli_api:search"), "/api/cli/v1/search/")
         self.assertEqual(reverse("cli_api:ask-stream"), "/api/cli/v1/ask/stream/")
+        self.assertEqual(reverse("cli_api:results"), "/api/cli/v1/results/")
+
+    def test_result_routes_are_stable(self):
+        node, _, parse_result = self._create_extraction_result()
+        self.assertEqual(
+            reverse("cli_api:document-results", kwargs={"source_uid": node.uid}),
+            f"/api/cli/v1/documents/{node.uid}/results/",
+        )
+        self.assertEqual(
+            reverse(
+                "cli_api:result-detail",
+                kwargs={"result_id": f"document-extract:{parse_result.id}"},
+            ),
+            f"/api/cli/v1/results/document-extract:{parse_result.id}/",
+        )
 
     def test_identity_returns_verified_account_token_and_reserved_workspace(self):
         response = self.client.get(
@@ -158,6 +218,27 @@ class CLIHttpApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(search.call_args.kwargs["owner"], self.user)
 
+    def test_search_reports_disabled_semantic_search_capability(self):
+        error = CapabilityAdmissionError(
+            "documents.semantic_search",
+            "CAPABILITY_DISABLED",
+            "Capability documents.semantic_search is disabled on this server",
+        )
+        with patch(
+            "document_ai.search.views.search_documents_sync",
+            side_effect=error,
+        ):
+            response = self.client.post(
+                reverse("cli_api:search"),
+                data=json.dumps({"mode": "basic", "query": "policy"}),
+                content_type="application/json",
+                HTTP_AUTHORIZATION=self.authorization,
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "CAPABILITY_DISABLED")
+        self.assertFalse(response.json()["error"]["details"]["retryable"])
+
     def test_status_uses_cli_token_owner(self):
         def status_response(request):
             return JsonResponse({"ok": True, "user": request.user.email})
@@ -170,6 +251,113 @@ class CLIHttpApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["user"], self.user.email)
+
+    @patch("document_ai.cli_views.build_server_policy_payload")
+    def test_capabilities_reuses_server_policy_contract(self, build_policy):
+        build_policy.return_value = {"capabilities": {"documents.extract": {"enabled": True}}}
+        response = self.client.get(
+            reverse("cli_api:capabilities"),
+            HTTP_AUTHORIZATION=self.authorization,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["capabilities"]["documents.extract"]["enabled"])
+
+    def test_result_list_and_detail_use_common_envelope(self):
+        node, _, parse_result = self._create_extraction_result()
+        listed = self.client.get(
+            reverse("cli_api:document-results", kwargs={"source_uid": node.uid}),
+            HTTP_AUTHORIZATION=self.authorization,
+        )
+        self.assertEqual(listed.status_code, 200)
+        summary = listed.json()["results"][0]
+        self.assertEqual(summary["id"], f"document-extract:{parse_result.id}")
+        self.assertEqual(summary["kind"], "documents.extract")
+        self.assertEqual(summary["capability_id"], "documents.extract")
+        self.assertNotIn("payload", summary)
+
+        detail = self.client.get(
+            reverse("cli_api:result-detail", kwargs={"result_id": summary["id"]}),
+            HTTP_AUTHORIZATION=self.authorization,
+        )
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["result"]["payload"]["chunks"][0]["text"], "hello")
+
+        all_results = self.client.get(
+            reverse("cli_api:results"),
+            HTTP_AUTHORIZATION=self.authorization,
+        )
+        self.assertEqual(all_results.status_code, 200)
+        self.assertEqual(all_results.json()["results"][0]["id"], summary["id"])
+
+    def test_result_list_rejects_invalid_source_uid(self):
+        response = self.client.get(
+            reverse("cli_api:results"),
+            {"source_uid": "not-a-uuid"},
+            HTTP_AUTHORIZATION=self.authorization,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_SOURCE_UID")
+
+    def test_result_access_hides_other_workspace_and_trashed_sources(self):
+        other_node, _, other_result = self._create_extraction_result(owner=self.other_user)
+        own_node, _, _ = self._create_extraction_result(trashed=True)
+
+        other = self.client.get(
+            reverse(
+                "cli_api:result-detail",
+                kwargs={"result_id": f"document-extract:{other_result.id}"},
+            ),
+            HTTP_AUTHORIZATION=self.authorization,
+        )
+        trashed = self.client.get(
+            reverse("cli_api:document-results", kwargs={"source_uid": own_node.uid}),
+            HTTP_AUTHORIZATION=self.authorization,
+        )
+        self.assertEqual(other.status_code, 404)
+        self.assertEqual(trashed.status_code, 404)
+
+    def test_result_access_reflects_workspace_membership_revocation(self):
+        team = Workspace.objects.create(
+            name="Result Team",
+            kind=Workspace.KIND_TEAM,
+            created_by=self.user,
+        )
+        membership = WorkspaceMembership.objects.create(
+            workspace=team,
+            user=self.user,
+            role=WorkspaceMembership.ROLE_ADMIN,
+            status=WorkspaceMembership.STATUS_ACTIVE,
+        )
+        node, _, _ = self._create_extraction_result(workspace=team)
+        url = reverse("cli_api:document-results", kwargs={"source_uid": node.uid})
+        allowed = self.client.get(
+            url,
+            HTTP_AUTHORIZATION=self.authorization,
+            HTTP_X_DOTORI_WORKSPACE=str(team.uid),
+        )
+        membership.status = WorkspaceMembership.STATUS_PENDING
+        membership.save(update_fields=["status"])
+        denied = self.client.get(
+            url,
+            HTTP_AUTHORIZATION=self.authorization,
+            HTTP_X_DOTORI_WORKSPACE=str(team.uid),
+        )
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(denied.status_code, 403)
+
+    def test_result_stale_state_is_computed_when_read(self):
+        _, blob, parse_result = self._create_extraction_result()
+        FileBlob.objects.filter(pk=blob.pk).update(sha256="source-v2")
+        response = self.client.get(
+            reverse(
+                "cli_api:result-detail",
+                kwargs={"result_id": f"document-extract:{parse_result.id}"},
+            ),
+            HTTP_AUTHORIZATION=self.authorization,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["result"]["stale"])
 
     def test_ask_authenticates_before_rag_validation(self):
         response = self.client.post(

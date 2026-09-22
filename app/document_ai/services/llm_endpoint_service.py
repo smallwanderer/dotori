@@ -225,6 +225,14 @@ class RAGLLMRequestConfig:
 
 
 def resolve_rag_llm_request_config(rag_job) -> RAGLLMRequestConfig:
+    if not rag_job.llm_endpoint_id:
+        from capabilities.execution import require_registered_role
+        from document_ai.services.rag_runtime_config import LLMRuntimeNotConfigured
+
+        try:
+            require_registered_role("llm")
+        except ValueError as exc:
+            raise LLMRuntimeNotConfigured(str(exc)) from exc
     server_target = None
     if not rag_job.llm_base_url or not rag_job.llm_model:
         server_target = get_cached_server_rag_target()

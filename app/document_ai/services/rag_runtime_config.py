@@ -232,6 +232,12 @@ def target_from_persisted_config() -> ServerRAGTarget | None:
 
 
 def get_configured_server_rag_target() -> ServerRAGTarget:
+    from capabilities.execution import require_registered_role
+
+    try:
+        require_registered_role("llm")
+    except ValueError as exc:
+        raise LLMRuntimeNotConfigured(str(exc)) from exc
     target = target_from_persisted_config()
     if target:
         return target

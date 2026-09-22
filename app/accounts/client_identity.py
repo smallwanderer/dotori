@@ -23,7 +23,7 @@ def serialize_client_identity(token):
             "type": token_type,
             "scopes": scopes,
         },
-        # Workspace management is a reserved client-context boundary. The
-        # current server still scopes documents directly to the token owner.
+        # The selected workspace remains request-specific through
+        # X-Dotori-Workspace; identity does not silently choose a team.
         "workspace": None,
     }

@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 
+from capabilities.registry import DOCUMENT_EXTRACT
 from config.enums import AIStatus
 
 
 DOCUMENT_EXTRACT_RESULT_SCHEMA = "dotori.document.extract.v1"
+DOCUMENT_EXTRACT_RESULT_KIND = DOCUMENT_EXTRACT
 
 
 def processing_fingerprint(*, parser_name: str, parser_mode: str, metadata: dict) -> str:
@@ -38,17 +40,20 @@ def _result_status(raw_status: str, *, stale: bool) -> str:
     }.get(raw_status, raw_status.lower())
 
 
-def document_extract_result_envelope(parse_result) -> dict:
+def document_extract_result_envelope(parse_result, *, include_payload: bool = True) -> dict:
     """Expose current document tables through the first common result contract."""
     node = parse_result.node
-    blob = node.blob
+    blob = getattr(node, "blob", None)
     metadata = dict(parse_result.metadata or {})
-    source_blob_uuid = str(metadata.get("source_blob_uuid") or blob.uuid)
+    source_blob_uuid = str(
+        metadata.get("source_blob_uuid") or (blob.uuid if blob is not None else "")
+    )
     source_checksum = str(
         metadata.get("source_checksum") or parse_result.input_document_hash or ""
     )
-    current_checksum = str(blob.sha256 or "")
-    stale = source_blob_uuid != str(blob.uuid) or bool(
+    current_blob_uuid = str(blob.uuid) if blob is not None else source_blob_uuid
+    current_checksum = str(blob.sha256 or "") if blob is not None else source_checksum
+    stale = source_blob_uuid != current_blob_uuid or bool(
         source_checksum and current_checksum and source_checksum != current_checksum
     )
     fingerprint = str(metadata.get("processing_fingerprint") or "")
@@ -75,16 +80,23 @@ def document_extract_result_envelope(parse_result) -> dict:
             }
         )
 
-    return {
+    source = {
+        "id": str(node.uid),
+        "revision": source_blob_uuid,
+        "checksum": source_checksum,
+    }
+    metadata_inputs = metadata.get("inputs") or []
+    derived_from = metadata.get("derived_from") or []
+    occurrences = metadata.get("occurrences") or []
+    envelope = {
         "id": f"document-extract:{parse_result.id}",
-        "kind": "document.extract",
+        "kind": DOCUMENT_EXTRACT_RESULT_KIND,
         "schema": DOCUMENT_EXTRACT_RESULT_SCHEMA,
-        "capability_id": "documents.extract",
-        "source": {
-            "id": str(node.uid),
-            "revision": source_blob_uuid,
-            "checksum": source_checksum,
-        },
+        "capability_id": DOCUMENT_EXTRACT,
+        "source": source,
+        "inputs": [source, *metadata_inputs],
+        "derived_from": derived_from,
+        "occurrences": occurrences,
         "processing": {
             "fingerprint": fingerprint,
             "provider": parse_result.parser_name,
@@ -93,7 +105,9 @@ def document_extract_result_envelope(parse_result) -> dict:
         "status": _result_status(parse_result.status, stale=stale),
         "stale": stale,
         "error": list(parse_result.errors or []),
-        "payload": {"chunks": chunks},
         "created_at": parse_result.created_at.isoformat(),
         "updated_at": parse_result.updated_at.isoformat(),
     }
+    if include_payload:
+        envelope["payload"] = {"chunks": chunks}
+    return envelope

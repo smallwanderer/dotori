@@ -14,15 +14,18 @@ from accounts.api_responses import api_error_response
 from config.enums import AIStatus, FileOperation
 from config.tracing import get_trace_id
 from capabilities.registry import DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH
+from capabilities.input_resolver import InputResolutionError
 from document_ai.models import DocumentChunk, DocumentParseResult, RAGJob
 from document_ai.performance import elapsed_ms, put_metric
 from document_ai.orchestration import enqueue_embedding, enqueue_parse
 from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+from document_ai.services.result_access import ResultAccessError, get_document_text
 from document_ai.services.capability_admission import (
     CapabilityAdmissionError,
     require_capability,
 )
 from document_ai.tracing_utils import enqueue_kwargs
+from document_ai.processing.input_routing import resolve_blob_work
 from files.models import FileOperationLog, Node, NodeType, UserStorage
 from files.services import file_service
 from files.services.access import can_modify_node, can_modify_subtree
@@ -36,6 +39,10 @@ logger = logging.getLogger(__name__)
 def _capability_admission_error_response(exc: CapabilityAdmissionError):
     status = 503 if exc.code in {"CAPABILITY_UNAVAILABLE", "CAPABILITY_CONFIG_INVALID"} else 409
     return api_error_response(exc.code, str(exc), status=status)
+
+
+def _parse_input_error_response(exc: InputResolutionError):
+    return api_error_response(exc.code, str(exc), status=409)
 
 
 def _json_body(request):
@@ -408,16 +415,16 @@ def file_detail(request, uid):
 @email_verification_required
 @require_http_methods(["GET"])
 def get_parsed_text(request, uid):
-    node = get_object_or_404(Node, uid=uid, workspace=request.workspace, node_type=NodeType.FILE)
-    if not hasattr(node, "parse_result"):
+    try:
+        text_content = get_document_text(
+            workspace=request.workspace,
+            membership=request.workspace_membership,
+            source_uid=uid,
+        )
+    except ResultAccessError:
         return JsonResponse({"ok": False, "errors": ["No AI parse result found for this file."]}, status=404)
-    
-    chunks = DocumentChunk.objects.filter(parse_result=node.parse_result).order_by("chunk_index")
-    text_content = "\n\n".join(chunk.text for chunk in chunks if chunk.text)
-    
     if not text_content:
         return JsonResponse({"ok": False, "errors": ["Text is empty or still parsing."]}, status=404)
-        
     return JsonResponse({"ok": True, "text": text_content})
 
 
@@ -740,8 +747,13 @@ def retry_ai_processing(request, uid):
     if not hasattr(node, "parse_result") or parse_status == AIStatus.FAILED:
         try:
             require_capability(DOCUMENT_EXTRACT)
+            if not hasattr(node, "blob"):
+                return api_error_response("INPUT_MISSING", "This file has no stored blob to process.", status=409)
+            resolve_blob_work(node.blob, (DOCUMENT_EXTRACT,))
         except CapabilityAdmissionError as exc:
             return _capability_admission_error_response(exc)
+        except InputResolutionError as exc:
+            return _parse_input_error_response(exc)
         if hasattr(node, "parse_result"):
             node.parse_result.status = AIStatus.PENDING
             node.parse_result.errors = []
@@ -756,8 +768,13 @@ def retry_ai_processing(request, uid):
     ):
         try:
             require_capability(DOCUMENT_SEMANTIC_SEARCH)
+            if not hasattr(node, "blob"):
+                return api_error_response("INPUT_MISSING", "This file has no stored blob to process.", status=409)
+            resolve_blob_work(node.blob, (DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH))
         except CapabilityAdmissionError as exc:
             return _capability_admission_error_response(exc)
+        except InputResolutionError as exc:
+            return _parse_input_error_response(exc)
         node.parse_result.status = AIStatus.PENDING
         node.parse_result.errors = []
         node.parse_result.save(update_fields=["status", "errors", "updated_at"])
