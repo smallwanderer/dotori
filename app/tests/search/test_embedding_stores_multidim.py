@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from document_ai.embedding.providers.base import EmbeddingResult
-from document_ai.embedding.store_registry import (
+from documents.embedding.providers.base import EmbeddingResult
+from documents.embedding.store_registry import (
     get_embedding_store_instance,
     registered_embedding_stores,
 )
-from document_ai.embedding.stores.pgvector_chunk import DIMENSION_FIELD_MAP
+from documents.embedding.stores.pgvector_chunk import DIMENSION_FIELD_MAP
 
 pytestmark = pytest.mark.unit
 

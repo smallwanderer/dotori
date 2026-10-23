@@ -4,14 +4,14 @@ from dataclasses import replace
 
 from django.core.management.base import BaseCommand, CommandError
 
-from document_ai.services.rag_runtime_config import (
+from llm_installation.rag_runtime_config import (
     LLMRuntimeNotConfigured,
     get_configured_server_rag_target,
     get_llm_runtime_config_path,
     load_llm_runtime_config,
 )
 from llm_installation.catalog import get_rag_model_catalog
-from llm_installation.planner import PRIORITY_PRESETS, assess_catalog_entry
+from llm_installation.planner import assess_catalog_entry
 from llm_installation.router import resolve_server_rag_target
 from llm_installation.runtime_probe import probe_server_runtime
 
@@ -24,12 +24,6 @@ class Command(BaseCommand):
             "--cluster-mode",
             action="store_true",
             help="Resolve live candidates for clustered/distributed serving.",
-        )
-        parser.add_argument(
-            "--priority",
-            choices=PRIORITY_PRESETS,
-            default="balanced",
-            help="Priority used for live orchestration previews.",
         )
         parser.add_argument(
             "--check-endpoint",
@@ -68,7 +62,6 @@ class Command(BaseCommand):
             self.stdout.write(f"runtime: {target.runtime}")
             self.stdout.write(f"fallback_used: {target.fallback_used}")
             self.stdout.write(f"reason: {target.reason}")
-            self.stdout.write(f"priority_preset: {target.priority_preset}")
             if target.serving_profile:
                 self.stdout.write(f"serving_profile: {target.serving_profile}")
             diagnostics = config.get("diagnostics", {}) if isinstance(config, dict) else {}
@@ -94,7 +87,6 @@ class Command(BaseCommand):
             catalog=catalog,
             check_endpoint=options["check_endpoint"],
             smoke_test=options["smoke_test"],
-            priority_preset=options["priority"],
         )
 
         self.stdout.write("Server runtime profile")

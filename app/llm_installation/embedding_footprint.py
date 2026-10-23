@@ -127,14 +127,13 @@ def current_embedding_bounds() -> dict[str, int]:
     bounds: dict[str, int] = {}
     try:
         from django.conf import settings
+        from django.core.exceptions import ImproperlyConfigured
 
-        from document_ai.embedding.internal_views import _MAX_BATCH_SIZE
-
-        bounds["max_batch"] = int(_MAX_BATCH_SIZE)
+        bounds["max_batch"] = int(getattr(settings, "EMBEDDING_MAX_BATCH_SIZE", 0))
         bounds["max_tokens"] = int(getattr(settings, "EMBEDDING_MAX_TOKENS", 0))
-    except Exception:
-        # The installer runs outside Django too; bounds are diagnostic, so a
-        # missing settings module must not block recording the claim.
+    except ImproperlyConfigured:
+        # The installer runs outside Django too; bounds are diagnostic, so an
+        # unconfigured settings module must not block recording the claim.
         return {key: value for key, value in bounds.items() if value}
     return {key: value for key, value in bounds.items() if value}
 

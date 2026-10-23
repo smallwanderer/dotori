@@ -25,7 +25,7 @@ class EmbeddingGeneration(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=["scope", "status"]),
+            models.Index(fields=["scope", "status"], name="docs_embgen_scope_status_idx"),
         ]
 
     def __str__(self):
@@ -39,7 +39,7 @@ class ChunkEmbedding(models.Model):
     """
 
     chunk = models.OneToOneField(
-        "document_ai.DocumentChunk",
+        "documents.DocumentChunk",
         on_delete=models.CASCADE,
         related_name="embedding",
     )
@@ -52,6 +52,7 @@ class ChunkEmbedding(models.Model):
     vector_1536 = VectorField(dimensions=1536, null=True, blank=True)
     vector_384 = VectorField(dimensions=384, null=True, blank=True)
     sparse_vector = models.JSONField(default=dict, blank=True)
+    provenance = models.JSONField(null=True, blank=True, default=None)
 
     # Status
     status = models.CharField(
@@ -99,7 +100,7 @@ class ChunkSegmentEmbedding(models.Model):
     """
 
     chunk = models.ForeignKey(
-        "document_ai.DocumentChunk",
+        "documents.DocumentChunk",
         on_delete=models.CASCADE,
         related_name="segment_embeddings",
         db_index=False,
@@ -111,6 +112,7 @@ class ChunkSegmentEmbedding(models.Model):
     char_end = models.PositiveIntegerField(default=0)
     vector = VectorField(dimensions=1024, null=True, blank=True)
     sparse_vector = models.JSONField(default=dict, blank=True)
+    provenance = models.JSONField(null=True, blank=True, default=None)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -125,7 +127,7 @@ class ChunkSegmentEmbedding(models.Model):
             )
         ]
         indexes = [
-            models.Index(fields=["last_used_at"]),
+            models.Index(fields=["last_used_at"], name="docs_segemb_last_used_idx"),
         ]
 
     def __str__(self):

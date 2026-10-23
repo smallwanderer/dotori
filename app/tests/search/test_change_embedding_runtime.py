@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.core.management import call_command
 
-from document_ai.models import DocumentChunk, DocumentParseResult, EmbeddingGeneration
-from document_ai.services.embedding_runtime_config import load_embedding_runtime
+from documents.models import DocumentChunk, DocumentParseResult, EmbeddingGeneration
+from documents.services.embedding_runtime_config import load_embedding_runtime
 from llm_installation.embedding_catalog import get_embedding_catalog_entry_for_preset
 from llm_installation.embedding_config_store import (
     commit_active_embedding_runtime,
@@ -58,14 +58,14 @@ def test_change_embedding_runtime_with_candidate_generation_and_skip_reembed(
         "get_embedding_runtime_config_path",
         lambda scope, repo_root=None: config_target,
     )
-    from document_ai.services import embedding_runtime_config
+    from documents.services import embedding_runtime_config
 
     monkeypatch.setattr(
         embedding_runtime_config,
         "get_embedding_runtime_config_path",
         lambda scope=None, repo_root=None: config_target,
     )
-    from document_ai.management.commands import change_embedding_runtime
+    from documents.management.commands import change_embedding_runtime
 
     monkeypatch.setattr(
         change_embedding_runtime,
@@ -89,13 +89,13 @@ def test_change_embedding_runtime_with_candidate_generation_and_skip_reembed(
     mock_store = MagicMock()
 
     with patch(
-        "document_ai.management.commands.change_embedding_runtime.get_embedding_provider",
+        "documents.management.commands.change_embedding_runtime.get_embedding_provider",
         return_value=mock_provider,
     ), patch(
-        "document_ai.management.commands.change_embedding_runtime.get_embedding_store_instance",
+        "documents.management.commands.change_embedding_runtime.get_embedding_store_instance",
         return_value=mock_store,
     ), patch(
-        "document_ai.management.commands.change_embedding_runtime.replace_active_hnsw_index"
+        "documents.management.commands.change_embedding_runtime.replace_active_hnsw_index"
     ) as mock_hnsw:
         out = StringIO()
         call_command(

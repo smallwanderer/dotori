@@ -9,7 +9,9 @@ from django.urls import reverse
 
 from accounts.models import APIToken
 from config.enums import NodeType
-from files.models import Node
+from files.models import Node, UserStorage
+from files.services import file_service
+from workspaces.models import Workspace
 
 
 pytestmark = pytest.mark.unit
@@ -36,6 +38,27 @@ class SyncContractTests(TestCase):
             content_type="application/json",
             **self.auth,
         )
+
+    def _upload(self, root_name, rel_path, content):
+        with patch("documents.signals.enqueue_parse"):
+            return self.client.post(
+                reverse("sync_api:upload"),
+                data={
+                    "file": SimpleUploadedFile(
+                        rel_path.split("/")[-1], content, content_type="text/plain"
+                    ),
+                    "rel_path": rel_path,
+                    "root_name": root_name,
+                    "ai_processing_enabled": "0",
+                },
+                **self.auth,
+            )
+
+    def _storage(self):
+        workspace = self.user.workspace_memberships.get(
+            workspace__kind=Workspace.KIND_PERSONAL,
+        ).workspace
+        return UserStorage.objects.get(workspace=workspace)
 
     def _mkdir(self, root_name, rel_path="seed"):
         return self.client.post(
@@ -64,7 +87,7 @@ class SyncContractTests(TestCase):
         second = self._diff("second").json()
 
         self.assertNotEqual(first["root_uid"], second["root_uid"])
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             response = self.client.post(
                 reverse("sync_api:upload"),
                 data={
@@ -98,6 +121,41 @@ class SyncContractTests(TestCase):
         node = Node.objects.get(uid=response.json()["node_uid"])
         self.assertEqual(node.path, "/sync/local/docs/reports")
         self.assertFalse(Node.objects.filter(path="/sync/local/docs/reports/reports").exists())
+
+    def test_upload_is_admitted_against_the_workspace_storage_quota(self):
+        """Sync shares one ledger with the rest of the app.
+
+        It used to check a second, per-user `accounts_syncquota` row that the
+        workspace limit could not see, so the two paths into the same
+        workspace enforced different limits.
+        """
+        storage = self._storage()
+        storage.total_size = 100
+        storage.used_size = 90
+        storage.save(update_fields=["total_size", "used_size", "updated_at"])
+
+        response = self._upload("local", "docs/big.txt", b"x" * 20)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Not enough storage", response.json()["errors"][0])
+        self.assertEqual(self._storage().used_size, 90)
+
+    def test_purged_upload_returns_its_space_to_the_quota(self):
+        """The FileBlob signals move the ledger in both directions.
+
+        The removed sync ledger only ever counted upwards, so repeated
+        upload/delete cycles exhausted it while no bytes were stored.
+        """
+        before = self._storage().used_size
+
+        response = self._upload("local", "docs/report.txt", b"x" * 64)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._storage().used_size, before + 64)
+
+        node = Node.objects.get(uid=response.json()["node_uid"])
+        file_service.permanent_delete(node)
+
+        self.assertEqual(self._storage().used_size, before)
 
     def test_delete_rejects_nodes_outside_selected_sync_root(self):
         root = self._mkdir("local")

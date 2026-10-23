@@ -7,7 +7,7 @@ from numbers import Real
 from django.utils import timezone
 
 from config.enums import AIStatus
-from document_ai.models import DocumentChunk, DocumentParseResult, RAGJob, SearchJob
+from documents.models import DocumentChunk, DocumentParseResult, RAGJob, SearchJob
 from files.services.operation_metrics import (
     file_operation_rows,
     file_operations_for_trace,

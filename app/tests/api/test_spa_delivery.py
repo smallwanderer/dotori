@@ -68,7 +68,7 @@ class SPADeliveryTests(TestCase):
             shell_response = self.client.get("/workspace/chat/")
         self.assertEqual(shell_response.status_code, 302)
         self.assertEqual(shell_response.url, "/accounts/login/?next=/workspace/chat/")
-        self.assertEqual(resolve("/api/document-ai/v1/rag/stream/").url_name, "rag-stream")
+        self.assertEqual(resolve("/api/v1/rag/stream/").url_name, "rag-stream")
 
     def test_operator_can_disable_spa_and_use_retained_template_ui(self):
         with override_settings(SPA_ENABLED=False, SPA_MANIFEST_PATH=self.manifest_path):

@@ -30,7 +30,7 @@ class LLMEndpoint(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
-        related_name="document_ai_llm_endpoints",
+        related_name="documents_llm_endpoints",
     )
     workspace = models.ForeignKey(
         "workspaces.Workspace",
@@ -65,7 +65,7 @@ class LLMEndpoint(models.Model):
             )
         ]
         indexes = [
-            models.Index(fields=["owner", "is_active"]),
+            models.Index(fields=["owner", "is_active"], name="docs_llmep_owner_active_idx"),
             models.Index(fields=["workspace", "is_active"], name="llmendpoint_ws_active_idx"),
         ]
 
@@ -113,7 +113,7 @@ class UserLLMPreference(models.Model):
         related_name="llm_preference",
     )
     rag_endpoint = models.ForeignKey(
-        "document_ai.LLMEndpoint",
+        "documents.LLMEndpoint",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -157,24 +157,24 @@ class RAGJob(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
-        related_name="document_ai_rag_jobs",
+        related_name="documents_rag_jobs",
     )
     conversation = models.ForeignKey(
-        "document_ai.RAGConversation",
+        "documents.RAGConversation",
         on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name="rag_jobs",
     )
     search_job = models.ForeignKey(
-        "document_ai.SearchJob",
+        "documents.SearchJob",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="rag_jobs",
     )
     query_log = models.ForeignKey(
-        "document_ai.QueryUnderstandingLog",
+        "documents.QueryUnderstandingLog",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -200,7 +200,7 @@ class RAGJob(models.Model):
     language = models.CharField(max_length=8, default="ko")
     node_ids = models.JSONField(default=list, blank=True)
     llm_endpoint = models.ForeignKey(
-        "document_ai.LLMEndpoint",
+        "documents.LLMEndpoint",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -244,7 +244,7 @@ class RAGJob(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=["workspace", "status", "-created_at"], name="docai_ra_ws_status_created_idx"),
-            models.Index(fields=["owner", "status", "-created_at"]),
+            models.Index(fields=["owner", "status", "-created_at"], name="docs_rag_own_st_created_idx"),
             models.Index(fields=["workspace", "owner", "status", "-completed_at"], name="docai_rag_ws_own_st_cmp_idx"),
             models.Index(fields=["workspace", "owner", "-created_at"], name="docai_rag_ws_own_created_idx"),
         ]

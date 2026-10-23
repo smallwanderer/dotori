@@ -31,7 +31,7 @@
   "noApiTokens": "발급된 API 토큰이 없습니다.",
   "noApiTokensSub": "위에서 새 토큰을 발급하여 시작하세요.",
   "settingsAccount": "계정",
-  "settingsSyncQuota": "동기화 용량",
+  "settingsStorage": "저장 용량",
   "settingsFiles": "파일",
   "settingsActiveFiles": "활성 파일 수",
   "tokenCreatedTitle": "토큰이 발급되었습니다",

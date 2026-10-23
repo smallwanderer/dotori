@@ -265,7 +265,6 @@ export interface ServerPolicySummary {
     updatedAt: string | null
     model: string
     runtime: string
-    priorityPreset: string
     selectionMode: string
     servingConcurrency: number
   }

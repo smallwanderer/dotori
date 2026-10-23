@@ -10,7 +10,7 @@ from asgiref.sync import sync_to_async
 from redis import Redis
 from redis_semaphore import NotAvailable, Semaphore
 
-from document_ai.services.rag_runtime_config import get_server_rag_serving_concurrency
+from llm_installation.rag_runtime_config import get_server_rag_serving_concurrency
 
 logger = logging.getLogger(__name__)
 

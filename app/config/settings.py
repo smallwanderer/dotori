@@ -71,7 +71,8 @@ INSTALLED_APPS = [
 
     'files.apps.FilesConfig',
     'accounts.apps.AccountsConfig',
-    'document_ai.apps.DocumentAiConfig',
+    'documents.apps.DocumentsConfig',
+    'orchestration_state.apps.OrchestrationStateConfig',
     'workspaces.apps.WorkspacesConfig',
     'rest_framework',
     'drf_yasg',
@@ -218,10 +219,10 @@ LOGGING = {
             "filters": ["trace_id"],
             "encoding": "utf-8",
         },
-        "document_ai_file": {
+        "documents_file": {
             "class": "logging.handlers.RotatingFileHandler",
             "level": DOCUMENT_AI_LOG_LEVEL,
-            "filename": LOG_DIR / f"document_ai.{SERVICE_NAME}.log",
+            "filename": LOG_DIR / f"documents.{SERVICE_NAME}.log",
             "maxBytes": 10 * 1024 * 1024,
             "backupCount": 5,
             "formatter": "standard",
@@ -269,8 +270,8 @@ LOGGING = {
             "level": OPERATION_LOG_LEVEL,
             "propagate": False,
         },
-        "document_ai": {
-            "handlers": ["console", "operations_file", "document_ai_file"],
+        "documents": {
+            "handlers": ["console", "operations_file", "documents_file"],
             "level": DOCUMENT_AI_LOG_LEVEL,
             "propagate": False,
         },
@@ -311,6 +312,11 @@ PARSER_TOKENIZER_ID = os.getenv("PARSER_TOKENIZER_ID", "BAAI/bge-m3")
 PARSER_TOKENIZER_REVISION = os.getenv("PARSER_TOKENIZER_REVISION", "5617a9f")
 EMBEDDING_MAX_TOKENS = int(os.getenv("EMBEDDING_MAX_TOKENS", "1280"))
 EMBEDDING_TOKEN_HEADROOM = int(os.getenv("EMBEDDING_TOKEN_HEADROOM", "128"))
+# Request-size backstop for the embedding executor's internal batch endpoint
+# (documents/embedding/internal_views.py). A setting, not a documents-owned
+# constant, so llm_installation can read the same request limit without
+# importing documents.
+EMBEDDING_MAX_BATCH_SIZE = int(os.getenv("EMBEDDING_MAX_BATCH_SIZE", "16"))
 if EMBEDDING_MAX_TOKENS <= EMBEDDING_TOKEN_HEADROOM:
     raise ValueError(
         "EMBEDDING_MAX_TOKENS must be greater than EMBEDDING_TOKEN_HEADROOM."

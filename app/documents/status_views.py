@@ -5,7 +5,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
 from accounts.api_responses import session_access_error
-from document_ai.services.server_policy import build_server_policy_payload
+from documents.services.server_policy import build_server_policy_payload
 
 
 @require_GET

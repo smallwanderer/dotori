@@ -60,7 +60,7 @@ def run_once(args, index: int) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", default="http://localhost:8000/api/document-ai/v1/search/")
+    parser.add_argument("--url", default="http://localhost:8000/api/v1/search/")
     parser.add_argument("--cookie", required=True, help="Browser Cookie header value (session auth only, no CSRF token needed - this endpoint is csrf_exempt)")
     parser.add_argument("--query", default="선택한 문서의 핵심 내용을 요약해줘")
     parser.add_argument("--top-k", type=int, default=5)

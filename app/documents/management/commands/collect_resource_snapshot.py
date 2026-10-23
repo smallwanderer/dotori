@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from document_ai.services.resource_snapshot import collect_resource_snapshots
+from documents.services.resource_snapshot import collect_resource_snapshots
 
 
 class Command(BaseCommand):

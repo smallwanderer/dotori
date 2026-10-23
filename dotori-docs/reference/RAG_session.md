@@ -1,5 +1,7 @@
 # 대화형 RAG 채팅
 
+> 이전: [동작 방식](../overview/how-it-works.md) · 다음: [API 계약](./api-contract-v1.md)
+
 채팅 화면에서 문서에 대해 나눈 질문과 답변은 하나의 대화(세션, session)로 저장되어, 나중에 같은 화면에서 다시 열어볼 수 있습니다.
 
 ## 1. 대화란 무엇인가
@@ -55,6 +57,6 @@
 
 ## 관련 문서
 
-- [LLM 설치 가이드](../install/llm-installation-guide.md) — 답변을 생성하는 로컬 LLM을 선택하고 설치하기
-- [임베딩 런타임 가이드](../operate/embedding-guide.md) — 답변 근거를 찾는 검색 임베딩 모델 전환하기
-- [운영 가이드](../operate/operation-guide.md) — RAG 동시 처리 한도, 타임아웃 등 서버 파라미터 조정
+- [LLM 설치 가이드](../guides/install/llm-installation-guide.md) — 답변을 생성하는 로컬 LLM을 선택하고 설치하기
+- [임베딩 런타임 가이드](../guides/operate/embedding-guide.md) — 답변 근거를 찾는 검색 임베딩 모델 전환하기
+- [운영 가이드](../guides/operate/operation-guide.md) — RAG 동시 처리 한도, 타임아웃 등 서버 파라미터 조정

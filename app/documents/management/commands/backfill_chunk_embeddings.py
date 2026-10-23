@@ -1,11 +1,11 @@
 from django.core.management.base import BaseCommand
 
 from config.enums import AIStatus
-from document_ai.embedding.embeding_models import embed_document
-from document_ai.embedding.store_registry import get_embedding_store_instance
-from document_ai.models import DocumentChunk
-from document_ai.parsers.config import get_embedding_backend, get_embedding_model
-from document_ai.parsers.text_utils import normalize_extracted_text
+from documents.embedding.embeding_models import embed_document
+from documents.embedding.store_registry import get_embedding_store_instance
+from documents.models import DocumentChunk
+from documents.parsers.config import get_embedding_backend, get_embedding_model
+from documents.parsers.text_utils import normalize_extracted_text
 
 
 class Command(BaseCommand):

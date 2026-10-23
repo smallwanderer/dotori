@@ -31,7 +31,6 @@ def _selection(*, fit_status="FIT", risky_confirmed=False):
     return SelectionResult(
         selection_status="SELECTED",
         selection_mode="manual",
-        priority_preset="balanced",
         selected_candidate=candidate,
         ranked_artifact_ids=["artifact-a"],
         reason_code=(

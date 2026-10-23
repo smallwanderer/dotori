@@ -2,7 +2,7 @@ import pytest
 from django.core.management import call_command
 from django.test import TestCase
 
-from document_ai.models import ResourceSnapshot
+from documents.models import ResourceSnapshot
 
 pytestmark = pytest.mark.integration
 

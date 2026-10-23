@@ -1,6 +1,11 @@
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from llm_installation.function_catalog import (
+    FunctionCapabilitySpec,
+    validate_function_list,
+)
+
 
 class HfSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -18,6 +23,7 @@ class ArtifactSpec(BaseModel):
     filename: str | None = None
     quant: str
     dtype: str | None = None
+    sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
 
     download_size_mb: float | None = Field(default=None, gt=0)
     disk_required_mb: int = 0
@@ -82,6 +88,12 @@ class ModelCatalogEntry(BaseModel):
     license: str | None = None
     model_metadata: ModelMetadataSpec
     capabilities: CapabilitySpec = Field(default_factory=CapabilitySpec)
+    functions: list[FunctionCapabilitySpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_functions(self) -> "ModelCatalogEntry":
+        validate_function_list(self.functions)
+        return self
 
 
 class ArtifactCatalogEntry(BaseModel):
@@ -138,6 +150,7 @@ class RAGModelCatalogEntry(BaseModel):
     ]
     model_metadata: ModelMetadataSpec
     capabilities: CapabilitySpec = Field(default_factory=CapabilitySpec)
+    functions: list[FunctionCapabilitySpec] = Field(default_factory=list)
     policy: PolicySpec = Field(default_factory=PolicySpec)
 
     @property
@@ -158,7 +171,7 @@ class RAGModelCatalogEntry(BaseModel):
 
 
 class RAGModelCatalogDocument(BaseModel):
-    schema_version: int = 2
+    schema_version: int = 3
     catalog_name: str = "rag-serving-model-catalog"
     updated_at: str | None = None
     entries: list[RAGModelCatalogEntry] = Field(default_factory=list)

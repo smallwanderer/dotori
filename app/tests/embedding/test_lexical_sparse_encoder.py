@@ -3,11 +3,11 @@ from __future__ import annotations
 import math
 import pytest
 
-from document_ai.embedding.sparse.lexical import (
+from documents.embedding.sparse.lexical import (
     LexicalSparseEncoder,
     get_lexical_sparse_encoder,
 )
-from document_ai.search.retriever import _sparse_dot_product
+from documents.search.retriever import _sparse_dot_product
 
 
 @pytest.fixture
@@ -104,8 +104,8 @@ def test_korean_inflected_keyword_matching(encoder):
 
 
 def test_embed_models_enriches_dense_provider(monkeypatch):
-    from document_ai.embedding import embeding_models
-    from document_ai.embedding.providers.base import EmbeddingProvider, EmbeddingProviderSpec, EmbeddingResult
+    from documents.embedding import embeding_models
+    from documents.embedding.providers.base import EmbeddingProvider, EmbeddingProviderSpec, EmbeddingResult
 
     class FakeDenseProvider(EmbeddingProvider):
         backend = "fake_dense"

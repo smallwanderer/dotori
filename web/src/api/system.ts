@@ -26,7 +26,6 @@ interface ApiServerPolicyResponse {
     updated_at: string | null
     model: string
     runtime: string
-    priority_preset: string
     selection_mode: string
     serving_concurrency: number
   }
@@ -48,7 +47,7 @@ export const systemApi = {
   },
 
   async getServerPolicy(): Promise<ServerPolicySummary> {
-    const payload = await apiRequest<ApiServerPolicyResponse>('/api/document-ai/v1/server-policy/')
+    const payload = await apiRequest<ApiServerPolicyResponse>('/api/v1/server-policy/')
     return {
       operationMode: payload.operation_mode,
       capabilities: Object.fromEntries(
@@ -78,7 +77,6 @@ export const systemApi = {
         updatedAt: payload.rag.updated_at,
         model: payload.rag.model,
         runtime: payload.rag.runtime,
-        priorityPreset: payload.rag.priority_preset,
         selectionMode: payload.rag.selection_mode,
         servingConcurrency: payload.rag.serving_concurrency,
       },

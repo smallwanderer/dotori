@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from document_ai.models import ChunkSegmentEmbedding
+from documents.models import ChunkSegmentEmbedding
 
 
 class Command(BaseCommand):

@@ -8,9 +8,9 @@ from django.utils import timezone
 
 from config.enums import AIStatus
 from config.tracing import get_trace_id
-from document_ai.db_span import capture_db_spans
-from document_ai.embedding.providers.base import EmbeddingBusyError
-from document_ai.performance import datetime_delta_ms, elapsed_ms, put_metric
+from documents.db_span import capture_db_spans
+from documents.embedding.providers.base import EmbeddingBusyError
+from documents.performance import datetime_delta_ms, elapsed_ms, put_metric
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +40,8 @@ def search_documents_sync(
 ) -> tuple[list[dict], dict]:
     """Run retrieval in the request process without a Celery job boundary."""
     from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
-    from document_ai.search.retriever import VectorRetriever
-    from document_ai.services.capability_admission import require_capability
+    from documents.search.retriever import VectorRetriever
+    from documents.services.capability_admission import require_capability
 
     require_capability(DOCUMENT_SEMANTIC_SEARCH)
     started = perf_counter()
@@ -64,7 +64,7 @@ def search_documents_sync(
 
 
 def perform_vector_search_sync(job_id: int, *, retries: int = 0, max_retries: int = 1) -> dict:
-    from document_ai.models import SearchJob
+    from documents.models import SearchJob
 
     try:
         job = SearchJob.objects.select_related("owner", "workspace", "query_log").get(pk=job_id)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from document_ai.embedding.providers.base import EmbeddingResult
+from documents.embedding.providers.base import EmbeddingResult
 
 
 @dataclass(frozen=True)

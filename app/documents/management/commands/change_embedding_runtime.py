@@ -8,17 +8,17 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from config.enums import AIStatus
-from document_ai.embedding.registry import get_embedding_provider
-from document_ai.embedding.indexes import replace_active_hnsw_index
-from document_ai.embedding.store_registry import get_embedding_store_instance
-from document_ai.models import (
+from documents.embedding.registry import get_embedding_provider
+from documents.embedding.indexes import replace_active_hnsw_index
+from documents.embedding.store_registry import get_embedding_store_instance
+from documents.models import (
     ChunkSegmentEmbedding,
     DocumentChunk,
     DocumentParseResult,
     EmbeddingGeneration,
 )
-from document_ai.parsers.text_utils import normalize_extracted_text
-from document_ai.services.embedding_runtime_config import (
+from documents.parsers.text_utils import normalize_extracted_text
+from documents.services.embedding_runtime_config import (
     clear_embedding_runtime_cache,
     load_embedding_runtime,
 )

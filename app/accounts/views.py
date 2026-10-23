@@ -13,20 +13,18 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.conf import settings
 
 from .forms import EmailAuthenticationForm, ResendVerificationEmailForm, UserRegistrationForm
-from .models import User, APIToken, SyncQuota
+from .models import User, APIToken
 from .api_responses import api_error_response, is_json_api_request
 from .services import create_local_profile, send_account_activation_email, update_account_email
 from .tokens import account_activation_token
-from document_ai.models import LLMEndpoint
-from document_ai.services.llm_endpoint_service import (
+from documents.models import LLMEndpoint
+from documents.services.llm_endpoint_service import (
     check_llm_endpoint,
     delete_llm_endpoint,
     get_user_llm_settings_context,
     set_user_rag_model,
     upsert_llm_endpoint,
 )
-from workspaces.models import WorkspaceMembership
-
 
 TERMS_VERSION = "2026-06-03"
 PRIVACY_VERSION = "2026-06-03"
@@ -336,7 +334,7 @@ def settings_view(request):
         elif action in {"create_llm_endpoint", "delete_llm_endpoint", "check_llm_endpoint", "set_rag_model"}:
             is_admin = (
                 request.workspace_membership is not None
-                and request.workspace_membership.role == WorkspaceMembership.ROLE_ADMIN
+                and request.workspace_membership.is_admin
             )
             if not is_admin:
                 messages.error(request, "이 설정은 워크스페이스 관리자만 변경할 수 있습니다.")
@@ -406,11 +404,11 @@ def settings_view(request):
 
     tokens = request.user.api_tokens.all().order_by("-created_at")
 
-    # Sync quota
-    quota, _ = SyncQuota.objects.get_or_create(user=request.user)
-    used_mb = round(quota.used_size / 1024 / 1024, 1)
-    total_gb = round(quota.total_size / 1024 / 1024 / 1024, 1)
-    quota_pct = round(quota.used_size / quota.total_size * 100, 1) if quota.total_size else 0
+    # Storage usage is owned and kept current by the files app, per workspace.
+    storage = getattr(request.workspace, "storage", None)
+    used_mb = round(storage.used_size / 1024 / 1024, 1) if storage else 0
+    total_gb = round(storage.total_size / 1024 / 1024 / 1024, 1) if storage else 0
+    quota_pct = storage.usage_percent if storage else 0
 
     # File count
     file_count = request.user.files.filter(is_trashed=False).count() if hasattr(request.user, "files") else 0
@@ -425,7 +423,7 @@ def settings_view(request):
         "workspace": request.workspace,
         "is_workspace_admin": (
             request.workspace_membership is not None
-            and request.workspace_membership.role == WorkspaceMembership.ROLE_ADMIN
+            and request.workspace_membership.is_admin
         ),
         **get_user_llm_settings_context(request.workspace, owner=request.user),
     }

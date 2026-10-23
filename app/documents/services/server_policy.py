@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import os
-import json
 
 import requests
 
-from capabilities.config import CapabilityConfigError, capability_config_path, load_capability_config
+from capabilities.deployment import DeploymentSnapshotError, load_deployment_snapshot
 from capabilities.registry import CAPABILITY_REGISTRY
 
-from document_ai.services.embedding_runtime_config import (
+from documents.services.embedding_runtime_config import (
     EmbeddingRuntimeConfigError,
     load_embedding_runtime,
 )
-from document_ai.services.rag_runtime_config import (
+from llm_installation.rag_runtime_config import (
     load_llm_runtime_status,
     probe_server_rag_runtime,
     target_from_persisted_config,
@@ -29,7 +28,6 @@ def build_rag_summary(*, enabled: bool = True) -> dict:
             "updated_at": None,
             "model": "",
             "runtime": "",
-            "priority_preset": "balanced",
             "selection_mode": "automatic",
             "serving_concurrency": 0,
         }
@@ -48,7 +46,6 @@ def build_rag_summary(*, enabled: bool = True) -> dict:
         "updated_at": status.get("updated_at"),
         "model": target.model if target else "",
         "runtime": target.runtime if target else "",
-        "priority_preset": target.priority_preset if target else "balanced",
         "selection_mode": target.selection_mode if target else "automatic",
         "serving_concurrency": serving_profile.get("serving_concurrency", 0),
     }
@@ -56,7 +53,7 @@ def build_rag_summary(*, enabled: bool = True) -> dict:
 
 def build_embedding_summary(operation_mode: str, *, probe: bool = False) -> dict:
     from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
-    from document_ai.services.capability_admission import capability_enabled
+    from documents.services.capability_admission import capability_enabled
 
     _ = operation_mode  # Compatibility parameter; capability config is authoritative.
     enabled = capability_enabled(DOCUMENT_SEMANTIC_SEARCH)
@@ -120,78 +117,56 @@ def build_embedding_summary(operation_mode: str, *, probe: bool = False) -> dict
 
 
 def _deployed_services() -> tuple[set[str], str]:
-    path = (
-        capability_config_path().parent
-        / "deployment_scopes"
-        / "production"
-        / "deployment_plan.json"
-    )
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        snapshot = load_deployment_snapshot()
+    except DeploymentSnapshotError:
         return set(), ""
-    services = set(payload.get("core_services") or [])
-    services.update(
-        worker.get("compose_service")
-        for worker in payload.get("workers") or []
-        if worker.get("enabled") and worker.get("compose_service")
-    )
-    return services, str(payload.get("capability_revision") or "")
+    return set(snapshot.services), snapshot.capability_revision
 
 
 def _deployed_operation_mode() -> str:
-    path = (
-        capability_config_path().parent
-        / "deployment_scopes"
-        / "production"
-        / "deployment_plan.json"
-    )
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        snapshot = load_deployment_snapshot()
+    except DeploymentSnapshotError:
         return os.environ.get("DOTORI_OPERATION_MODE", "search").strip().lower()
-    mode = str(payload.get("mode") or "").strip().lower()
-    return mode or os.environ.get("DOTORI_OPERATION_MODE", "search").strip().lower()
+    if not snapshot.selected_modules:
+        return "basic"
+    if snapshot.provider_enabled("llm"):
+        return "rag"
+    if snapshot.provider_enabled("embedding"):
+        return "search"
+    return "extract"
 
 
 def build_capability_summaries(*, probe: bool = False) -> dict[str, dict]:
     from capabilities.execution import executor_url, get_execution_role
     try:
-        config = load_capability_config()
+        snapshot = load_deployment_snapshot()
         config_error = ""
-    except CapabilityConfigError as exc:
-        config = None
+    except DeploymentSnapshotError as exc:
+        snapshot = None
         config_error = str(exc)
     deployed_services, deployed_revision = _deployed_services()
-    legacy_deployment = not deployed_revision
     summaries = {}
     for capability_id, definition in CAPABILITY_REGISTRY.items():
-        enabled = bool(config and config.is_enabled(capability_id))
+        installed_in_plan = bool(snapshot and snapshot.is_installed(capability_id))
+        enabled = bool(snapshot and snapshot.is_enabled(capability_id))
         required_services = {
             service
             for role in definition.execution_roles
             if (service := get_execution_role(role).compose_service)
         }
-        installed = enabled and (
-            legacy_deployment or required_services.issubset(deployed_services)
-        )
-        revision_matches = bool(
-            config
-            and (legacy_deployment or deployed_revision == config.revision)
-        )
-        available = installed and revision_matches
+        installed = installed_in_plan and required_services.issubset(deployed_services)
+        available = enabled and installed
         status = "disabled"
         reason_code = "CAPABILITY_DISABLED"
         if config_error:
             status = "invalid_config"
             reason_code = "CAPABILITY_CONFIG_INVALID"
             available = False
-        elif enabled and not installed:
+        elif installed_in_plan and not installed:
             status = "not_installed"
             reason_code = "CAPABILITY_NOT_INSTALLED"
-        elif enabled and not revision_matches:
-            status = "revision_mismatch"
-            reason_code = "CAPABILITY_UNAVAILABLE"
         elif enabled:
             status = "configured"
             reason_code = ""
@@ -213,7 +188,7 @@ def build_capability_summaries(*, probe: bool = False) -> dict[str, dict]:
             "status": status,
             "reason_code": reason_code,
             "contract_version": definition.contract_version,
-            "config_revision": config.revision if config else "",
+            "config_revision": snapshot.capability_revision if snapshot else "",
             "deployment_revision": deployed_revision,
             "detail": config_error,
         }
@@ -222,9 +197,13 @@ def build_capability_summaries(*, probe: bool = False) -> dict[str, dict]:
 
 def build_server_policy_payload(*, probe_embedding: bool = False) -> dict:
     operation_mode = _deployed_operation_mode()
+    try:
+        rag_enabled = load_deployment_snapshot().provider_enabled("llm")
+    except DeploymentSnapshotError:
+        rag_enabled = False
     return {
         "operation_mode": operation_mode,
-        "rag": build_rag_summary(enabled=operation_mode == "rag"),
+        "rag": build_rag_summary(enabled=rag_enabled),
         "embedding": build_embedding_summary(operation_mode, probe=probe_embedding),
         "capabilities": build_capability_summaries(probe=probe_embedding),
     }

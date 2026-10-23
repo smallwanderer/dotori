@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from document_ai.parsers.hwp_parser import _normalize_extracted_text
-from document_ai.parsers.text_utils import (
+from documents.parsers.hwp_parser import _normalize_extracted_text
+from documents.parsers.text_utils import (
     _restore_protected_table_entities,
     serialize_meta,
     strip_inline_code_in_table_rows,

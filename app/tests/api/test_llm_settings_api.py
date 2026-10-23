@@ -5,7 +5,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from document_ai.models import LLMEndpoint
+from documents.models import LLMEndpoint
 from workspaces.models import WorkspaceMembership
 from workspaces.services import create_team_workspace
 
@@ -34,7 +34,7 @@ class LLMSettingsApiTests(TestCase):
             status=WorkspaceMembership.STATUS_ACTIVE,
         )
         self.server_target_patch = patch(
-            "document_ai.services.llm_endpoint_service.get_cached_server_rag_target",
+            "documents.services.llm_endpoint_service.get_cached_server_rag_target",
             return_value=SimpleNamespace(base_url="http://test-rag:8080", model="test-server-model"),
         )
         self.server_target_patch.start()

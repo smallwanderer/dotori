@@ -72,7 +72,7 @@ class ResourceSnapshot(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=["service", "-collected_at"]),
+            models.Index(fields=["service", "-collected_at"], name="docs_res_service_collected_idx"),
         ]
         ordering = ["-collected_at"]
 

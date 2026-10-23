@@ -1,4 +1,6 @@
 import json
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -7,13 +9,16 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.http import StreamingHttpResponse
 from django.test import Client, TestCase, override_settings
-from django.urls import reverse
+from django.urls import resolve, reverse
 from django.utils import timezone
 
 from accounts.models import APIToken
+from capabilities.deployment import clear_deployment_snapshot_cache
+from capabilities.modules import DOCUMENTS_MODULE
 from config.enums import AIStatus, NodeType
-from document_ai.models import DocumentChunk, DocumentParseResult, RAGJob
+from documents.models import DocumentChunk, DocumentParseResult, RAGJob
 from files.models import FileBlob, Node
+from installation.deployment import build_module_deployment_plan, write_deployment_plan
 
 
 pytestmark = pytest.mark.unit
@@ -26,6 +31,19 @@ class WebApiContractTests(TestCase):
     """Consumer-facing baseline for the Django-template to SPA migration."""
 
     def setUp(self):
+        self.deployment_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.deployment_directory.cleanup)
+        plan = build_module_deployment_plan([DOCUMENTS_MODULE])
+        plan_path = write_deployment_plan(
+            plan, repo_root=Path(self.deployment_directory.name)
+        )
+        self.deployment_env = patch.dict(
+            "os.environ", {"DOTORI_DEPLOYMENT_PLAN_PATH": str(plan_path)}
+        )
+        self.deployment_env.start()
+        self.addCleanup(self.deployment_env.stop)
+        clear_deployment_snapshot_cache()
+        self.addCleanup(clear_deployment_snapshot_cache)
         self.user = User.objects.create_user(
             email="web-contract@example.com",
             password="password",
@@ -95,10 +113,10 @@ class WebApiContractTests(TestCase):
             "accounts_api:login": "/api/accounts/v1/login/",
             "accounts_api:logout": "/api/accounts/v1/logout/",
             "accounts_api:cli-tokens": "/api/accounts/v1/cli-tokens/",
-            "document_ai:vector-search": "/api/document-ai/v1/search/",
-            "document_ai:rag-stream": "/api/document-ai/v1/rag/stream/",
-            "document_ai:server-policy": "/api/document-ai/v1/server-policy/",
-            "document_ai:vector-tuning": "/api/document-ai/v1/tuning/",
+            "documents:vector-search": "/api/v1/search/",
+            "documents:rag-stream": "/api/v1/rag/stream/",
+            "documents:server-policy": "/api/v1/server-policy/",
+            "documents:vector-tuning": "/api/v1/search/tuning/",
             "cli_api:identity": "/api/cli/v1/identity/",
             "sync_api:identity": "/api/sync/v1/identity/",
             "sync_api:ping": "/api/sync/v1/ping/",
@@ -130,6 +148,24 @@ class WebApiContractTests(TestCase):
         for route_name, expected_path in uid_routes.items():
             with self.subTest(route_name=route_name):
                 self.assertEqual(reverse(route_name, kwargs={"uid": sample_uid}), expected_path)
+
+    def test_deprecated_document_ai_paths_still_resolve(self):
+        """Delete together with deprecated_document_ai_urlpatterns."""
+        deprecated_to_current = {
+            "/api/document-ai/v1/search/": "/api/v1/search/",
+            "/api/document-ai/v1/rag/stream/": "/api/v1/rag/stream/",
+            "/api/document-ai/v1/server-policy/": "/api/v1/server-policy/",
+            "/api/document-ai/v1/tuning/": "/api/v1/search/tuning/",
+            "/api/document-ai/v1/operations/status/": "/api/v1/operations/status/",
+        }
+        def handler(path):
+            # as_view() builds a new function per route, so compare the class.
+            func = resolve(path).func
+            return getattr(func, "view_class", func)
+
+        for deprecated_path, current_path in deprecated_to_current.items():
+            with self.subTest(path=deprecated_path):
+                self.assertEqual(handler(deprecated_path), handler(current_path))
 
     def test_file_list_returns_stable_fields_and_hides_other_owners(self):
         folder = Node.objects.create(
@@ -178,7 +214,7 @@ class WebApiContractTests(TestCase):
             }.issubset(payload["files"][0])
         )
 
-    @patch("document_ai.signals.enqueue_parse")
+    @patch("documents.signals.enqueue_parse")
     def test_multipart_upload_returns_owned_file_contract(self, parse_delay):
         upload = SimpleUploadedFile(
             "contract.txt",
@@ -186,10 +222,12 @@ class WebApiContractTests(TestCase):
             content_type="text/plain",
         )
 
-        response = self.client.post(
-            reverse("files:api_upload"),
-            data={"file": upload, "description": "SPA upload", "ai_processing_enabled": "1"},
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                reverse("files:api_upload"),
+                data={"file": upload, "description": "SPA upload", "ai_processing_enabled": "1"},
+            )
+            parse_delay.assert_not_called()
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -258,7 +296,7 @@ class WebApiContractTests(TestCase):
             node_type=NodeType.FILE,
             parent=folder,
         )
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             FileBlob.objects.create(
                 node=own_file,
                 original_name="scope.txt",
@@ -308,11 +346,11 @@ class WebApiContractTests(TestCase):
             ],
         }
         with patch(
-            "document_ai.search.views.search_documents_sync",
+            "documents.search.views.search_documents_sync",
             return_value=([result], {"request_search_ms": 12.5}),
         ) as search:
             response = self.client.post(
-                reverse("document_ai:vector-search"),
+                reverse("documents:vector-search"),
                 data=json.dumps({"query": "policy", "top_k": 3}),
                 content_type="application/json",
             )
@@ -338,11 +376,11 @@ class WebApiContractTests(TestCase):
 
     def test_basic_search_bypasses_query_understanding(self):
         with patch(
-            "document_ai.search.views.search_documents_sync",
+            "documents.search.views.search_documents_sync",
             return_value=([], {"request_search_ms": 3.0}),
         ) as search:
             response = self.client.post(
-                reverse("document_ai:vector-search"),
+                reverse("documents:vector-search"),
                 data=json.dumps({"mode": "basic", "query": "  direct policy  "}),
                 content_type="application/json",
             )
@@ -366,14 +404,14 @@ class WebApiContractTests(TestCase):
         })
 
     def test_search_returns_embedding_busy_as_retryable_503(self):
-        from document_ai.embedding.providers.base import EmbeddingBusyError
+        from documents.embedding.providers.base import EmbeddingBusyError
 
         with patch(
-            "document_ai.search.views.search_documents_sync",
+            "documents.search.views.search_documents_sync",
             side_effect=EmbeddingBusyError("embedding-executor is busy", retry_after_seconds=7.0),
         ):
             response = self.client.post(
-                reverse("document_ai:vector-search"),
+                reverse("documents:vector-search"),
                 data=json.dumps({"mode": "basic", "query": "policy"}),
                 content_type="application/json",
             )
@@ -394,24 +432,24 @@ class WebApiContractTests(TestCase):
         )
         admission_token = SimpleNamespace(release=Mock(), release_async=AsyncMock())
         with patch(
-            "document_ai.search.views.build_rag_llm_snapshot",
+            "documents.search.views.build_rag_llm_snapshot",
             return_value={
                 "llm_endpoint_name": "Server runtime",
                 "llm_base_url": "http://rag-runtime:8080",
                 "llm_model": "test-model",
             },
         ), patch(
-            "document_ai.search.views.server_rag_runtime_availability",
+            "documents.search.views.server_rag_runtime_availability",
             return_value=(True, {}),
         ), patch(
-            "document_ai.search.views.acquire_rag_admission_token_async",
+            "documents.search.views.acquire_rag_admission_token_async",
             new=AsyncMock(return_value=admission_token),
         ), patch(
-            "document_ai.rag.streaming.create_rag_streaming_response_async",
+            "documents.rag.streaming.create_rag_streaming_response_async",
             new=AsyncMock(return_value=stream_response),
         ):
             response = self.client.post(
-                reverse("document_ai:rag-stream"),
+                reverse("documents:rag-stream"),
                 data=json.dumps({"question": "summary", "top_k": 3, "language": "ko"}),
                 content_type="application/json",
             )
@@ -430,21 +468,21 @@ class WebApiContractTests(TestCase):
 
     def test_rag_stream_capacity_error_is_json_with_retry_after(self):
         with patch(
-            "document_ai.search.views.build_rag_llm_snapshot",
+            "documents.search.views.build_rag_llm_snapshot",
             return_value={
                 "llm_endpoint_name": "Server runtime",
                 "llm_base_url": "http://rag-runtime:8080",
                 "llm_model": "test-model",
             },
         ), patch(
-            "document_ai.search.views.server_rag_runtime_availability",
+            "documents.search.views.server_rag_runtime_availability",
             return_value=(True, {}),
         ), patch(
-            "document_ai.search.views.acquire_rag_admission_token_async",
+            "documents.search.views.acquire_rag_admission_token_async",
             new=AsyncMock(return_value=None),
         ):
             response = self.client.post(
-                reverse("document_ai:rag-stream"),
+                reverse("documents:rag-stream"),
                 data=json.dumps({"question": "summary", "language": "ko"}),
                 content_type="application/json",
             )
@@ -454,24 +492,24 @@ class WebApiContractTests(TestCase):
         self.assertGreater(int(response["Retry-After"]), 0)
 
     def test_rag_stream_embedding_busy_is_retryable_503_not_generic_500(self):
-        from document_ai.rag.streaming import RAGSearchBusyError
+        from documents.rag.streaming import RAGSearchBusyError
 
         admission_token = SimpleNamespace(release=Mock(), release_async=AsyncMock())
         with patch(
-            "document_ai.search.views.build_rag_llm_snapshot",
+            "documents.search.views.build_rag_llm_snapshot",
             return_value={
                 "llm_endpoint_name": "Server runtime",
                 "llm_base_url": "http://rag-runtime:8080",
                 "llm_model": "test-model",
             },
         ), patch(
-            "document_ai.search.views.server_rag_runtime_availability",
+            "documents.search.views.server_rag_runtime_availability",
             return_value=(True, {}),
         ), patch(
-            "document_ai.search.views.acquire_rag_admission_token_async",
+            "documents.search.views.acquire_rag_admission_token_async",
             new=AsyncMock(return_value=admission_token),
         ), patch(
-            "document_ai.rag.streaming.create_rag_streaming_response_async",
+            "documents.rag.streaming.create_rag_streaming_response_async",
             new=AsyncMock(
                 side_effect=RAGSearchBusyError(
                     "embedding-executor is busy (EMBEDDING_BUSY), retry after 6.0s",
@@ -480,7 +518,7 @@ class WebApiContractTests(TestCase):
             ),
         ):
             response = self.client.post(
-                reverse("document_ai:rag-stream"),
+                reverse("documents:rag-stream"),
                 data=json.dumps({"question": "summary", "language": "ko"}),
                 content_type="application/json",
             )
@@ -531,7 +569,6 @@ class WebApiContractTests(TestCase):
         target = SimpleNamespace(
             model="test-model",
             runtime="llama.cpp",
-            priority_preset="balanced",
             selection_mode="automatic",
             serving_profile={"serving_concurrency": 2},
         )
@@ -543,26 +580,26 @@ class WebApiContractTests(TestCase):
             distance_strategy="inner_product",
         )
         with patch(
-            "document_ai.services.server_policy.target_from_persisted_config",
+            "documents.services.server_policy.target_from_persisted_config",
             return_value=target,
         ), patch(
-            "document_ai.services.server_policy.load_llm_runtime_status",
+            "documents.services.server_policy.load_llm_runtime_status",
             return_value={
                 "status": "healthy",
                 "reason_code": "",
                 "updated_at": "2026-08-26T00:00:00+00:00",
             },
         ), patch(
-            "document_ai.services.server_policy.load_embedding_runtime",
+            "documents.services.server_policy.load_embedding_runtime",
             return_value=embedding,
         ), patch(
-            "document_ai.services.server_policy.probe_server_rag_runtime",
+            "documents.services.server_policy.probe_server_rag_runtime",
             return_value=True,
         ), patch(
-            "document_ai.services.server_policy._deployed_operation_mode",
+            "documents.services.server_policy._deployed_operation_mode",
             return_value="rag",
         ):
-            response = self.client.get(reverse("document_ai:server-policy"))
+            response = self.client.get(reverse("documents:server-policy"))
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()

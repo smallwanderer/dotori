@@ -7,6 +7,8 @@ import requests
 from django.conf import settings
 
 from capabilities.execution import executor_url
+from ..routing import resolve_embedding_identity
+from documents.services.embedding_runtime_config import get_active_embedding_runtime
 from .base import EmbeddingBusyError, EmbeddingProviderSpec, EmbeddingResult
 
 logger = logging.getLogger(__name__)
@@ -78,7 +80,10 @@ class RemoteEmbeddingProxyProvider:
         query_prefix: str = "",
         document_prefix: str = "",
         default_distance: str = "inner_product",
+        runtime_fingerprint: str | None = None,
     ):
+        self.runtime_fingerprint = (runtime_fingerprint if runtime_fingerprint is not None
+                                    else get_active_embedding_runtime().runtime_fingerprint)
         if backend:
             self.backend = backend
         self.spec = EmbeddingProviderSpec(
@@ -109,10 +114,11 @@ class RemoteEmbeddingProxyProvider:
         return self._embed_remote(text, input_type="document", max_length=max_length)
 
     def embed_documents(self, texts: list[str], *, max_length: int | None = None) -> list[EmbeddingResult]:
+        identity = resolve_embedding_identity(self.spec, self.runtime_fingerprint)
         try:
             response = requests.post(
                 f"{_embedding_service_url()}/embed/",
-                json={"input_type": "document", "texts": texts, "max_length": max_length},
+                json={"input_type": "document", "texts": texts, "max_length": max_length, "expected_identity": identity},
                 headers=_auth_headers(),
                 timeout=_embedding_batch_service_timeout(),
             )
@@ -133,6 +139,13 @@ class RemoteEmbeddingProxyProvider:
             ) from exc
 
         payload = response.json()
+        if payload.get("execution_identity") != identity:
+            raise RuntimeError("embedding-executor execution identity mismatch")
+        items = payload.get("results")
+        if not isinstance(items, list) or len(items) != len(texts):
+            raise RuntimeError("embedding-executor batch result count mismatch")
+        for item in items:
+            self._validate_result(item, identity)
         return [
             EmbeddingResult(
                 dense_vector=item["dense_vector"],
@@ -145,10 +158,11 @@ class RemoteEmbeddingProxyProvider:
         ]
 
     def _embed_remote(self, text: str, *, input_type: str, max_length: int | None) -> EmbeddingResult:
+        identity = resolve_embedding_identity(self.spec, self.runtime_fingerprint)
         try:
             response = requests.post(
                 f"{_embedding_service_url()}/embed/",
-                json={"input_type": input_type, "text": text, "max_length": max_length},
+                json={"input_type": input_type, "text": text, "max_length": max_length, "expected_identity": identity},
                 headers=_auth_headers(),
                 timeout=_embedding_service_timeout(),
             )
@@ -171,6 +185,9 @@ class RemoteEmbeddingProxyProvider:
             ) from exc
 
         payload = response.json()
+        if payload.get("execution_identity") != identity:
+            raise RuntimeError("embedding-executor execution identity mismatch")
+        self._validate_result(payload, identity)
         return EmbeddingResult(
             dense_vector=payload["dense_vector"],
             sparse_vector=payload.get("sparse_vector") or {},
@@ -178,6 +195,16 @@ class RemoteEmbeddingProxyProvider:
             backend=payload.get("backend", self.spec.backend),
             dimension=payload.get("dimension"),
         )
+
+    @staticmethod
+    def _validate_result(item, identity):
+        if (not isinstance(item, dict)
+                or item.get("model_name") != identity["model_name"]
+                or item.get("backend") != identity["backend"]
+                or item.get("dimension") != identity["dimension"]
+                or not isinstance(item.get("dense_vector"), list)
+                or len(item["dense_vector"]) != identity["dimension"]):
+            raise RuntimeError("embedding-executor result identity or dimension mismatch")
 
 
 RemoteBGEM3Provider = RemoteEmbeddingProxyProvider

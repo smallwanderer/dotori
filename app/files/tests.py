@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from accounts.models import APIToken
 from config.enums import AIStatus, FileOperation, NodeType
-from document_ai.models import (
+from documents.models import (
     ChunkEmbedding,
     DocumentChunk,
     DocumentParseResult,
@@ -228,7 +228,7 @@ class FileAIStatusTests(TestCase):
             ext=".txt",
             node_type=NodeType.FILE,
         )
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             FileBlob.objects.create(
                 node=self.file_node,
                 original_name="notes.txt",
@@ -260,7 +260,7 @@ class FileAIStatusTests(TestCase):
         )
 
         with patch(
-            "document_ai.services.embedding_runtime_config.get_active_embedding_runtime",
+            "documents.services.embedding_runtime_config.get_active_embedding_runtime",
             side_effect=active_embedding_runtime,
         ):
             ai_status = self.file_node.get_ai_status()
@@ -275,7 +275,7 @@ class FileAIStatusTests(TestCase):
 
     def test_unprocessed_file_is_not_reported_pending_when_documents_disabled(self):
         with patch(
-            "document_ai.services.capability_admission.capability_enabled",
+            "documents.services.capability_admission.capability_enabled",
             return_value=False,
         ):
             status = self.file_node.get_ai_status()
@@ -303,7 +303,7 @@ class FileAIStatusTests(TestCase):
         )
 
         with patch(
-            "document_ai.services.capability_admission.capability_enabled",
+            "documents.services.capability_admission.capability_enabled",
             side_effect=lambda capability_id: capability_id == DOCUMENT_EXTRACT,
         ):
             status = self.file_node.get_ai_status()
@@ -330,7 +330,7 @@ class FileAIStatusTests(TestCase):
         )
 
         with patch(
-            "document_ai.services.embedding_runtime_config.get_active_embedding_runtime",
+            "documents.services.embedding_runtime_config.get_active_embedding_runtime",
             side_effect=active_embedding_runtime,
         ):
             status = self.file_node.get_ai_status()
@@ -355,7 +355,7 @@ class FileAIStatusTests(TestCase):
         create_chunk_embedding(chunk)
 
         with patch(
-            "document_ai.services.embedding_runtime_config.get_active_embedding_runtime",
+            "documents.services.embedding_runtime_config.get_active_embedding_runtime",
             side_effect=active_embedding_runtime,
         ):
             payload = self.file_node.to_dict()
@@ -381,7 +381,7 @@ class FileAIStatusTests(TestCase):
         create_chunk_embedding(chunk, generation_id="retired-generation")
 
         with patch(
-            "document_ai.services.embedding_runtime_config.get_active_embedding_runtime",
+            "documents.services.embedding_runtime_config.get_active_embedding_runtime",
             side_effect=active_embedding_runtime,
         ):
             status = self.file_node.get_ai_status()
@@ -404,7 +404,7 @@ class StorageServiceTests(TestCase):
         )
         self.workspace = self.user.workspace_memberships.get(workspace__kind="personal").workspace
         upload = SimpleUploadedFile("report.txt", b"hello storage", content_type="text/plain")
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             self.node = storage_service.save_file(
                 workspace=self.workspace,
                 owner=self.user,
@@ -440,7 +440,7 @@ class StorageServiceTests(TestCase):
 
     def test_save_file_auto_renames_on_name_collision(self):
         upload = SimpleUploadedFile("report.txt", b"a different body", content_type="text/plain")
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             second_node = storage_service.save_file(
                 workspace=self.workspace,
                 owner=self.user,
@@ -452,7 +452,7 @@ class StorageServiceTests(TestCase):
         self.assertEqual(second_node.blob.original_name, "report.txt")
 
     def test_save_file_increments_past_multiple_collisions(self):
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             third_node = storage_service.save_file(
                 workspace=self.workspace,
                 owner=self.user,
@@ -500,7 +500,7 @@ class SyncApiUploadTests(TestCase):
     def test_sync_upload_can_disable_ai_processing(self):
         upload = SimpleUploadedFile("report.txt", b"sync", content_type="text/plain")
 
-        with patch("document_ai.signals.enqueue_parse") as delay:
+        with patch("documents.signals.enqueue_parse") as delay:
             response = self.post_upload(upload, {"ai_processing_enabled": "0"})
 
         self.assertEqual(response.status_code, 200)
@@ -511,8 +511,8 @@ class SyncApiUploadTests(TestCase):
     def test_sync_upload_succeeds_without_publishing_when_documents_disabled(self):
         upload = SimpleUploadedFile("core-only.txt", b"core", content_type="text/plain")
 
-        with patch("document_ai.signals.capability_enabled", return_value=False), patch(
-            "document_ai.signals.enqueue_parse"
+        with patch("documents.signals.capability_enabled", return_value=False), patch(
+            "documents.signals.enqueue_parse"
         ) as delay:
             response = self.post_upload(upload)
 
@@ -525,7 +525,7 @@ class SyncApiUploadTests(TestCase):
             owner=self.user, workspace=self.workspace,
             name="archive.zip", ext=".zip", node_type=NodeType.FILE,
         )
-        with patch("document_ai.signals.enqueue_parse") as enqueue:
+        with patch("documents.signals.enqueue_parse") as enqueue:
             FileBlob.objects.create(
                 node=node,
                 file=SimpleUploadedFile("archive.zip", b"content", content_type="application/zip"),
@@ -541,14 +541,14 @@ class SyncApiUploadTests(TestCase):
 
     def test_sync_upload_keeps_file_and_records_failed_parse_when_route_unavailable(self):
         from capabilities.registry import DOCUMENT_EXTRACT
-        from document_ai.services.capability_admission import CapabilityAdmissionError
+        from documents.services.capability_admission import CapabilityAdmissionError
 
         upload = SimpleUploadedFile("route-unavailable.txt", b"saved", content_type="text/plain")
         unavailable = CapabilityAdmissionError(
             DOCUMENT_EXTRACT, "CAPABILITY_UNAVAILABLE", "parse route is not registered"
         )
-        with patch("document_ai.signals.capability_enabled", return_value=True), patch(
-            "document_ai.signals.enqueue_parse", side_effect=unavailable
+        with patch("documents.signals.capability_enabled", return_value=True), patch(
+            "documents.signals.enqueue_parse", side_effect=unavailable
         ):
             response = self.post_upload(upload)
 
@@ -608,7 +608,7 @@ class SyncApiUploadTests(TestCase):
         node.ai_processing_enabled = True
         node.save(update_fields=["ai_processing_enabled", "updated_at"])
 
-        with patch("document_ai.signals.enqueue_parse") as delay:
+        with patch("documents.signals.enqueue_parse") as delay:
             response = self.post_upload(
                 SimpleUploadedFile("report.txt", b"new", content_type="text/plain"),
                 {"ai_processing_enabled": "0"},
@@ -641,7 +641,7 @@ class FileOperationLogInstrumentationTests(TestCase):
 
     def test_successful_upload_records_completed_log_with_timing(self):
         upload = SimpleUploadedFile("report.txt", b"hello", content_type="text/plain")
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             response = self.client.post("/files/api/v1/upload/", data={"file": upload})
 
         self.assertEqual(response.status_code, 200)
@@ -654,7 +654,7 @@ class FileOperationLogInstrumentationTests(TestCase):
         self.assertGreaterEqual(log.performance_metrics["total_ms"], 0)
 
     def test_uploading_same_name_twice_auto_renames_second_file(self):
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             first = self.client.post("/files/api/v1/upload/", data={"file": SimpleUploadedFile("report.txt", b"first", content_type="text/plain")})
             second = self.client.post("/files/api/v1/upload/", data={"file": SimpleUploadedFile("report.txt", b"second", content_type="text/plain")})
 
@@ -782,7 +782,7 @@ class FileBulkApiTests(TestCase):
             node_type=NodeType.FILE,
             parent=self.folder,
         )
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             FileBlob.objects.create(
                 node=node,
                 original_name=name,
@@ -906,7 +906,7 @@ class FileBulkApiTests(TestCase):
         self.assertEqual(readiness.json()["searchable_files"], 0)
 
         with patch(
-            "document_ai.services.embedding_runtime_config.get_active_embedding_runtime",
+            "documents.services.embedding_runtime_config.get_active_embedding_runtime",
             side_effect=active_embedding_runtime,
         ), patch("files.api_v1.file_views.enqueue_embedding") as enqueue:
             response = self.client.post(
@@ -934,10 +934,10 @@ class FileBulkApiTests(TestCase):
         )
         create_chunk_embedding(chunk, generation_id="retired-generation")
 
-        from document_ai.services.operation_status import _processing_status
+        from documents.services.operation_status import _processing_status
 
         with patch(
-            "document_ai.services.operation_status.get_active_embedding_runtime",
+            "documents.services.operation_status.get_active_embedding_runtime",
             side_effect=active_embedding_runtime,
         ):
             status = _processing_status()
@@ -949,11 +949,11 @@ class FileBulkApiTests(TestCase):
         )
 
     def test_operation_status_supports_core_only_without_embedding_config(self):
-        from document_ai.services.embedding_runtime_config import EmbeddingRuntimeConfigError
-        from document_ai.services.operation_status import _processing_status
+        from documents.services.embedding_runtime_config import EmbeddingRuntimeConfigError
+        from documents.services.operation_status import _processing_status
 
         with patch(
-            "document_ai.services.operation_status.get_active_embedding_runtime",
+            "documents.services.operation_status.get_active_embedding_runtime",
             side_effect=EmbeddingRuntimeConfigError("not configured"),
         ):
             status = _processing_status()
@@ -994,7 +994,7 @@ class FileBulkApiTests(TestCase):
 
     @patch("files.api_v1.file_views.enqueue_parse")
     def test_retry_ai_processing_requeues_failed_parse(self, delay_mock):
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             FileBlob.objects.create(
                 node=self.file_node,
                 file=SimpleUploadedFile("doc.txt", b"retry", content_type="text/plain"),
@@ -1016,7 +1016,7 @@ class FileBulkApiTests(TestCase):
         self.assertEqual(self.file_node.parse_result.status, AIStatus.PENDING)
 
     def test_retry_ai_processing_reports_disabled_capability(self):
-        from document_ai.services.capability_admission import CapabilityAdmissionError
+        from documents.services.capability_admission import CapabilityAdmissionError
 
         DocumentParseResult.objects.create(
             node=self.file_node,
@@ -1041,7 +1041,7 @@ class FileBulkApiTests(TestCase):
         self.assertEqual(self.file_node.parse_result.status, AIStatus.FAILED)
 
     def test_retry_ai_processing_reports_unavailable_capability(self):
-        from document_ai.services.capability_admission import CapabilityAdmissionError
+        from documents.services.capability_admission import CapabilityAdmissionError
 
         DocumentParseResult.objects.create(
             node=self.file_node,
@@ -1093,7 +1093,7 @@ class FileBulkApiTests(TestCase):
     @patch("files.api_v1.file_views.enqueue_embedding")
     @patch("files.api_v1.file_views.enqueue_parse")
     def test_retry_hierarchical_extract_requeues_parse(self, parse_mock, embedding_mock):
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             FileBlob.objects.create(
                 node=self.file_node,
                 file=SimpleUploadedFile("doc.txt", b"retry", content_type="text/plain"),

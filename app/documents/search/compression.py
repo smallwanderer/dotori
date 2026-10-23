@@ -7,13 +7,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from django.conf import settings
-from django.db import transaction
 from django.utils import timezone
 
-from document_ai.models import ChunkSegmentEmbedding
-from document_ai.parsers.config import get_embedding_backend, get_embedding_model
-from document_ai.parsers.text_utils import normalize_extracted_text
-from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+from documents.models import ChunkSegmentEmbedding
+from documents.parsers.config import get_embedding_backend, get_embedding_model
+from documents.parsers.text_utils import normalize_extracted_text
+from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +230,18 @@ class EmbeddingContextualCompressor:
         if not hasattr(chunk, "_meta"):
             return []
 
+        from documents.models import ChunkEmbedding
+        parent_stamp = ChunkEmbedding.objects.filter(chunk=chunk).values_list("provenance", flat=True).first()
+        if ChunkEmbedding.objects.filter(chunk=chunk, provenance__isnull=False).exists():
+            from documents.embedding.store_registry import get_embedding_store_instance
+            store = get_embedding_store_instance(model_name=self.model_name, backend=self.embedding_backend)
+            if not store.completed_embedding_exists(chunk_id_ref=chunk.pk).exists():
+                return []
+        from documents.services.embedding_runtime_config import load_embedding_runtime
+        runtime = load_embedding_runtime()
+        segment_stamp = {"schema": "dotori.segment-provenance.v1", "parent": parent_stamp,
+            "generation_id": runtime.generation_id, "runtime_fingerprint": runtime.runtime_fingerprint}
+
         specs = self.split_segments(chunk.text or "")
         if not specs:
             return []
@@ -249,7 +260,9 @@ class EmbeddingContextualCompressor:
             for spec in specs
             if spec.segment_index in existing
             and (
-                normalize_extracted_text(existing[spec.segment_index].text) != spec.text
+                (existing[spec.segment_index].provenance != segment_stamp
+                 and not (parent_stamp is None and existing[spec.segment_index].provenance is None))
+                or normalize_extracted_text(existing[spec.segment_index].text) != spec.text
                 or existing[spec.segment_index].char_start != spec.char_start
                 or existing[spec.segment_index].char_end != spec.char_end
             )
@@ -339,16 +352,25 @@ class EmbeddingContextualCompressor:
         if not specs:
             return {}
 
-        from document_ai.embedding.embeding_models import embed_document
+        from documents.embedding.embeding_models import embed_document
+        from documents.models import ChunkEmbedding
+        from documents.embedding.persistence import capture_batch_evidence, guarded_embedding_write
+        from orchestration.execution import StaleExecution
+
+        evidence = capture_batch_evidence([chunk])
+        parent_stamp = ChunkEmbedding.objects.filter(chunk=chunk).values_list("provenance", flat=True).first()
+        segment_stamp = {"schema": "dotori.segment-provenance.v1", "parent": parent_stamp,
+            "generation_id": evidence[chunk.pk]["generation_id"],
+            "runtime_fingerprint": evidence[chunk.pk]["runtime_fingerprint"]}
+        embeddings = [embed_document(spec.text, model_name=self.model_name,
+            backend=self.embedding_backend) for spec in specs]
 
         created = {}
-        with transaction.atomic():
-            for spec in specs:
-                embedding = embed_document(
-                    spec.text,
-                    model_name=self.model_name,
-                    backend=self.embedding_backend,
-                )
+        with guarded_embedding_write([chunk], evidence):
+            current_stamp = ChunkEmbedding.objects.filter(chunk=chunk).values_list("provenance", flat=True).first()
+            if current_stamp != parent_stamp:
+                raise StaleExecution("Segment parent embedding changed during inference")
+            for spec, embedding in zip(specs, embeddings):
                 obj, _ = ChunkSegmentEmbedding.objects.update_or_create(
                     chunk=chunk,
                     window_size=self.window_size,
@@ -360,6 +382,7 @@ class EmbeddingContextualCompressor:
                         "vector": embedding.dense_vector,
                         "sparse_vector": embedding.sparse_vector or {},
                         "last_used_at": timezone.now(),
+                        "provenance": segment_stamp,
                     },
                 )
                 created[spec.segment_index] = obj

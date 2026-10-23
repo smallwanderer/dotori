@@ -10,13 +10,19 @@ from llm_installation.embedding_catalog.models import (
     EmbeddingProfileEntry,
 )
 from llm_installation.embedding_catalog.presets import EMBEDDING_PRESETS
+from llm_installation.function_catalog import (
+    validate_function_evidence_target,
+    validate_function_list,
+)
 
 
 CATALOG_DIR = Path(__file__).parent
 MODELS_DIR = CATALOG_DIR / "models"
 PROFILES_DIR = CATALOG_DIR / "profiles"
 
-KNOWN_PROVIDERS = {"bgem3_hybrid", "sentence_transformers", "openai_compatible"}
+from capabilities.providers import EMBEDDING_BACKENDS
+
+KNOWN_PROVIDERS = frozenset(EMBEDDING_BACKENDS)
 KNOWN_STORES = {
     "pgvector_chunk_1024": 1024,
     "pgvector_chunk_640": 640,
@@ -64,50 +70,9 @@ def load_embedding_catalog() -> list[EmbeddingCatalogEntry]:
                 f"Embedding profile {profile.id} references unknown model "
                 f"{profile.model_id}."
             )
-        if profile.dimension != model.dimension:
-            raise ValueError(
-                f"Embedding profile {profile.id} dimension does not match model."
-            )
-        if profile.availability == "supported":
-            if profile.provider not in KNOWN_PROVIDERS:
-                raise ValueError(
-                    f"Supported profile {profile.id} references unknown provider "
-                    f"{profile.provider}."
-                )
-            store_dimension = KNOWN_STORES.get(profile.store)
-            if store_dimension != profile.dimension:
-                raise ValueError(
-                    f"Supported profile {profile.id} is incompatible with store "
-                    f"{profile.store}."
-                )
-
-        resolved.append(
-            EmbeddingCatalogEntry(
-                id=profile.id,
-                display_name=model.display_name,
-                description=model.description,
-                license=model.license,
-                model_id=model.id,
-                repo_id=model.repo_id,
-                revision=model.revision,
-                tokenizer_id=model.tokenizer_id,
-                tokenizer_revision=model.tokenizer_revision,
-                provider=profile.provider,
-                store=profile.store,
-                dimension=profile.dimension,
-                model_input_max_tokens=model.model_input_max_tokens,
-                supports_sparse=profile.supports_sparse,
-                normalize_embeddings=profile.normalize_embeddings,
-                distance_strategy=profile.distance_strategy,
-                query_prefix=profile.query_prefix,
-                document_prefix=profile.document_prefix,
-                availability=profile.availability,
-                priority=profile.priority,
-                presets=presets_by_entry_id.get(profile.id, []),
-                languages=model.languages,
-                footprint=model.footprint,
-            )
-        )
+        resolved.append(resolve_embedding_profile(
+            model, profile, presets=presets_by_entry_id.get(profile.id, [])
+        ))
 
     resolved_by_id = {entry.id: entry for entry in resolved}
     for preset, entry_id in EMBEDDING_PRESETS.items():
@@ -122,6 +87,96 @@ def load_embedding_catalog() -> list[EmbeddingCatalogEntry]:
             )
 
     return sorted(resolved, key=lambda item: item.priority, reverse=True)
+
+
+def resolve_embedding_profile(
+    model: EmbeddingModelEntry, profile: EmbeddingProfileEntry, *, presets=None,
+) -> EmbeddingCatalogEntry:
+    """Resolve a candidate pair using the same checks as bundled profiles."""
+    if profile.model_id != model.id:
+        raise ValueError("Embedding profile references a different model")
+    if profile.dimension != model.dimension and not (
+        profile.provider == "sentence_transformers"
+        and profile.provider_options.get("truncate_dim") == profile.dimension
+        and profile.dimension < model.dimension
+    ) and not (
+        profile.provider == "openai_compatible"
+        and profile.provider_options.get("send_dimensions") is True
+        and profile.dimension < model.dimension
+    ):
+        raise ValueError(
+            f"Embedding profile {profile.id} dimension does not match model."
+        )
+    try:
+        validate_function_list(profile.functions)
+    except ValueError as exc:
+        raise ValueError(f"Invalid functions for embedding profile {profile.id}.") from exc
+    for function in profile.functions:
+        if function.function_id != "text.embed":
+            raise ValueError(
+                f"Embedding profile {profile.id} cannot declare {function.function_id}."
+            )
+        if function.backend_ids and profile.provider not in function.backend_ids:
+            raise ValueError(
+                f"Function {function.function_id} is incompatible with provider {profile.provider}."
+            )
+        if function.verification != "declared_unverified":
+            try:
+                validate_function_evidence_target(
+                    function,
+                    model_id=model.id,
+                    model_revision=model.revision,
+                    target_id=profile.id,
+                    target_revision=model.revision,
+                    artifact_digest=model.revision,
+                    backend_id=profile.provider,
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid evidence for function {function.function_id} "
+                    f"on embedding profile {profile.id}."
+                ) from exc
+    if profile.availability == "supported":
+        if profile.provider not in KNOWN_PROVIDERS:
+            raise ValueError(
+                f"Supported profile {profile.id} references unknown provider "
+                f"{profile.provider}."
+            )
+        store_dimension = KNOWN_STORES.get(profile.store)
+        if store_dimension != profile.dimension:
+            raise ValueError(
+                f"Supported profile {profile.id} is incompatible with store "
+                f"{profile.store}."
+            )
+
+    return EmbeddingCatalogEntry(
+        id=profile.id,
+        display_name=model.display_name,
+        description=model.description,
+        license=model.license,
+        model_id=model.id,
+        repo_id=model.repo_id,
+        revision=model.revision,
+        tokenizer_id=model.tokenizer_id,
+        tokenizer_revision=model.tokenizer_revision,
+        tokenizer_options=model.tokenizer_options,
+        provider=profile.provider,
+        store=profile.store,
+        dimension=profile.dimension,
+        model_input_max_tokens=model.model_input_max_tokens,
+        supports_sparse=profile.supports_sparse,
+        normalize_embeddings=profile.normalize_embeddings,
+        distance_strategy=profile.distance_strategy,
+        query_prefix=profile.query_prefix,
+        document_prefix=profile.document_prefix,
+        availability=profile.availability,
+        priority=profile.priority,
+        presets=presets or [],
+        languages=model.languages,
+        footprint=model.footprint,
+        functions=profile.functions,
+        provider_options=profile.provider_options,
+    )
 
 
 def get_supported_embedding_catalog() -> list[EmbeddingCatalogEntry]:

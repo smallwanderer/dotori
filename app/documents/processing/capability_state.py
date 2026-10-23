@@ -14,7 +14,7 @@ def finalize_capability_rejection(
 ) -> None:
     error = {"code": error_code, "message": message}
     if work_kind == "parse_document":
-        from document_ai.models import DocumentParseResult
+        from documents.models import DocumentParseResult
 
         result, _created = DocumentParseResult.objects.get_or_create(
             node_id=payload["node_id"]
@@ -25,7 +25,7 @@ def finalize_capability_rejection(
         return
 
     if work_kind in {"plan_document_embedding", "embed_document_batch"}:
-        from document_ai.models import DocumentChunk
+        from documents.models import DocumentChunk
 
         chunks = DocumentChunk.objects.filter(
             status__in=[AIStatus.PENDING, AIStatus.PROCESSING]
@@ -38,7 +38,7 @@ def finalize_capability_rejection(
         return
 
     if work_kind == "evaluate_retrieval":
-        from workspaces.models import WorkspaceQualityEvaluationRun
+        from documents.models import WorkspaceQualityEvaluationRun
 
         WorkspaceQualityEvaluationRun.objects.filter(uid=payload["run_uid"]).update(
             status=WorkspaceQualityEvaluationRun.STATUS_FAILED,

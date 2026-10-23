@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 
-PriorityPreset = Literal["speed", "balanced", "quality"]
 SelectionMode = Literal["automatic", "manual"]
 SelectionStatus = Literal[
     "SELECTED",
@@ -26,7 +25,6 @@ class SelectionCandidate:
 class SelectionResult:
     selection_status: SelectionStatus
     selection_mode: SelectionMode
-    priority_preset: PriorityPreset
     selected_candidate: SelectionCandidate | None
     ranked_artifact_ids: list[str]
     reason_code: str
@@ -147,16 +145,10 @@ def _rank(candidates: list[SelectionCandidate]) -> list[SelectionCandidate]:
 
 def rank_manual_candidates(
     candidates: list[SelectionCandidate],
-    priority_preset: PriorityPreset,
 ) -> tuple[list[SelectionCandidate], list[SelectionCandidate]]:
     """Split candidates into the same FIT/RISKY-ranked-first, non-selectable-last
     order that manual selection enforces, so display order and eligibility can
-    never drift out of sync with `select_catalog_model`.
-
-    priority_preset no longer affects ranking (see `_rank`) -- it is accepted
-    only so callers can keep threading the value through for the resulting
-    SelectionResult's audit label."""
-    del priority_preset
+    never drift out of sync with `select_catalog_model`."""
     fit_candidates = []
     risky_candidates = []
     non_selectable = []
@@ -172,7 +164,6 @@ def rank_manual_candidates(
 
 def select_catalog_model(
     candidates: list[SelectionCandidate],
-    priority_preset: PriorityPreset,
     *,
     selection_mode: SelectionMode = "automatic",
     selected_artifact_id: str | None = None,
@@ -180,8 +171,6 @@ def select_catalog_model(
 ) -> SelectionResult:
     if selection_mode not in {"automatic", "manual"}:
         raise ValueError(f"Unknown selection_mode: {selection_mode}")
-    if priority_preset not in {"speed", "balanced", "quality"}:
-        raise ValueError(f"Unknown priority_preset: {priority_preset}")
 
     eligible = [
         candidate
@@ -203,12 +192,11 @@ def select_catalog_model(
     ]
 
     if selection_mode == "manual":
-        ranked, _ = rank_manual_candidates(candidates, priority_preset)
+        ranked, _ = rank_manual_candidates(candidates)
         if not selected_artifact_id:
             return SelectionResult(
                 selection_status="MANUAL_SELECTION_REQUIRED",
                 selection_mode=selection_mode,
-                priority_preset=priority_preset,
                 selected_candidate=None,
                 ranked_artifact_ids=[item.entry.id for item in ranked],
                 reason_code="MANUAL_SELECTION_REQUIRED",
@@ -221,7 +209,6 @@ def select_catalog_model(
             return SelectionResult(
                 selection_status="INVALID_MANUAL_SELECTION",
                 selection_mode=selection_mode,
-                priority_preset=priority_preset,
                 selected_candidate=None,
                 ranked_artifact_ids=[item.entry.id for item in ranked],
                 reason_code="INVALID_MANUAL_SELECTION",
@@ -230,7 +217,6 @@ def select_catalog_model(
             return SelectionResult(
                 selection_status="RISKY_CONFIRMATION_REQUIRED",
                 selection_mode=selection_mode,
-                priority_preset=priority_preset,
                 selected_candidate=None,
                 ranked_artifact_ids=[item.entry.id for item in ranked],
                 reason_code="RISKY_CONFIRMATION_REQUIRED",
@@ -238,7 +224,6 @@ def select_catalog_model(
         return SelectionResult(
             selection_status="SELECTED",
             selection_mode=selection_mode,
-            priority_preset=priority_preset,
             selected_candidate=selected,
             ranked_artifact_ids=[item.entry.id for item in ranked],
             reason_code=(
@@ -255,10 +240,9 @@ def select_catalog_model(
         return SelectionResult(
             selection_status="SELECTED",
             selection_mode=selection_mode,
-            priority_preset=priority_preset,
             selected_candidate=selected,
             ranked_artifact_ids=[item.entry.id for item in ranked],
-            reason_code=f"SELECTED_FIT_BY_{priority_preset.upper()}",
+            reason_code="SELECTED_FIT",
         )
 
     ranked = _rank(risky_candidates)
@@ -266,7 +250,6 @@ def select_catalog_model(
         return SelectionResult(
             selection_status="RISKY_CONFIRMATION_REQUIRED",
             selection_mode=selection_mode,
-            priority_preset=priority_preset,
             selected_candidate=None,
             ranked_artifact_ids=[item.entry.id for item in ranked],
             reason_code="RISKY_CONFIRMATION_REQUIRED",
@@ -275,16 +258,14 @@ def select_catalog_model(
         return SelectionResult(
             selection_status="SELECTED",
             selection_mode=selection_mode,
-            priority_preset=priority_preset,
             selected_candidate=ranked[0],
             ranked_artifact_ids=[item.entry.id for item in ranked],
-            reason_code=f"SELECTED_RISKY_BY_{priority_preset.upper()}",
+            reason_code="SELECTED_RISKY",
             risky_confirmed=True,
         )
     return SelectionResult(
         selection_status="NO_SELECTABLE_MODEL",
         selection_mode=selection_mode,
-        priority_preset=priority_preset,
         selected_candidate=None,
         ranked_artifact_ids=[],
         reason_code="NO_SELECTABLE_MODEL",

@@ -6,10 +6,10 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 
 from config.enums import AIStatus, NodeType
-from document_ai.models import DocumentChunk, DocumentParseResult
-from document_ai.parsers.schema import ChunkPayload, ParseResult
-from document_ai.processing.parsing import save_parse_result
-from document_ai.services.result_envelope import document_extract_result_envelope
+from documents.models import DocumentChunk, DocumentParseResult
+from documents.parsers.schema import ChunkPayload, ParseResult
+from documents.processing.parsing import save_parse_result
+from documents.services.result_envelope import document_extract_result_envelope
 from files.models import FileBlob, Node
 
 
@@ -31,7 +31,7 @@ class DocumentResultEnvelopeTests(TestCase):
             ext=".txt",
             node_type=NodeType.FILE,
         )
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             self.blob = FileBlob.objects.create(
                 node=self.node,
                 original_name="result.txt",
@@ -105,7 +105,7 @@ class DocumentResultEnvelopeTests(TestCase):
         )
 
         with patch(
-            "document_ai.processing.parsing._parse_metadata",
+            "documents.processing.parsing._parse_metadata",
             return_value={
                 "parser_backend": "docling",
                 "parser_version": "2.113.0",

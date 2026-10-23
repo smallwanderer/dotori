@@ -4,10 +4,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from document_ai.embedding.providers.sentence_transformers import (
+from documents.embedding.providers.sentence_transformers import (
     SentenceTransformersEmbeddingProvider,
 )
-from document_ai.embedding.registry import get_embedding_provider
+from documents.embedding.registry import get_embedding_provider
 
 pytestmark = pytest.mark.unit
 
@@ -17,7 +17,7 @@ class FakeModel:
         self.dimension = dimension
         self.max_seq_length = 512
 
-    def encode(self, texts, batch_size=None, normalize_embeddings=True, show_progress_bar=False):
+    def encode(self, texts, batch_size=None, normalize_embeddings=True, show_progress_bar=False, **kwargs):
         if isinstance(texts, str):
             texts = [texts]
         # Generate predictable float vectors of length self.dimension
@@ -30,7 +30,7 @@ class FakeModel:
 def test_sentence_transformers_provider_embed_document(monkeypatch):
     fake_model = FakeModel(dimension=640)
     monkeypatch.setattr(
-        "document_ai.embedding.providers.sentence_transformers.get_sentence_transformer_model",
+        "documents.embedding.providers.sentence_transformers.get_sentence_transformer_model",
         lambda *args, **kwargs: fake_model,
     )
 
@@ -60,7 +60,7 @@ def test_sentence_transformers_provider_embed_query_with_prefix(monkeypatch):
 
     capturing_model = CapturingModel(dimension=640)
     monkeypatch.setattr(
-        "document_ai.embedding.providers.sentence_transformers.get_sentence_transformer_model",
+        "documents.embedding.providers.sentence_transformers.get_sentence_transformer_model",
         lambda *args, **kwargs: capturing_model,
     )
 
@@ -79,7 +79,7 @@ def test_sentence_transformers_provider_embed_query_with_prefix(monkeypatch):
 def test_sentence_transformers_provider_embed_documents_batch(monkeypatch):
     fake_model = FakeModel(dimension=768)
     monkeypatch.setattr(
-        "document_ai.embedding.providers.sentence_transformers.get_sentence_transformer_model",
+        "documents.embedding.providers.sentence_transformers.get_sentence_transformer_model",
         lambda *args, **kwargs: fake_model,
     )
 
@@ -98,7 +98,7 @@ def test_sentence_transformers_provider_embed_documents_batch(monkeypatch):
 def test_sentence_transformers_provider_healthcheck(monkeypatch):
     fake_model = FakeModel(dimension=640)
     monkeypatch.setattr(
-        "document_ai.embedding.providers.sentence_transformers.get_sentence_transformer_model",
+        "documents.embedding.providers.sentence_transformers.get_sentence_transformer_model",
         lambda *args, **kwargs: fake_model,
     )
 
@@ -132,7 +132,7 @@ def test_registry_resolves_proxy_in_worker_process(monkeypatch):
         model_name="microsoft/harrier-oss-v1-270m",
         dimension=640,
     )
-    from document_ai.embedding.providers.remote import RemoteEmbeddingProxyProvider
+    from documents.embedding.providers.remote import RemoteEmbeddingProxyProvider
     assert isinstance(provider, RemoteEmbeddingProxyProvider)
     assert provider.spec.dimension == 640
     assert provider.backend == "sentence_transformers"

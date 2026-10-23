@@ -1619,7 +1619,7 @@
 
     const topK = document.getElementById('aiTopK').value;
 
-    fetch('/api/document-ai/v1/search/', {
+    fetch('/api/v1/search/', {
       method: 'POST',
       headers: {
         'X-CSRFToken': getCookie('csrftoken'),

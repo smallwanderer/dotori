@@ -4,14 +4,14 @@ from uuid import UUID
 
 from django.core.management.base import BaseCommand, CommandError
 
-from document_ai.search.hnsw_benchmark import (
+from documents.search.hnsw_benchmark import (
     DEFAULT_EF_SEARCH_VALUES,
     DEFAULT_K_VALUES,
     parse_positive_int_list,
     run_hnsw_benchmark,
     write_benchmark_result,
 )
-from document_ai.models import EmbeddingGeneration
+from documents.models import EmbeddingGeneration
 from workspaces.models import Workspace
 
 

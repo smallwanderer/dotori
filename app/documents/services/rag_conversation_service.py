@@ -11,8 +11,8 @@ from django.db.models import F, Max, Q
 from django.utils import timezone
 
 from config.enums import AIStatus, RAGStage
-from document_ai.models import RAGConversation, RAGJob, RAGMessage
-from document_ai.services.rag_cancel_service import set_rag_cancel_signal
+from documents.models import RAGConversation, RAGJob, RAGMessage
+from documents.services.rag_cancel_service import set_rag_cancel_signal
 from files.models import Node
 from workspaces.models import WorkspaceMembership
 
@@ -232,6 +232,9 @@ def append_user_message(*, conversation, user, content: str, client_request_id, 
 def reserve_session_turn(*, conversation, user, question: str, client_request_id, node_ids: list[str], retrieval_query: str, top_k: int, threshold: float | None, language: str, llm_snapshot: dict):
     """Atomically create the user/assistant/job records before admission."""
     from django.db.models import Max
+    from documents.services.llm_endpoint_service import split_rag_llm_snapshot
+
+    llm_job_fields, initial_metrics = split_rag_llm_snapshot(llm_snapshot)
 
     require_manager(user=user, conversation=conversation)
     with transaction.atomic():
@@ -263,7 +266,8 @@ def reserve_session_turn(*, conversation, user, question: str, client_request_id
             stage=RAGStage.QUEUED, stage_message="답변 생성을 준비하고 있습니다.",
             deadline_at=now + timedelta(seconds=rag_execution_deadline_seconds()),
             lease_expires_at=now + timedelta(seconds=rag_execution_lease_seconds()),
-            lease_heartbeat_at=now, **llm_snapshot,
+            lease_heartbeat_at=now, performance_metrics=initial_metrics,
+            **llm_job_fields,
         )
         assistant = RAGMessage.objects.create(
             conversation=locked, sequence=sequence + 1, role=RAGMessage.ROLE_ASSISTANT,

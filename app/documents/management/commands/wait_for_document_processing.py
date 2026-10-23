@@ -2,7 +2,7 @@ import time
 
 from django.core.management.base import BaseCommand, CommandError
 
-from document_ai.processing.drain import document_drain_snapshot
+from documents.processing.drain import document_drain_snapshot
 
 
 class Command(BaseCommand):

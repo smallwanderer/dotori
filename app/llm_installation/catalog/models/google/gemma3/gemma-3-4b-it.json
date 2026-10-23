@@ -32,5 +32,19 @@
             "ko",
             "en"
         ]
-    }
+    },
+    "functions": [
+        {
+            "function_id": "text.generate",
+            "verification": "contract_verified",
+            "artifact_ids": [
+                "gemma-3-4b-it-qat-q4_0-gguf"
+            ],
+            "backend_ids": [
+                "llamacpp-cpu"
+            ],
+            "adapter_contract": "openai-compatible-chat-completions-v1",
+            "evidence_ref": "text-generate-gemma3-qat-q4_0-llamacpp-cpu-20260930-command"
+        }
+    ]
 }

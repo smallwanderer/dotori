@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from document_ai.services.rag_runtime_config import (
+from llm_installation.rag_runtime_config import (
     get_llm_runtime_config_path,
 )
 from llm_installation.catalog import get_catalog_entry
@@ -39,7 +39,7 @@ def _profile():
 
 def _target(catalog):
     return resolve_server_rag_target(
-        profile=_profile(), catalog=catalog, check_endpoint=False, priority_preset="balanced"
+        profile=_profile(), catalog=catalog, check_endpoint=False
     )
 
 

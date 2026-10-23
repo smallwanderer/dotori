@@ -6,7 +6,10 @@ from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, Mapping
 
 
-HANDOFF_SCHEMA_VERSION = 1
+# 2 dropped the priority_preset label, which no longer influenced runtime
+# planning. The digest below covers the payload, so the version records the
+# shape change even though persisted handoffs are never re-verified.
+HANDOFF_SCHEMA_VERSION = 2
 
 
 class RuntimeHandoffError(ValueError):
@@ -62,7 +65,6 @@ class RuntimePolicyInput:
     backend_profile: str
     fit_status: str
     selection_mode: str
-    priority_preset: str
     selection_reason_code: str
     risky_confirmed: bool
     catalog_assessment_json: str
@@ -86,7 +88,6 @@ class RuntimePolicyInput:
             "backend_profile": self.backend_profile,
             "fit_status": self.fit_status,
             "selection_mode": self.selection_mode,
-            "priority_preset": self.priority_preset,
             "selection_reason_code": self.selection_reason_code,
             "risky_confirmed": self.risky_confirmed,
             "catalog_assessment": self.catalog_assessment,
@@ -167,7 +168,6 @@ def build_runtime_policy_input(
         "backend_profile": backend_profile,
         "fit_status": fit_status,
         "selection_mode": selection_result.selection_mode,
-        "priority_preset": selection_result.priority_preset,
         "selection_reason_code": selection_result.reason_code,
         "risky_confirmed": bool(selection_result.risky_confirmed),
         "catalog_assessment": assessment_snapshot,
@@ -181,7 +181,6 @@ def build_runtime_policy_input(
         backend_profile=backend_profile,
         fit_status=fit_status,
         selection_mode=selection_result.selection_mode,
-        priority_preset=selection_result.priority_preset,
         selection_reason_code=selection_result.reason_code,
         risky_confirmed=bool(selection_result.risky_confirmed),
         catalog_assessment_json=_canonical_json(assessment_snapshot),

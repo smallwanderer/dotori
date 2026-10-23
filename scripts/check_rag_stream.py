@@ -51,7 +51,7 @@ def run_once(args, index: int) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", default="http://localhost:8000/api/document-ai/v1/rag/stream/")
+    parser.add_argument("--url", default="http://localhost:8000/api/v1/rag/stream/")
     parser.add_argument("--cookie", required=True, help="Browser Cookie header value")
     parser.add_argument("--csrf-token", required=True)
     parser.add_argument("--question", default="선택한 문서의 핵심 내용을 요약해줘")

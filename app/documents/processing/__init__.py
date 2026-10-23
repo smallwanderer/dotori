@@ -1,4 +1,4 @@
-from document_ai.embedding.executor import (
+from documents.embedding.executor import (
     EmbeddingDispatchError,
     embed_document_chunk_sync,
     enqueue_embedding_tasks_sync,

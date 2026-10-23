@@ -1,0 +1,58 @@
+{
+  "acceptance_profile_id": null,
+  "acceptance_profile_revision": null,
+  "contract_checks": {
+    "nonstream_fixture_match": true,
+    "nonstream_http_ok": true,
+    "nonstream_response_schema": true,
+    "stream_done_received": true,
+    "stream_fixture_match": true,
+    "stream_frames_valid": true,
+    "stream_http_ok": true
+  },
+  "contract_version": "text-generate-v1",
+  "environment": {
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "python_version": "3.12.14"
+  },
+  "evaluator_version": "dotori-text-generate-contract-v2",
+  "evidence_id": "text-generate-gemma3-qat-q4_0-llamacpp-cpu-20260930-command",
+  "executed_at": "2026-09-30T06:34:25.465314+00:00",
+  "failures": [],
+  "fixture_set_id": "dotori-text-generate-smoke",
+  "fixture_set_revision": "v1",
+  "function_id": "text.generate",
+  "inference_options": {
+    "max_tokens": 16,
+    "request_timeout_seconds": 120.0,
+    "requests": [
+      "nonstream",
+      "stream"
+    ],
+    "temperature": 0
+  },
+  "input_preprocessing_version": "openai-chat-messages-v1",
+  "metrics": {
+    "nonstream_elapsed_ms": 1337.064,
+    "stream_elapsed_ms": 1033.303,
+    "stream_frame_count": 7.0
+  },
+  "model_id": "gemma-3-4b-it",
+  "model_revision": "15f73f5eee9c28f53afefef5723e29680c2fc78a",
+  "output_parsing_version": "openai-chat-completion-sse-v1",
+  "passed": true,
+  "sample_count": 2,
+  "schema_version": 1,
+  "targets": [
+    {
+      "adapter_contract": "openai-compatible-chat-completions-v1",
+      "artifact_digest": "76aed0a8285b83102f18b5d60e53c70d09eb4e9917a20ce8956bd546452b56e2",
+      "backend_id": "llamacpp-cpu",
+      "backend_version": "0.4.1-dev+11011.aa39d7a3e",
+      "target_id": "gemma-3-4b-it-qat-q4_0-gguf",
+      "target_revision": "15f73f5eee9c28f53afefef5723e29680c2fc78a"
+    }
+  ],
+  "thresholds": {},
+  "verification": "contract_verified"
+}

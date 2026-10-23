@@ -6,9 +6,9 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
 from config.enums import AIStatus, NodeType
-from document_ai.models import ChunkSegmentEmbedding, DocumentChunk, DocumentParseResult
-from document_ai.search.compression import EmbeddingContextualCompressor
-from document_ai.tasks import _build_rag_context
+from documents.models import ChunkSegmentEmbedding, DocumentChunk, DocumentParseResult
+from documents.search.compression import EmbeddingContextualCompressor
+from documents.tasks import _build_rag_context
 from files.models import Node
 
 pytestmark = pytest.mark.integration
@@ -76,7 +76,7 @@ class ContextualCompressionTests(TestCase):
             "context_text": self.chunk.text,
         }
 
-        with patch("document_ai.embedding.embeding_models.embed_document", side_effect=fake_embed) as embed_mock:
+        with patch("documents.embedding.embeding_models.embed_document", side_effect=fake_embed) as embed_mock:
             compressed = compressor.compress_evidence(
                 evidence=evidence,
                 query_embedding=query_embedding,
@@ -88,7 +88,7 @@ class ContextualCompressionTests(TestCase):
         assert ChunkSegmentEmbedding.objects.filter(chunk=self.chunk, window_size=2).count() > 0
         first_call_count = embed_mock.call_count
 
-        with patch("document_ai.embedding.embeding_models.embed_document", side_effect=fake_embed) as second_embed_mock:
+        with patch("documents.embedding.embeding_models.embed_document", side_effect=fake_embed) as second_embed_mock:
             compressor.compress_evidence(
                 evidence={**evidence, "compressed_text": ""},
                 query_embedding=query_embedding,
@@ -118,7 +118,7 @@ class ContextualCompressionTests(TestCase):
                 return SimpleNamespace(dense_vector=_vec(1.0), sparse_vector={})
             return SimpleNamespace(dense_vector=_vec(0.0, 1.0), sparse_vector={})
 
-        with patch("document_ai.embedding.embeding_models.embed_document", side_effect=fake_embed):
+        with patch("documents.embedding.embeding_models.embed_document", side_effect=fake_embed):
             compressed = compressor.compress_evidence(
                 evidence={
                     "chunk_id": self.chunk.id,
@@ -150,7 +150,7 @@ class ContextualCompressionTests(TestCase):
         def fake_embed(text, *args, **kwargs):
             return SimpleNamespace(dense_vector=_vec(0.0, 1.0), sparse_vector={})
 
-        with patch("document_ai.embedding.embeding_models.embed_document", side_effect=fake_embed):
+        with patch("documents.embedding.embeding_models.embed_document", side_effect=fake_embed):
             compressed = compressor.compress_evidence(
                 evidence={
                     "chunk_id": self.chunk.id,

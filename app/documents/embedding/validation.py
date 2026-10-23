@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.db import connection
 
-from document_ai.parsers.config import (
+from documents.parsers.config import (
     get_embedding_backend,
     get_embedding_dimension,
     get_embedding_model,
@@ -12,7 +12,7 @@ from document_ai.parsers.config import (
 
 from .registry import get_embedding_provider
 from .store_registry import get_embedding_store_instance
-from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
 
 def get_active_embedding_config() -> dict:
@@ -56,8 +56,8 @@ def get_pgvector_column_dimension(table_name: str, column_name: str) -> int | No
     if typmod is None or typmod < 0:
         return None
 
-    # pgvector stores vector dimension as typmod - 4.
-    return int(typmod) - 4
+    # pgvector's vector typmod stores the dimension directly.
+    return int(typmod)
 
 
 def validate_active_embedding_provider(*, validate_db_schema: bool = True) -> dict:
@@ -81,7 +81,7 @@ def validate_active_embedding_provider(*, validate_db_schema: bool = True) -> di
     db_dimension = None
     if validate_db_schema:
         db_dimension = get_pgvector_column_dimension(
-            "document_ai_chunkembedding",
+            "documents_chunkembedding",
             store.spec.dense_field,
         )
         if db_dimension and expected_dimension and db_dimension != expected_dimension:

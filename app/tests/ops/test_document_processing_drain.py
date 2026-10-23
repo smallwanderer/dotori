@@ -4,8 +4,8 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
-from document_ai.models import ExecutorJobReceipt
-from document_ai.processing.drain import document_drain_snapshot
+from documents.models import ExecutorJobReceipt
+from documents.processing.drain import document_drain_snapshot
 
 
 pytestmark = pytest.mark.unit
@@ -39,15 +39,15 @@ def test_wait_command_requires_two_consecutive_empty_observations():
     empty = Mock(pending_work=0, active_receipts=0, parse_queue_depth=0, embed_queue_depth=0)
 
     with patch(
-        "document_ai.management.commands.wait_for_document_processing.document_drain_snapshot",
+        "documents.management.commands.wait_for_document_processing.document_drain_snapshot",
         side_effect=[pending, empty, empty],
-    ), patch("document_ai.management.commands.wait_for_document_processing.time.sleep"):
+    ), patch("documents.management.commands.wait_for_document_processing.time.sleep"):
         call_command("wait_for_document_processing", timeout=10, poll_interval=0.05)
 
 
 def test_wait_command_fails_closed_when_state_cannot_be_inspected():
     with patch(
-        "document_ai.management.commands.wait_for_document_processing.document_drain_snapshot",
+        "documents.management.commands.wait_for_document_processing.document_drain_snapshot",
         side_effect=RuntimeError("redis unavailable"),
     ):
         with pytest.raises(CommandError, match="Unable to inspect"):
@@ -63,10 +63,10 @@ def test_wait_command_times_out_while_active_work_remains():
     )
 
     with patch(
-        "document_ai.management.commands.wait_for_document_processing.document_drain_snapshot",
+        "documents.management.commands.wait_for_document_processing.document_drain_snapshot",
         return_value=pending,
     ), patch(
-        "document_ai.management.commands.wait_for_document_processing.time.monotonic",
+        "documents.management.commands.wait_for_document_processing.time.monotonic",
         side_effect=[0.0, 1.0],
     ):
         with pytest.raises(CommandError, match="active=1"):

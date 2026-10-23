@@ -19,6 +19,34 @@ from files.models import FileBlob, Node
 logger = logging.getLogger(__name__)
 
 
+def scoped_recovery_blocked_node_ids():
+    """Legacy recovery must not expand/re-publish unfinished scoped requests.
+
+    Preparation-only manifests without an execution receipt do not block intake.
+    Retry/reconciliation belongs to the common request delivery path.
+    """
+    from documents.models import DocumentEmbeddingManifest, ExecutorJobReceipt
+    from django.db.models import CharField
+    from django.db.models.functions import Cast, Coalesce
+    from django.db.models import Value
+    from django.db.models.fields.json import KeyTextTransform
+    from documents.services.embedding_runtime_config import load_embedding_runtime
+    jobs = ExecutorJobReceipt.objects.filter(work_kind="embed_document")
+    runtime = load_embedding_runtime()
+    manifests = DocumentEmbeddingManifest.objects.annotate(
+        _approved_revision=KeyTextTransform("revision", "command__source"),
+        _approved_checksum=KeyTextTransform("checksum", "command__source"))
+    same_input = Q(_approved_revision=Cast("node__blob__uuid", CharField()),
+        _approved_checksum=Coalesce("node__blob__sha256", Value("")),
+        command__runtime__generation_id=runtime.generation_id,
+        command__runtime__fingerprint=runtime.runtime_fingerprint)
+    # A rejected/exhausted scoped job is not permission to bypass it through
+    # legacy retries. A genuinely new source/runtime can recover separately.
+    return manifests.filter(Q(job_id__in=jobs.filter(status="running").values("job_id"))
+        | (Q(job_id__in=jobs.filter(status="failed").values("job_id")) & same_input)
+    ).values_list("node_id", flat=True).distinct()
+
+
 def node_has_active_execution(node_id):
     from documents.models import ExecutorJobReceipt
     for receipt in ExecutorJobReceipt.objects.filter(status="running"):
@@ -103,6 +131,7 @@ def get_parse_recovery_node_ids(limit: int) -> list[int]:
         .values_list("node_id", flat=True)
     )
     node_ids.update(chunk_gap_ids)
+    node_ids.difference_update(scoped_recovery_blocked_node_ids())
     return sorted(node_ids)[:limit]
 
 
@@ -134,6 +163,7 @@ def get_embedding_recovery_chunk_ids(limit: int) -> list[int]:
             | Q(status=AIStatus.PROCESSING, created_at__lte=cutoff)
         )
         .filter(has_completed_embedding=False)
+        .exclude(parse_result__node_id__in=scoped_recovery_blocked_node_ids())
         .order_by("id")
     )
     return list(chunk_qs.values_list("id", flat=True)[:limit])

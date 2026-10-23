@@ -5,9 +5,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from django.conf import settings
-from django.utils import timezone
 
-from workspaces.models import WorkspaceQualityProfileRevision
+from documents.models import WorkspaceQualityProfileRevision
 
 
 SCHEMA_VERSION = 1
@@ -168,29 +167,25 @@ def _sparse_overrides(config: dict[str, Any], defaults: dict[str, Any]) -> dict[
     return {key: value for key, value in config.items() if not _same(value, defaults[key])}
 
 
-def _active_for_workspace(workspace, *, actor=None, lock=False):
+def _active_for_workspace(workspace, *, lock=False):
+    """The workspace's active quality profile row, or ``None`` if it has
+    never customized one.
+
+    This used to materialize a "Server defaults" row on first read. A
+    workspace's effective config without one is already exactly
+    ``retrieval_defaults()``/etc. (see ``get_effective_retrieval_config``
+    below, which never went through this function), so the row added
+    nothing but a sentinel. Returning ``None`` keeps this table scoped to
+    workspaces that actually overrode something; callers fall back to this
+    module's own default functions directly.
+    """
     query = WorkspaceQualityProfileRevision.objects.filter(
         workspace=workspace,
         status=WorkspaceQualityProfileRevision.STATUS_ACTIVE,
     )
     if lock:
-        active = query.select_for_update().first()
-    else:
-        active = query.select_related("created_by", "based_on").first()
-    if active is None:
-        active = WorkspaceQualityProfileRevision.objects.create(
-            workspace=workspace,
-            version=1,
-            revision=1,
-            status=WorkspaceQualityProfileRevision.STATUS_ACTIVE,
-            changed_axes=[WorkspaceQualityProfileRevision.AXIS_RETRIEVAL],
-            retrieval_config={},
-            validation_state="verified",
-            created_by=actor,
-            applied_at=timezone.now(),
-            note="Server defaults",
-        )
-    return active
+        return query.select_for_update().first()
+    return query.select_related("created_by", "based_on").first()
 
 
 def get_effective_retrieval_config(workspace) -> dict[str, Any]:
@@ -222,7 +217,7 @@ def profile_threshold_to_retriever(threshold: float | None) -> float | None:
     """Translate the profile's normalized minimum relevance into the active store contract."""
     if threshold is None:
         return None
-    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+    from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
     strategy = get_active_embedding_runtime().distance_strategy
     if strategy == "cosine":

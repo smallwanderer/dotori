@@ -2,8 +2,8 @@ import json
 
 from django.core.management.base import BaseCommand
 
-from document_ai.models import EmbeddingGeneration
-from document_ai.services.embedding_runtime_config import load_embedding_runtime
+from documents.models import EmbeddingGeneration
+from documents.services.embedding_runtime_config import load_embedding_runtime
 
 
 class Command(BaseCommand):

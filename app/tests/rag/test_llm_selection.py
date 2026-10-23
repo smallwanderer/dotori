@@ -55,21 +55,19 @@ def test_fit_always_outranks_risky():
             _candidate("risky-fast", fit_status="RISKY", tps=100),
             _candidate("fit-slow", fit_status="FIT", tps=1),
         ],
-        "speed",
         risky_confirmed=True,
     )
 
     assert result.selected_candidate.entry.id == "fit-slow"
-    assert result.reason_code == "SELECTED_FIT_BY_SPEED"
+    assert result.reason_code == "SELECTED_FIT"
 
 
 def test_risky_requires_explicit_confirmation():
     candidate = _candidate("risky", fit_status="RISKY")
 
-    pending = select_catalog_model([candidate], "balanced")
+    pending = select_catalog_model([candidate])
     selected = select_catalog_model(
         [candidate],
-        "balanced",
         risky_confirmed=True,
     )
 
@@ -79,14 +77,13 @@ def test_risky_requires_explicit_confirmation():
     assert selected.selected_candidate.entry.id == "risky"
 
 
-def test_speed_uses_tps_and_artifact_id_is_final_tie_break():
+def test_ranking_uses_tps_and_artifact_id_is_final_tie_break():
     result = select_catalog_model(
         [
             _candidate("z-slow", tps=5),
             _candidate("b-fast", tps=20),
             _candidate("a-fast", tps=20),
         ],
-        "speed",
     )
 
     assert result.ranked_artifact_ids == ["a-fast", "b-fast", "z-slow"]
@@ -98,7 +95,6 @@ def test_nofit_and_ineligible_candidates_are_never_selected():
             _candidate("nofit", fit_status="NOFIT"),
             _candidate("hidden", selectable=False),
         ],
-        "quality",
     )
 
     assert result.selection_status == "NO_SELECTABLE_MODEL"
@@ -108,7 +104,6 @@ def test_nofit_and_ineligible_candidates_are_never_selected():
 def test_manual_selection_uses_requested_fit_candidate():
     result = select_catalog_model(
         [_candidate("first", tps=100), _candidate("chosen", tps=1)],
-        "speed",
         selection_mode="manual",
         selected_artifact_id="chosen",
     )
@@ -122,13 +117,11 @@ def test_manual_risky_selection_requires_confirmation():
     candidate = _candidate("risky", fit_status="RISKY")
     pending = select_catalog_model(
         [candidate],
-        "quality",
         selection_mode="manual",
         selected_artifact_id="risky",
     )
     selected = select_catalog_model(
         [candidate],
-        "quality",
         selection_mode="manual",
         selected_artifact_id="risky",
         risky_confirmed=True,
@@ -141,7 +134,6 @@ def test_manual_risky_selection_requires_confirmation():
 def test_manual_selection_rejects_nofit_candidate():
     result = select_catalog_model(
         [_candidate("nofit", fit_status="NOFIT")],
-        "balanced",
         selection_mode="manual",
         selected_artifact_id="nofit",
     )
@@ -156,10 +148,9 @@ def test_manual_only_candidate_is_not_automatically_selected():
         manual_selectable=True,
     )
 
-    automatic = select_catalog_model([candidate], "balanced")
+    automatic = select_catalog_model([candidate])
     manual = select_catalog_model(
         [candidate],
-        "balanced",
         selection_mode="manual",
         selected_artifact_id="manual-only",
     )

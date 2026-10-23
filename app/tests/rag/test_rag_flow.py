@@ -1,3 +1,5 @@
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -9,14 +11,17 @@ from django.conf import settings
 from django.http import StreamingHttpResponse
 from django.test import TestCase, override_settings
 
+from capabilities.deployment import clear_deployment_snapshot_cache
+from capabilities.modules import DOCUMENTS_MODULE
 from config.enums import AIStatus, QueryAnswerMode, QueryIntent, RAGStage
-from document_ai.models import LLMEndpoint, QueryUnderstandingLog, RAGJob, SearchJob, UserLLMPreference
-from document_ai.services.llm_endpoint_service import check_llm_endpoint
-from document_ai.rag.generation import generate_rag_response_sync
-from document_ai.search.views import EMPTY_SCOPE_SENTINEL, _expand_scope_node_ids
-from document_ai.search.query_frontend import prepare_retrieval_query
-from document_ai.search.execution import perform_vector_search_sync, search_documents_sync
+from documents.models import LLMEndpoint, QueryUnderstandingLog, RAGJob, SearchJob, UserLLMPreference
+from documents.services.llm_endpoint_service import check_llm_endpoint
+from documents.rag.generation import generate_rag_response_sync
+from documents.search.views import EMPTY_SCOPE_SENTINEL, _expand_scope_node_ids
+from documents.search.query_frontend import prepare_retrieval_query
+from documents.search.execution import perform_vector_search_sync, search_documents_sync
 from files.models import FileBlob, Node, NodeType
+from installation.deployment import build_module_deployment_plan, write_deployment_plan
 
 pytestmark = pytest.mark.unit
 
@@ -60,6 +65,19 @@ def _search_results():
 @override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
 class RAGFlowTests(TestCase):
     def setUp(self):
+        self.deployment_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.deployment_directory.cleanup)
+        plan = build_module_deployment_plan([DOCUMENTS_MODULE])
+        plan_path = write_deployment_plan(
+            plan, repo_root=Path(self.deployment_directory.name)
+        )
+        self.deployment_env = patch.dict(
+            "os.environ", {"DOTORI_DEPLOYMENT_PLAN_PATH": str(plan_path)}
+        )
+        self.deployment_env.start()
+        self.addCleanup(self.deployment_env.stop)
+        clear_deployment_snapshot_cache()
+        self.addCleanup(clear_deployment_snapshot_cache)
         self.user = User.objects.create_user(
             email="rag@example.com",
             password="password",
@@ -72,7 +90,7 @@ class RAGFlowTests(TestCase):
         self.query_frontend_env.start()
         self.addCleanup(self.query_frontend_env.stop)
         self.server_target_patch = patch(
-            "document_ai.services.llm_endpoint_service.get_cached_server_rag_target",
+            "documents.services.llm_endpoint_service.get_cached_server_rag_target",
             return_value=SimpleNamespace(
                 base_url="http://test-rag:8080",
                 model="test-rag-model",
@@ -88,11 +106,11 @@ class RAGFlowTests(TestCase):
 
     def test_search_request_returns_results_without_queue_or_polling(self):
         with patch(
-            "document_ai.search.views.search_documents_sync",
+            "documents.search.views.search_documents_sync",
             return_value=(_search_results(), {"request_search_ms": 12.5}),
         ) as search:
             response = self.client.post(
-                "/api/document-ai/v1/search/",
+                "/api/v1/search/",
                 data={"query": "대책 요약", "top_k": 3},
                 content_type="application/json",
             )
@@ -103,7 +121,7 @@ class RAGFlowTests(TestCase):
         search.assert_called_once()
 
     def test_search_service_checks_semantic_search_admission_before_retrieval(self):
-        from document_ai.services.capability_admission import CapabilityAdmissionError
+        from documents.services.capability_admission import CapabilityAdmissionError
 
         error = CapabilityAdmissionError(
             "documents.semantic_search",
@@ -111,10 +129,10 @@ class RAGFlowTests(TestCase):
             "Semantic search is disabled",
         )
         with patch(
-            "document_ai.services.capability_admission.require_capability",
+            "documents.services.capability_admission.require_capability",
             side_effect=error,
         ) as admission, patch(
-            "document_ai.search.retriever.VectorRetriever"
+            "documents.search.retriever.VectorRetriever"
         ) as retriever:
             with self.assertRaises(CapabilityAdmissionError):
                 search_documents_sync(
@@ -127,7 +145,7 @@ class RAGFlowTests(TestCase):
         retriever.assert_not_called()
 
     def test_perform_vector_search_sync_preserves_embedding_busy_marker(self):
-        from document_ai.embedding.providers.base import EmbeddingBusyError
+        from documents.embedding.providers.base import EmbeddingBusyError
 
         search_job = SearchJob.objects.create(owner=self.user, query="대책 요약", top_k=3)
 
@@ -135,7 +153,7 @@ class RAGFlowTests(TestCase):
             raise EmbeddingBusyError("embedding-executor is busy", retry_after_seconds=4.0)
 
         fake_retriever = SimpleNamespace(retrieve=fake_retrieve)
-        with patch("document_ai.search.retriever.VectorRetriever", return_value=fake_retriever):
+        with patch("documents.search.retriever.VectorRetriever", return_value=fake_retriever):
             result = perform_vector_search_sync(search_job.id, max_retries=0)
 
         # Must stay distinguishable as EMBEDDING_BUSY, not collapse into a
@@ -148,10 +166,10 @@ class RAGFlowTests(TestCase):
         self.assertEqual(search_job.status, AIStatus.FAILED)
 
     def test_create_rag_jobs_sync_raises_busy_error_when_search_reports_embedding_busy(self):
-        from document_ai.rag.streaming import RAGSearchBusyError, _create_rag_jobs_sync
+        from documents.rag.streaming import RAGSearchBusyError, _create_rag_jobs_sync
 
         with patch(
-            "document_ai.search.execution.perform_vector_search_sync",
+            "documents.search.execution.perform_vector_search_sync",
             return_value={
                 "status": "failed",
                 "error": "embedding-executor is busy",
@@ -184,19 +202,35 @@ class RAGFlowTests(TestCase):
             content_type="application/x-ndjson",
         )
         with patch(
-            "document_ai.rag.streaming.create_rag_streaming_response_async",
+            "documents.rag.streaming.create_rag_streaming_response_async",
             new=AsyncMock(return_value=stream_response),
         ) as create_stream, patch(
-            "document_ai.search.views.server_rag_runtime_availability",
+            "documents.search.views.build_rag_llm_snapshot",
+            return_value={
+                "llm_endpoint_name": "Test server runtime",
+                "llm_base_url": "http://test-rag:8080",
+                "llm_model": "test-rag-model",
+                "_provider_resolution": {
+                    "function_id": "text.generate",
+                    "source": "server_runtime",
+                    "selection": "deployment_default_route",
+                    "verification": "contract_verified",
+                    "deployment_generation_id": "deployment-generation-1",
+                    "runtime_generation_id": "runtime-generation-1",
+                    "model_installation_id": "llm:runtime-generation-1",
+                },
+            },
+        ), patch(
+            "documents.search.views.server_rag_runtime_availability",
             return_value=(True, {}),
         ), patch(
-            "document_ai.search.views.acquire_rag_admission_token_async",
+            "documents.search.views.acquire_rag_admission_token_async",
             new=AsyncMock(
                 return_value=SimpleNamespace(release_async=AsyncMock())
             ),
         ):
             response = self.client.post(
-                "/api/document-ai/v1/rag/stream/",
+                "/api/v1/rag/stream/",
                 data={"question": "문서 요약", "top_k": 3, "language": "ko"},
                 content_type="application/json",
             )
@@ -209,11 +243,11 @@ class RAGFlowTests(TestCase):
         create_stream.assert_called_once()
 
     def _retired_rag_request_creates_search_and_rag_jobs_then_queues_search(self):
-        with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
+        with patch("documents.search.views.perform_vector_search.apply_async") as apply_async:
             apply_async.return_value = SimpleNamespace(id="search-task-id")
 
             response = self.client.post(
-                "/api/document-ai/v1/rag/",
+                "/api/v1/rag/",
                 data={
                     "question": "농축산물 수급 안정 대책을 요약해줘",
                     "top_k": 5,
@@ -250,11 +284,11 @@ class RAGFlowTests(TestCase):
             "retryable": True,
         }
         with patch(
-            "document_ai.search.views.server_rag_runtime_availability",
+            "documents.search.views.server_rag_runtime_availability",
             return_value=(False, runtime_status),
-        ), patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
+        ), patch("documents.search.views.perform_vector_search.apply_async") as apply_async:
             response = self.client.post(
-                "/api/document-ai/v1/rag/",
+                "/api/v1/rag/",
                 data={"question": "문서 내용을 요약해줘", "language": "ko"},
                 content_type="application/json",
             )
@@ -271,11 +305,11 @@ class RAGFlowTests(TestCase):
 
     def _retired_rag_request_does_not_call_query_parser_even_when_frontend_mode_is_llm(self):
         with patch.dict("os.environ", {"QUERY_UNDERSTANDING_FRONTEND_MODE": "llm"}), patch(
-            "document_ai.query_understanding.parser_service.parse_user_query_sync"
-        ) as parse_user_query, patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
+            "documents.query_understanding.parser_service.parse_user_query_sync"
+        ) as parse_user_query, patch("documents.search.views.perform_vector_search.apply_async") as apply_async:
             apply_async.return_value = SimpleNamespace(id="search-task-id")
             response = self.client.post(
-                "/api/document-ai/v1/rag/",
+                "/api/v1/rag/",
                 data={
                     "question": "지난주 업로드한 pdf 계약서에서 해지 조항 알려줘",
                     "top_k": 5,
@@ -312,10 +346,10 @@ class RAGFlowTests(TestCase):
             rag_model="qwen2.5:7b",
         )
 
-        with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
+        with patch("documents.search.views.perform_vector_search.apply_async") as apply_async:
             apply_async.return_value = SimpleNamespace(id="search-task-id")
             response = self.client.post(
-                "/api/document-ai/v1/rag/",
+                "/api/v1/rag/",
                 data={
                     "question": "선택 모델로 답변해줘",
                     "top_k": 3,
@@ -338,10 +372,10 @@ class RAGFlowTests(TestCase):
             rag_model="server-qwen",
         )
 
-        with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
+        with patch("documents.search.views.perform_vector_search.apply_async") as apply_async:
             apply_async.return_value = SimpleNamespace(id="search-task-id")
             response = self.client.post(
-                "/api/document-ai/v1/rag/",
+                "/api/v1/rag/",
                 data={
                     "question": "서버 모델로 답변해줘",
                     "top_k": 3,
@@ -366,13 +400,13 @@ class RAGFlowTests(TestCase):
             }
         )
 
-        with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async, patch(
-            "document_ai.services.llm_endpoint_service.get_cached_server_rag_target",
+        with patch("documents.search.views.perform_vector_search.apply_async") as apply_async, patch(
+            "documents.services.llm_endpoint_service.get_cached_server_rag_target",
             return_value=server_target,
         ):
             apply_async.return_value = SimpleNamespace(id="search-task-id")
             response = self.client.post(
-                "/api/document-ai/v1/rag/",
+                "/api/v1/rag/",
                 data={
                     "question": "자동 서버 모델로 답변해줘",
                     "top_k": 3,
@@ -389,11 +423,11 @@ class RAGFlowTests(TestCase):
         self.assertEqual(rag_job.llm_model, "auto-model")
 
     def _retired_rag_request_accepts_explicit_retrieval_threshold(self):
-        with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
+        with patch("documents.search.views.perform_vector_search.apply_async") as apply_async:
             apply_async.return_value = SimpleNamespace(id="search-task-id")
 
             response = self.client.post(
-                "/api/document-ai/v1/rag/",
+                "/api/v1/rag/",
                 data={
                     "question": "근거를 좁혀서 답변해줘",
                     "top_k": 3,
@@ -422,7 +456,7 @@ class RAGFlowTests(TestCase):
             node_type=NodeType.FILE,
             parent=folder,
         )
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             FileBlob.objects.create(
                 node=file_node,
                 original_name="report.txt",
@@ -432,10 +466,10 @@ class RAGFlowTests(TestCase):
                 status="ready",
             )
 
-        with patch("document_ai.search.views.perform_vector_search.apply_async") as apply_async:
+        with patch("documents.search.views.perform_vector_search.apply_async") as apply_async:
             apply_async.return_value = SimpleNamespace(id="search-task-id")
             response = self.client.post(
-                "/api/document-ai/v1/rag/",
+                "/api/v1/rag/",
                 data={
                     "question": "보고서 요약",
                     "top_k": 5,
@@ -464,7 +498,7 @@ class RAGFlowTests(TestCase):
             top_k=3,
         )
 
-        response = self.client.get(f"/api/document-ai/v1/rag/jobs/{rag_job.id}/")
+        response = self.client.get(f"/api/v1/rag/jobs/{rag_job.id}/")
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -490,8 +524,8 @@ class RAGFlowTests(TestCase):
         )
 
         fake_retriever = SimpleNamespace(retrieve=lambda **kwargs: _search_results())
-        with patch("document_ai.search.retriever.VectorRetriever", return_value=fake_retriever), patch(
-            "document_ai.tasks.generate_rag_response.apply_async"
+        with patch("documents.search.retriever.VectorRetriever", return_value=fake_retriever), patch(
+            "documents.tasks.generate_rag_response.apply_async"
         ) as apply_async:
             apply_async.return_value = SimpleNamespace(id="rag-task-id")
             result = perform_vector_search_sync(search_job.id)
@@ -525,15 +559,15 @@ class RAGFlowTests(TestCase):
         )
         fake_retriever = SimpleNamespace(retrieve=lambda **kwargs: _search_results())
         with patch(
-            "document_ai.search.retriever.VectorRetriever",
+            "documents.search.retriever.VectorRetriever",
             return_value=fake_retriever,
         ), patch(
-            "document_ai.services.rag_runtime_config.server_rag_runtime_availability",
+            "llm_installation.rag_runtime_config.server_rag_runtime_availability",
             return_value=(
                 False,
                 {"status": "unavailable", "reason_code": "LLM_UNAVAILABLE_OOM"},
             ),
-        ), patch("document_ai.tasks.generate_rag_response.apply_async") as apply_async:
+        ), patch("documents.tasks.generate_rag_response.apply_async") as apply_async:
             result = perform_vector_search_sync(search_job.id)
 
         rag_job.refresh_from_db()
@@ -844,11 +878,11 @@ class RAGFlowTests(TestCase):
             task_id="rag-task-id",
         )
 
-        with patch("document_ai.search.views.set_rag_cancel_signal", return_value=True) as cancel_signal, patch(
-            "document_ai.search.views.celery_app.control.revoke"
+        with patch("documents.search.views.set_rag_cancel_signal", return_value=True) as cancel_signal, patch(
+            "documents.search.views.celery_app.control.revoke"
         ) as revoke:
             response = self.client.post(
-                f"/api/document-ai/v1/rag/jobs/{rag_job.id}/cancel/",
+                f"/api/v1/rag/jobs/{rag_job.id}/cancel/",
                 data={"reason": "stop"},
                 content_type="application/json",
             )
@@ -916,7 +950,7 @@ class RAGFlowTests(TestCase):
         with patch("requests.post", return_value=fake_response), patch(
             "redis.Redis.from_url", return_value=fake_redis
         ), patch(
-            "document_ai.rag.generation.time_module.monotonic", side_effect=[1.0, 2.0]
+            "documents.rag.generation.time_module.monotonic", side_effect=[1.0, 2.0]
         ):
             result = generate_rag_response_sync(rag_job.id)
 
@@ -1035,7 +1069,7 @@ class RAGFlowTests(TestCase):
         }
 
         with patch.dict("os.environ", {"QUERY_UNDERSTANDING_FRONTEND_MODE": "llm"}), patch(
-            "document_ai.query_understanding.parser_service.parse_user_query_sync", return_value=parsed_query
+            "documents.query_understanding.parser_service.parse_user_query_sync", return_value=parsed_query
         ):
             plan = prepare_retrieval_query("안녕 너 뭐 할 수 있어?", mode="rag", owner=self.user)
 
@@ -1062,7 +1096,7 @@ class RAGFlowTests(TestCase):
             node_type=NodeType.FILE,
             parent=folder,
         )
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             FileBlob.objects.create(
                 node=file_node,
                 original_name="report.txt",

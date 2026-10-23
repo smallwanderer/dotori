@@ -9,7 +9,7 @@ from django.contrib.postgres.operations import CreateExtension
 from django.db import migrations, models
 
 # Replaces the pre-rename document_ai migrations 0001-0031 (see
-# migrate_document_ai_label for how existing databases move onto this state).
+# collapse_migration_history for how existing databases move onto this state).
 # Their data backfills are intentionally not carried over: an existing database
 # already ran them, and a new one has nothing to backfill.
 
@@ -57,8 +57,8 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('files', '0011_remove_duplicate_file_indexes'),
-        ('workspaces', '0008_merge_quality_profile_axes'),
+        ('files', '0001_initial'),
+        ('workspaces', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -408,6 +408,76 @@ class Migration(migrations.Migration):
                 'indexes': [pgvector.django.indexes.HnswIndex(ef_construction=64, fields=['vector'], m=16, name='chunk_embedding_active_hnsw_idx', opclasses=['vector_ip_ops'])],
             },
         ),
+        migrations.CreateModel(
+            name='WorkspaceQualityProfileRevision',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('uid', models.UUIDField(db_index=True, default=uuid.uuid4, editable=False, unique=True)),
+                ('version', models.PositiveIntegerField()),
+                ('revision', models.PositiveIntegerField(default=1)),
+                ('status', models.CharField(choices=[('draft', 'Draft'), ('active', 'Active'), ('archived', 'Archived')], db_index=True, max_length=16)),
+                ('changed_axes', models.JSONField(blank=True, default=list)),
+                ('schema_version', models.PositiveIntegerField(default=1)),
+                ('retrieval_config', models.JSONField(blank=True, default=dict)),
+                ('generation_config', models.JSONField(blank=True, default=dict)),
+                ('prompt_policy', models.JSONField(blank=True, default=dict)),
+                ('validation_state', models.CharField(default='not_run', max_length=16)),
+                ('validation_warnings', models.JSONField(blank=True, default=list)),
+                ('applied_evaluation_run_uid', models.UUIDField(blank=True, null=True)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('applied_at', models.DateTimeField(blank=True, null=True)),
+                ('note', models.CharField(blank=True, max_length=500)),
+                ('based_on', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='derived_revisions', to='documents.workspacequalityprofilerevision')),
+                ('created_by', models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='created_quality_profile_revisions', to=settings.AUTH_USER_MODEL)),
+                ('workspace', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='quality_profile_revisions', to='workspaces.workspace')),
+            ],
+            options={
+                'ordering': ['-version', '-created_at'],
+            },
+        ),
+        migrations.CreateModel(
+            name='WorkspaceEvaluationDataset',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('uid', models.UUIDField(db_index=True, default=uuid.uuid4, editable=False, unique=True)),
+                ('axis', models.CharField(choices=[('retrieval', 'Retrieval'), ('generation', 'Generation'), ('prompt_policy', 'Prompt policy')], max_length=16)),
+                ('name', models.CharField(max_length=200)),
+                ('items', models.JSONField(blank=True, default=list)),
+                ('item_count', models.PositiveIntegerField(default=0)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('created_by', models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='created_evaluation_datasets', to=settings.AUTH_USER_MODEL)),
+                ('workspace', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='evaluation_datasets', to='workspaces.workspace')),
+            ],
+            options={
+                'ordering': ['-created_at'],
+                'indexes': [models.Index(fields=['workspace', 'axis', '-created_at'], name='eval_dataset_ws_axis_idx')],
+            },
+        ),
+        migrations.CreateModel(
+            name='WorkspaceQualityEvaluationRun',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('uid', models.UUIDField(db_index=True, default=uuid.uuid4, editable=False, unique=True)),
+                ('axis', models.CharField(choices=[('retrieval', 'Retrieval'), ('generation', 'Generation'), ('prompt_policy', 'Prompt policy')], max_length=16)),
+                ('tested_revision_number', models.PositiveIntegerField(help_text='profile_revision.revision at the moment this run was started; used to detect a draft edited after evaluation.')),
+                ('config_snapshot', models.JSONField(blank=True, default=dict)),
+                ('status', models.CharField(choices=[('pending', 'Pending'), ('running', 'Running'), ('succeeded', 'Succeeded'), ('failed', 'Failed')], db_index=True, default='pending', max_length=16)),
+                ('metrics', models.JSONField(blank=True, default=dict)),
+                ('error_message', models.CharField(blank=True, max_length=500)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('started_at', models.DateTimeField(blank=True, null=True)),
+                ('finished_at', models.DateTimeField(blank=True, null=True)),
+                ('created_by', models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='created_evaluation_runs', to=settings.AUTH_USER_MODEL)),
+                ('dataset', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='evaluation_runs', to='documents.workspaceevaluationdataset')),
+                ('workspace', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='quality_evaluation_runs', to='workspaces.workspace')),
+                ('profile_revision', models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='evaluation_runs', to='documents.workspacequalityprofilerevision')),
+            ],
+            options={
+                'ordering': ['-created_at'],
+                'indexes': [models.Index(fields=['workspace', 'axis', '-created_at'], name='eval_run_ws_axis_idx')],
+            },
+        ),
         migrations.AddIndex(
             model_name='documentparseresult',
             index=models.Index(fields=['parser_name'], name='docs_parse_parser_name_idx'),
@@ -487,6 +557,18 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='ragjob',
             constraint=models.UniqueConstraint(condition=models.Q(('conversation__isnull', False), ('status__in', ['pending', 'processing'])), fields=('conversation',), name='docai_rag_one_active_conversation'),
+        ),
+        migrations.AddConstraint(
+            model_name='workspacequalityprofilerevision',
+            constraint=models.UniqueConstraint(fields=('workspace', 'version'), name='uniq_quality_profile_workspace_version'),
+        ),
+        migrations.AddConstraint(
+            model_name='workspacequalityprofilerevision',
+            constraint=models.UniqueConstraint(condition=models.Q(('status', 'active')), fields=('workspace',), name='uniq_active_quality_profile_workspace'),
+        ),
+        migrations.AddConstraint(
+            model_name='workspacequalityprofilerevision',
+            constraint=models.UniqueConstraint(condition=models.Q(('status', 'draft')), fields=('workspace',), name='uniq_draft_quality_profile_workspace'),
         ),
         migrations.RunPython(align_runtime_hnsw_index, migrations.RunPython.noop),
     ]

@@ -2,26 +2,13 @@
 from documents.models import DocumentChunk
 from documents.services.embedding_runtime_config import load_embedding_runtime
 from files.models import FileBlob
-from contextvars import ContextVar
-import time
-
-active_execution = ContextVar("active_executor_execution", default=None)
-
-
-class StaleExecution(ValueError):
-    """The executor must stop without overwriting newer domain state."""
+from orchestration.execution import active_execution, StaleExecution
+from orchestration.execution import validate_execution as _validate_execution
 
 
 def validate_execution():
-    context = active_execution.get()
-    if context is None:
-        return
-    envelope, expected_source, expected_runtime = context
-    if time.time() >= float(envelope.get("deadline_at", time.time() + 1800)):
-        raise StaleExecution("Executor deadline exceeded before persistence")
-    source, runtime = capture_snapshot(envelope)
-    if source != expected_source or runtime != expected_runtime:
-        raise StaleExecution("Executor input or runtime changed before persistence")
+    # Preserve the old patch boundary and shared ContextVar/exception identity.
+    return _validate_execution(capture_snapshot)
 
 
 def capture_snapshot(envelope):
@@ -30,6 +17,18 @@ def capture_snapshot(envelope):
 
     payload = envelope["payload"]
     node_ids = [payload["node_id"]] if "node_id" in payload else []
+    if envelope.get("work_kind") == "embed_document":
+        from documents.models import DocumentEmbeddingManifest
+        from documents.processing.embedding_contract import parse_embedding_delivery
+        delivery = parse_embedding_delivery(payload)
+        if not envelope.get("plan_id") or not envelope.get("step_id"):
+            raise ValueError("Scoped embedding requires an approved plan and step")
+        try:
+            manifest = DocumentEmbeddingManifest.objects.get(pk=delivery.manifest_id,
+                job_id=envelope["job_id"], plan_id=envelope["plan_id"], step_id=envelope["step_id"])
+        except DocumentEmbeddingManifest.DoesNotExist as exc:
+            raise ValueError("Scoped embedding manifest is not approved") from exc
+        node_ids = [manifest.node_id]
     if "chunk_ids" in payload:
         node_ids = list(DocumentChunk.objects.filter(pk__in=payload["chunk_ids"])
                         .order_by().values_list("parse_result__node_id", flat=True).distinct())

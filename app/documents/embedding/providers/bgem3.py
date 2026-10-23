@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import gc
 import logging
+import threading
 import math
 from typing import Any, Dict
 
-from document_ai.parsers.config import get_embedding_max_tokens
+from documents.parsers.config import get_embedding_max_tokens
 
 from .base import EmbeddingProviderSpec, EmbeddingResult
 
@@ -47,7 +48,15 @@ def clear_cuda_cache() -> None:
             torch.cuda.ipc_collect()
 
 
+_MODEL_LOAD_LOCK = threading.Lock()
+
+
 def get_bgem3_model(model_name: str, model_revision: str = ""):
+    with _MODEL_LOAD_LOCK:
+        return _load_model(model_name, model_revision)
+
+
+def _load_model(model_name: str, model_revision: str = ""):
     cache_key = f"{model_name}@{model_revision or 'default'}"
     model = _MODEL_CACHE.get(cache_key)
     if model is None:
@@ -126,7 +135,7 @@ def coerce_sparse_vector(raw_sparse: dict) -> dict[str, float]:
     return normalize_sparse_vector(sparse_vector)
 
 
-def coerce_dense_vector(raw_dense) -> list[float]:
+def coerce_dense_vector(raw_dense, *, normalize: bool = True) -> list[float]:
     if hasattr(raw_dense, "tolist"):
         raw_dense = raw_dense.tolist()
 
@@ -136,7 +145,9 @@ def coerce_dense_vector(raw_dense) -> list[float]:
     vector = [float(value) for value in raw_dense]
     if not vector:
         raise RuntimeError("Embedding vector is empty")
-    return check_normalized(vector)
+    if not all(math.isfinite(value) for value in vector) or not any(vector):
+        raise RuntimeError("Embedding vector must contain finite values and have nonzero norm")
+    return check_normalized(vector) if normalize else vector
 
 
 class BGEM3HybridProvider:
@@ -151,14 +162,17 @@ class BGEM3HybridProvider:
         normalize_embeddings: bool = True,
         query_prefix: str = "",
         document_prefix: str = "",
+        default_distance: str = "inner_product",
     ):
+        if not normalize_embeddings:
+            raise ValueError("bgem3_hybrid requires normalized embeddings")
         self.spec = EmbeddingProviderSpec(
             backend=self.backend,
             model_name=model_name,
             model_revision=model_revision,
             dimension=dimension,
             supports_sparse=True,
-            default_distance="inner_product",
+            default_distance=default_distance,
             normalize_embeddings=normalize_embeddings,
             query_prefix=query_prefix,
             document_prefix=document_prefix,
@@ -166,11 +180,11 @@ class BGEM3HybridProvider:
 
     def embed_document(self, text: str, *, max_length: int | None = None) -> EmbeddingResult:
         return self._embed(
-            f"{self.spec.document_prefix}{text}", max_length=max_length
+            f"{self.spec.document_prefix}{text}", max_length=max_length, required_prefix=self.spec.document_prefix
         )
 
     def embed_query(self, text: str, *, max_length: int | None = None) -> EmbeddingResult:
-        return self._embed(f"{self.spec.query_prefix}{text}", max_length=max_length)
+        return self._embed(f"{self.spec.query_prefix}{text}", max_length=max_length, required_prefix=self.spec.query_prefix)
 
     def embed_documents(self, texts: list[str], *, max_length: int | None = None) -> list[EmbeddingResult]:
         prefixed_texts = [f"{self.spec.document_prefix}{text}" for text in texts]
@@ -185,9 +199,9 @@ class BGEM3HybridProvider:
             "supports_sparse": bool(result.sparse_vector),
         }
 
-    def _embed(self, text: str, *, max_length: int | None = None) -> EmbeddingResult:
+    def _embed(self, text: str, *, max_length: int | None = None, required_prefix: str = "") -> EmbeddingResult:
         normalized_text = validate_text(text)
-        resolved_max_length = max_length or get_embedding_max_tokens()
+        resolved_max_length = min(max_length or get_embedding_max_tokens(), 8192)
         model = get_bgem3_model(
             self.spec.model_name,
             self.spec.model_revision,
@@ -195,6 +209,12 @@ class BGEM3HybridProvider:
         # get_bgem3_model() already resolved torch/_DEVICE above; this just
         # gets the cached reference for the except/finally blocks below.
         torch = _ensure_torch()
+
+        tokenizer = getattr(model, "tokenizer", None)
+        if tokenizer is not None:
+            from documents.embedding.input_budget import fit_embedding_text
+            normalized_text = fit_embedding_text(normalized_text, tokenizer,
+                max_tokens=resolved_max_length, required_prefix=required_prefix)[0]
 
         try:
             output = model.encode(
@@ -247,12 +267,18 @@ class BGEM3HybridProvider:
         # chunks. Query embedding never goes through this path (latency
         # sensitive, always single); only document micro-batching uses it.
         normalized_texts = [validate_text(text) for text in texts]
-        resolved_max_length = max_length or get_embedding_max_tokens()
+        resolved_max_length = min(max_length or get_embedding_max_tokens(), 8192)
         model = get_bgem3_model(
             self.spec.model_name,
             self.spec.model_revision,
         )
         torch = _ensure_torch()
+
+        tokenizer = getattr(model, "tokenizer", None)
+        if tokenizer is not None:
+            from documents.embedding.input_budget import fit_embedding_text
+            normalized_texts = [fit_embedding_text(text, tokenizer, max_tokens=resolved_max_length,
+                required_prefix=self.spec.document_prefix)[0] for text in normalized_texts]
 
         try:
             output = model.encode(

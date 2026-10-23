@@ -7,7 +7,7 @@ from pathlib import Path
 from django.conf import settings
 from django.db import connection
 
-from document_ai.models import ResourceSnapshot
+from documents.models import ResourceSnapshot
 
 
 @dataclass(frozen=True)

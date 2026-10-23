@@ -14,7 +14,7 @@ os.environ["POSTGRES_PORT"] = "5433"
 django.setup()
 
 # 이제 Django가 세팅되었으므로, 모델들을 안전하게 임포트할 수 있습니다.
-from document_ai.models import ChunkEmbedding
+from documents.models import ChunkEmbedding
 from pgvector.django import MaxInnerProduct
 
 print("Fetching an embedding from the database...")

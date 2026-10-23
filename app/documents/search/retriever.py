@@ -7,12 +7,12 @@ from typing import Any, Dict, List, Optional
 from django.conf import settings
 from django.db.models import Q
 
-from document_ai.embedding.store_registry import get_embedding_store_instance
-from document_ai.models import ChunkEmbedding, DocumentChunk
-from document_ai.parsers.text_utils import normalize_extracted_text
-from document_ai.performance import elapsed_ms, put_metric
-from document_ai.search.compression import EmbeddingContextualCompressor
-from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+from documents.embedding.store_registry import get_embedding_store_instance
+from documents.models import ChunkEmbedding, DocumentChunk
+from documents.parsers.text_utils import normalize_extracted_text
+from documents.performance import elapsed_ms, put_metric
+from documents.search.compression import EmbeddingContextualCompressor
+from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -400,7 +400,7 @@ class VectorRetriever:
         put_metric(metrics, "embedding_presence_check_ms", elapsed_ms(presence_check_started))
 
         try:
-            from document_ai.embedding.embeding_models import embed_query
+            from documents.embedding.embeding_models import embed_query
 
             logger.info(
                 "Query embedding started: model=%s, backend=%s, query_len=%s",

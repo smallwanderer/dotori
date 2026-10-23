@@ -6,6 +6,8 @@ from typing import Any
 
 import httpx
 
+from llm_installation.embedding_catalog.provider_options import OpenAICompatibleOptions
+
 from .base import EmbeddingBusyError, EmbeddingProviderSpec, EmbeddingResult
 from .bgem3 import coerce_dense_vector, validate_text
 
@@ -37,7 +39,9 @@ class OpenAIEmbeddingProvider:
         document_prefix: str = "",
         default_distance: str = "inner_product",
         timeout_seconds: float = 30.0,
+        provider_options: dict | None = None,
     ):
+        self.options = OpenAICompatibleOptions.model_validate(provider_options or {})
         raw_base_url = (
             base_url
             or os.getenv("OPENAI_EMBEDDING_BASE_URL")
@@ -128,7 +132,10 @@ class OpenAIEmbeddingProvider:
             "model": self.spec.model_name,
             "input": texts if len(texts) > 1 else texts[0],
         }
-        if self.spec.dimension is not None and "text-embedding-3" in self.spec.model_name:
+        send_dimensions = self.options.send_dimensions
+        if send_dimensions is None:
+            send_dimensions = "text-embedding-3" in self.spec.model_name
+        if self.spec.dimension is not None and send_dimensions:
             payload["dimensions"] = self.spec.dimension
 
         headers = self._get_headers()
@@ -161,9 +168,16 @@ class OpenAIEmbeddingProvider:
             )
 
         data = response.json()
+        if not isinstance(data, dict):
+            raise RuntimeError("Unexpected embedding API response")
         items = data.get("data") or []
         if not isinstance(items, list):
             raise RuntimeError(f"Unexpected response format from embedding API: {data}")
+
+        if (len(items) != len(texts)
+                or any(not isinstance(item, dict) or type(item.get("index")) is not int for item in items)
+                or sorted(item["index"] for item in items) != list(range(len(texts)))):
+            raise RuntimeError("Embedding API result indices do not match input texts")
 
         # Sort items by index to guarantee ordering matches input texts
         sorted_items = sorted(items, key=lambda x: x.get("index", 0))
@@ -173,7 +187,7 @@ class OpenAIEmbeddingProvider:
             embedding_arr = item.get("embedding")
             if not embedding_arr:
                 raise RuntimeError("Empty embedding in OpenAI response item")
-            dense_vector = coerce_dense_vector(embedding_arr)
+            dense_vector = coerce_dense_vector(embedding_arr, normalize=self.spec.normalize_embeddings)
             results.append(
                 EmbeddingResult(
                     dense_vector=dense_vector,

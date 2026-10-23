@@ -49,7 +49,6 @@ def _write_config(tmp_path, model_id=GGUF_MODEL_ID, scope="production"):
         profile=profile,
         catalog=catalog,
         check_endpoint=False,
-        priority_preset="balanced",
     )
     config_path = (
         tmp_path / "data" / "config" / "runtime_scopes" / scope / "llm_runtime.json"

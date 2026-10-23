@@ -5,7 +5,7 @@ API_PATH_PREFIXES = (
     "/files/api/",
     "/api/accounts/",
     "/api/workspaces/v1/",
-    "/api/document-ai/v1/",
+    "/api/v1/",
     "/api/sync/v1/",
     "/api/cli/v1/",
 )

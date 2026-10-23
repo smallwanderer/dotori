@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from document_ai.embedding.admission import (
+from documents.embedding.admission import (
     AdmissionRejected,
     EmbeddingPriorityAdmission,
 )

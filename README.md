@@ -1,12 +1,12 @@
 # Dotori Documents
 
-Dotori is a self-hosted document workspace for document management, hybrid search, and retrieval-augmented generation (RAG) on a single server. Documents, search indexes, and local AI runtimes remain in an operator-managed Docker Compose environment.
+Dotori is a lightweight, full-stack, self-hosted bridge between operator-owned files and AI. It prepares reusable document results for web access, search, built-in RAG and external read-only MCP/API consumers. Documents is the implemented module; separate Image, Audio and Video processing modules are future goals. Local AI remains supported alongside explicitly connected external endpoints.
 
 <p align="center">
-  <img src="./docs/statics/dotori-files-eng.png" width="80%" alt="Dotori document workspace">
+  <img src="./dotori-docs/statics/dotori-files-eng.png" width="80%" alt="Dotori document workspace">
 </p>
 
-For Korean documentation, see [README.ko.md](README.ko.md). For the full documentation set (installation, operations, monitoring, etc), start at [docs/](docs/WALKTHROUGH.md).
+For Korean documentation, see [README.ko.md](README.ko.md). For the full documentation set (installation, operations, monitoring, etc), start at [dotori-docs/](dotori-docs/README.md).
 
 ## Key Features
 
@@ -14,26 +14,27 @@ For Korean documentation, see [README.ko.md](README.ko.md). For the full documen
 - Folder and file management with authentication, trash, favorites, and recent files
 - Analysis of PDF, HWP, DOCX, and other text-based document formats
 - Natural-language document search
-- Local RAG that answers questions from document contents without sending data to an external provider
+- Local RAG with document evidence; local inference does not send prompts to an external inference provider
 - Guided installation and use of a local LLM selected for the server's hardware
 - Three installation modes, from file management only to a complete local RAG stack
 - Korean and English web interfaces, with support for external AI models
-- Optional external, OpenAI-compatible embedding endpoints (OpenAI, vLLM, Ollama, or a custom server) in place of the local embedding and LLM models
+- Read-only MCP/API access to prepared results without requiring Dotori's RAG generation
+- Optional OpenAI-compatible embedding and LLM endpoints; compatible contracts and actual endpoint configuration must be checked separately
 
 > [!CAUTION]
-> The operator must select the local LLM. AI models and runtimes are managed as server-wide settings, not per-user settings.
-> When an external LLM such as ChatGPT or Claude is selected, document content may be sent to the external provider.
+> Local LLM/runtime settings are resolved from server hardware during installation or explicit model changes, with an assessed manual-selection path where needed. There is no LLM priority preset or per-user local model selection.
+> External embedding or LLM endpoints may receive text; an external AI client reading results through MCP/API may also forward them according to that client's configuration.
 
 ## Installation Mode
 
-The included installation assistant, `start.bat`, lets operators set up the server without writing code. See the [installation guide](docs/install/installation-guide.md) for details.
+The included installation assistant, `start.bat`, lets operators set up the server without writing code. See the [installation guide](dotori-docs/guides/install/installation-guide.md) for details.
 
 The installer provides the following options:
 
 1. Optional feature activation, including enabling or disabling natural-language search and RAG
 2. Local LLM installation guidance
 3. Server environment configuration guidance
-4. External-access domain configuration
+4. Optional direct HTTPS access, configured separately from model setup
 
 
 ## Quick Start

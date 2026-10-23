@@ -5,12 +5,14 @@
     "display_name": "Gemma3 4B Instruct Q4_0 GGUF",
     "description": "QAT Q4_0 artifact served with llama.cpp.",
     "hf": {
-        "repo_id": "google/gemma-3-4b-it-qat-q4_0-gguf"
+        "repo_id": "google/gemma-3-4b-it-qat-q4_0-gguf",
+        "revision": "15f73f5eee9c28f53afefef5723e29680c2fc78a"
     },
     "artifact": {
         "format": "gguf",
         "quant": "Q4_0",
         "filename": "gemma-3-4b-it-q4_0.gguf",
+        "sha256": "76aed0a8285b83102f18b5d60e53c70d09eb4e9917a20ce8956bd546452b56e2",
         "download_size_mb": 3240,
         "disk_required_mb": 3600
     },

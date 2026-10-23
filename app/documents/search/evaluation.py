@@ -8,8 +8,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from config.enums import AIStatus
-from document_ai.embedding.embeding_models import EmbeddingResult
-from document_ai.search.profiles import (
+from documents.embedding.embeding_models import EmbeddingResult
+from documents.search.profiles import (
     RetrievalProfileError,
     _active_for_workspace,
     get_effective_retrieval_config,
@@ -117,8 +117,8 @@ def run_retrieval_evaluation(workspace, *, config: dict[str, Any], items: list[d
     scoring chunks standalone would report metrics for an algorithm the
     product never runs.
     """
-    from document_ai.models import DocumentChunk
-    from document_ai.search.execution import search_documents_sync
+    from documents.models import DocumentChunk
+    from documents.search.execution import search_documents_sync
 
     top_k = int(config.get("search_top_k", 5))
     dense_weight = float(config["dense_weight"])
@@ -218,14 +218,15 @@ def _serialize_run(run) -> dict[str, Any]:
 
 
 def list_evaluation_datasets(workspace, *, axis: str) -> list[dict[str, Any]]:
-    from workspaces.models import WorkspaceEvaluationDataset
+    from documents.models import WorkspaceEvaluationDataset
 
     datasets = WorkspaceEvaluationDataset.objects.filter(workspace=workspace, axis=axis)
     return [_serialize_dataset(dataset) for dataset in datasets]
 
 
 def create_evaluation_dataset(workspace, *, actor, axis: str, name: str, items: Any) -> dict[str, Any]:
-    from workspaces.models import WorkspaceEvaluationDataset, WorkspaceQualityProfileRevision
+    from documents.models import WorkspaceEvaluationDataset
+    from documents.models import WorkspaceQualityProfileRevision
 
     if axis not in dict(WorkspaceQualityProfileRevision.AXIS_CHOICES):
         raise RetrievalProfileError("INVALID_REQUEST", "Unknown axis.", 400)
@@ -246,13 +247,14 @@ def create_evaluation_dataset(workspace, *, actor, axis: str, name: str, items: 
 
 
 def _start_evaluation(workspace, *, actor, axis: str, expected_revision: int, dataset_uid: str) -> dict[str, Any]:
-    from workspaces.models import WorkspaceEvaluationDataset, WorkspaceQualityEvaluationRun, WorkspaceQualityProfileRevision
+    from documents.models import WorkspaceEvaluationDataset, WorkspaceQualityEvaluationRun
+    from documents.models import WorkspaceQualityProfileRevision
 
     with transaction.atomic():
         from workspaces.models import Workspace
 
         locked_workspace = Workspace.objects.select_for_update().get(pk=workspace.pk)
-        _active_for_workspace(locked_workspace, actor=actor, lock=True)  # ensures + locks the active row against a concurrent apply
+        _active_for_workspace(locked_workspace, lock=True)  # locks the active row (if any) against a concurrent apply
         draft = WorkspaceQualityProfileRevision.objects.select_for_update().filter(
             workspace=locked_workspace,
             status=WorkspaceQualityProfileRevision.STATUS_DRAFT,
@@ -289,14 +291,14 @@ def _start_evaluation(workspace, *, actor, axis: str, expected_revision: int, da
             status=WorkspaceQualityEvaluationRun.STATUS_PENDING,
             created_by=actor,
         )
-    from document_ai.orchestration import enqueue_retrieval_evaluation
+    from documents.orchestration import enqueue_retrieval_evaluation
 
     enqueue_retrieval_evaluation(str(run.uid))
     return {"ok": True, "run": _serialize_run(run)}
 
 
 def start_retrieval_evaluation(workspace, *, actor, expected_revision, dataset_uid) -> dict[str, Any]:
-    from workspaces.models import WorkspaceQualityProfileRevision
+    from documents.models import WorkspaceQualityProfileRevision
 
     return _start_evaluation(
         workspace,
@@ -308,7 +310,7 @@ def start_retrieval_evaluation(workspace, *, actor, expected_revision, dataset_u
 
 
 def get_evaluation_run(workspace, *, run_uid) -> dict[str, Any]:
-    from workspaces.models import WorkspaceQualityEvaluationRun
+    from documents.models import WorkspaceQualityEvaluationRun
 
     run = WorkspaceQualityEvaluationRun.objects.select_related("dataset").filter(
         workspace=workspace, uid=run_uid,
@@ -320,7 +322,7 @@ def get_evaluation_run(workspace, *, run_uid) -> dict[str, Any]:
 
 def resolve_verified_evaluation_run(workspace, *, axis: str, draft, evaluation_run_uid):
     """Look up a succeeded evaluation run and confirm it still matches the draft being applied."""
-    from workspaces.models import WorkspaceQualityEvaluationRun
+    from documents.models import WorkspaceQualityEvaluationRun
 
     run = WorkspaceQualityEvaluationRun.objects.filter(
         workspace=workspace, uid=evaluation_run_uid, axis=axis,
@@ -342,9 +344,9 @@ def resolve_verified_evaluation_run(workspace, *, axis: str, draft, evaluation_r
 
 def execute_quality_evaluation_run(run_uid: str) -> None:
     """Runs the evaluation and persists its result. Invoked from the Celery task
-    in document_ai.tasks (Celery's autodiscover_tasks() only imports each app's
+    in documents.tasks (Celery's autodiscover_tasks() only imports each app's
     tasks.py, so the @shared_task wrapper has to live there, not here)."""
-    from workspaces.models import WorkspaceQualityEvaluationRun
+    from documents.models import WorkspaceQualityEvaluationRun
 
     run = WorkspaceQualityEvaluationRun.objects.select_related("workspace", "dataset").get(uid=run_uid)
     if run.status == WorkspaceQualityEvaluationRun.STATUS_SUCCEEDED:
@@ -372,7 +374,7 @@ def execute_quality_evaluation_run(run_uid: str) -> None:
     run.save(update_fields=["status", "metrics", "error_message", "finished_at"])
 
     if run.status == WorkspaceQualityEvaluationRun.STATUS_SUCCEEDED and run.profile_revision_id:
-        from workspaces.models import WorkspaceQualityProfileRevision
+        from documents.models import WorkspaceQualityProfileRevision
 
         with transaction.atomic():
             draft = WorkspaceQualityProfileRevision.objects.select_for_update().filter(

@@ -3,7 +3,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from accounts.models import User
-from document_ai.models import DocumentParseResult
+from documents.models import DocumentParseResult
 from files.models import Node, NodeType
 
 

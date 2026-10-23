@@ -3,8 +3,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.api_responses import api_error_response, session_access_error
-from document_ai.models import RAGConversation, RAGMessage
-from document_ai.services.rag_conversation_service import (
+from documents.models import RAGConversation, RAGMessage
+from documents.services.rag_conversation_service import (
     ConversationNotFound, ConversationPermissionDenied, ConversationRevisionConflict,
     InvalidConversationScope, create_conversation, delete_conversation,
     get_conversation, recover_expired_rag_jobs, request_conversation_cancel,

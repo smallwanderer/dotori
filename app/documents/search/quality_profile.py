@@ -5,7 +5,7 @@ from typing import Any
 from django.db import transaction
 from django.utils import timezone
 
-from document_ai.rag.prompt_profiles import (
+from documents.rag.prompt_profiles import (
     FIXED_CONTRACT_DESCRIPTION,
     PROMPT_CONTRACT_VERSION,
     PROMPT_MAX_CHARS,
@@ -15,7 +15,7 @@ from document_ai.rag.prompt_profiles import (
     prompt_defaults,
     validate_prompt_policy,
 )
-from document_ai.search.profiles import (
+from documents.search.profiles import (
     GENERATION_SCHEMA,
     RETRIEVAL_SCHEMA,
     SCHEMA_VERSION,
@@ -29,7 +29,7 @@ from document_ai.search.profiles import (
     validate_generation_config,
     validate_retrieval_config,
 )
-from workspaces.models import WorkspaceQualityProfileRevision
+from documents.models import WorkspaceQualityProfileRevision
 
 AXIS_RETRIEVAL = WorkspaceQualityProfileRevision.AXIS_RETRIEVAL
 AXIS_GENERATION = WorkspaceQualityProfileRevision.AXIS_GENERATION
@@ -63,8 +63,19 @@ def _prompt_axis_payload(policy: dict[str, Any] | None, *, active_policy=None) -
 
 
 def _serialize_row(revision, *, active=None) -> dict[str, Any]:
-    is_draft = revision.status == WorkspaceQualityProfileRevision.STATUS_DRAFT and active is not None
+    """Serialize a real (persisted) revision row.
+
+    ``active`` is the baseline a draft's changed-fields are diffed against.
+    It may be ``None`` (the workspace has no active row, i.e. it has never
+    customized anything) -- substituting ``{}`` for each of its config
+    fields reduces `_axis_payload`'s diff to "vs. defaults", which is
+    exactly what an all-defaults active row would have produced anyway.
+    """
+    is_draft = revision.status == WorkspaceQualityProfileRevision.STATUS_DRAFT
     creator = revision.created_by
+    active_retrieval_config = active.retrieval_config if active is not None else {}
+    active_generation_config = active.generation_config if active is not None else {}
+    active_prompt_policy = active.prompt_policy if active is not None else {}
     return {
         "uid": str(revision.uid),
         "version": revision.version,
@@ -74,14 +85,14 @@ def _serialize_row(revision, *, active=None) -> dict[str, Any]:
         "based_on_uid": str(revision.based_on.uid) if revision.based_on_id else None,
         "retrieval": _axis_payload(
             revision.retrieval_config, defaults_fn=retrieval_defaults, schema=RETRIEVAL_SCHEMA,
-            active_config=active.retrieval_config if is_draft else None,
+            active_config=active_retrieval_config if is_draft else None,
         ),
         "generation": _axis_payload(
             revision.generation_config, defaults_fn=generation_defaults, schema=GENERATION_SCHEMA,
-            active_config=active.generation_config if is_draft else None,
+            active_config=active_generation_config if is_draft else None,
         ),
         "prompt_policy": _prompt_axis_payload(
-            revision.prompt_policy, active_policy=active.prompt_policy if is_draft else None,
+            revision.prompt_policy, active_policy=active_prompt_policy if is_draft else None,
         ),
         "validation": {
             "state": revision.validation_state,
@@ -96,12 +107,34 @@ def _serialize_row(revision, *, active=None) -> dict[str, Any]:
     }
 
 
+def _serialize_default_active() -> dict[str, Any]:
+    """The envelope's "active" value when the workspace has never
+    customized anything -- this module's own defaults, not a database row."""
+    return {
+        "uid": None,
+        "version": 0,
+        "revision": 0,
+        "status": WorkspaceQualityProfileRevision.STATUS_ACTIVE,
+        "changed_axes": [],
+        "based_on_uid": None,
+        "retrieval": _axis_payload(None, defaults_fn=retrieval_defaults, schema=RETRIEVAL_SCHEMA),
+        "generation": _axis_payload(None, defaults_fn=generation_defaults, schema=GENERATION_SCHEMA),
+        "prompt_policy": _prompt_axis_payload(None),
+        "validation": {"state": "verified", "last_run_uid": None, "warnings": []},
+        "created_by": None,
+        "created_at": None,
+        "updated_at": None,
+        "applied_at": None,
+        "note": "Server defaults",
+    }
+
+
 def quality_profile_envelope(workspace, *, actor, can_edit: bool = True) -> dict[str, Any]:
     with transaction.atomic():
         from workspaces.models import Workspace
 
         locked_workspace = Workspace.objects.select_for_update().get(pk=workspace.pk)
-        active = _active_for_workspace(locked_workspace, actor=actor)
+        active = _active_for_workspace(locked_workspace)
     draft = WorkspaceQualityProfileRevision.objects.filter(
         workspace=workspace,
         status=WorkspaceQualityProfileRevision.STATUS_DRAFT,
@@ -109,7 +142,7 @@ def quality_profile_envelope(workspace, *, actor, can_edit: bool = True) -> dict
     return {
         "ok": True,
         "workspace_uid": str(workspace.uid),
-        "active": _serialize_row(active),
+        "active": _serialize_row(active) if active is not None else _serialize_default_active(),
         "draft": _serialize_row(draft, active=active) if draft else None,
         "defaults": {
             "retrieval": retrieval_defaults(),
@@ -176,7 +209,11 @@ def save_quality_profile_draft(
         from workspaces.models import Workspace
 
         locked_workspace = Workspace.objects.select_for_update().get(pk=workspace.pk)
-        active = _active_for_workspace(locked_workspace, actor=actor, lock=True)
+        active = _active_for_workspace(locked_workspace, lock=True)
+        active_retrieval_config = active.retrieval_config if active is not None else {}
+        active_generation_config = active.generation_config if active is not None else {}
+        active_prompt_policy_config = active.prompt_policy if active is not None else {}
+        active_version = active.version if active is not None else 0
         draft = WorkspaceQualityProfileRevision.objects.select_for_update().filter(
             workspace=locked_workspace,
             status=WorkspaceQualityProfileRevision.STATUS_DRAFT,
@@ -189,9 +226,9 @@ def save_quality_profile_draft(
             )
 
         changed_axes = set(draft.changed_axes) if draft else set()
-        retrieval_config = draft.retrieval_config if draft else active.retrieval_config
-        generation_config = draft.generation_config if draft else active.generation_config
-        prompt_policy_config = draft.prompt_policy if draft else active.prompt_policy
+        retrieval_config = draft.retrieval_config if draft else active_retrieval_config
+        generation_config = draft.generation_config if draft else active_generation_config
+        prompt_policy_config = draft.prompt_policy if draft else active_prompt_policy_config
         warnings = list(draft.validation_warnings) if draft else []
 
         if retrieval is not None:
@@ -201,7 +238,7 @@ def save_quality_profile_draft(
             for field in retrieval_reset_fields:
                 candidate[field] = defaults[field]
             warnings = validate_retrieval_config(candidate)
-            active_effective = _effective(active.retrieval_config)
+            active_effective = _effective(active_retrieval_config)
             if all(candidate[key] == active_effective[key] for key in RETRIEVAL_SCHEMA):
                 changed_axes.discard(AXIS_RETRIEVAL)
             else:
@@ -215,7 +252,7 @@ def save_quality_profile_draft(
             for field in generation_reset_fields:
                 candidate[field] = defaults[field]
             validate_generation_config(candidate)
-            active_effective = _effective_generation(active.generation_config)
+            active_effective = _effective_generation(active_generation_config)
             if all(candidate[key] == active_effective[key] for key in GENERATION_SCHEMA):
                 changed_axes.discard(AXIS_GENERATION)
             else:
@@ -228,7 +265,7 @@ def save_quality_profile_draft(
             candidate = _effective_prompt_policy(prompt_policy_config)
             candidate.update(deepcopy(prompt_policy))
             candidate = validate_prompt_policy(candidate)
-            active_effective = _effective_prompt_policy(active.prompt_policy)
+            active_effective = _effective_prompt_policy(active_prompt_policy_config)
             if candidate == active_effective:
                 changed_axes.discard(AXIS_PROMPT_POLICY)
             else:
@@ -242,7 +279,7 @@ def save_quality_profile_draft(
         if draft is None:
             draft = WorkspaceQualityProfileRevision.objects.create(
                 workspace=locked_workspace,
-                version=active.version + 1,
+                version=active_version + 1,
                 revision=1,
                 status=WorkspaceQualityProfileRevision.STATUS_DRAFT,
                 changed_axes=sorted(changed_axes),
@@ -289,7 +326,7 @@ def discard_quality_profile_draft(workspace, *, expected_revision) -> dict[str, 
 
 
 def preview_prompt_draft(workspace, *, expected_revision, route) -> dict[str, Any]:
-    from document_ai.rag.prompt_profiles import build_system_prompt
+    from documents.rag.prompt_profiles import build_system_prompt
     import hashlib
 
     if route not in PROMPT_ROUTES:
@@ -327,7 +364,7 @@ def apply_quality_profile_draft(
         from workspaces.models import Workspace
 
         locked_workspace = Workspace.objects.select_for_update().get(pk=workspace.pk)
-        active = _active_for_workspace(locked_workspace, actor=actor, lock=True)
+        active = _active_for_workspace(locked_workspace, lock=True)
         draft = WorkspaceQualityProfileRevision.objects.select_for_update().filter(
             workspace=locked_workspace,
             status=WorkspaceQualityProfileRevision.STATUS_DRAFT,
@@ -358,7 +395,7 @@ def apply_quality_profile_draft(
             raise RetrievalProfileError("EVALUATION_REQUIRED", "A successful evaluation run is required before apply.", 409)
 
         if evaluation_run_uid:
-            from document_ai.search.evaluation import resolve_verified_evaluation_run
+            from documents.search.evaluation import resolve_verified_evaluation_run
 
             run = resolve_verified_evaluation_run(
                 locked_workspace, axis=AXIS_RETRIEVAL, draft=draft, evaluation_run_uid=evaluation_run_uid,
@@ -368,8 +405,11 @@ def apply_quality_profile_draft(
         else:
             validation_state = "unverified"
 
-        active.status = WorkspaceQualityProfileRevision.STATUS_ARCHIVED
-        active.save(update_fields=["status", "updated_at"])
+        if active is not None:
+            # No active row means the workspace was still on server defaults
+            # (never applied a draft before) -- nothing to archive.
+            active.status = WorkspaceQualityProfileRevision.STATUS_ARCHIVED
+            active.save(update_fields=["status", "updated_at"])
         draft.status = WorkspaceQualityProfileRevision.STATUS_ACTIVE
         draft.validation_state = validation_state
         draft.note = note.strip()

@@ -22,7 +22,8 @@ from django.urls import include, path
 from rest_framework import permissions
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
-from document_ai.search.views import SandboxPageView
+from documents.search.views import SandboxPageView
+from documents.urls import deprecated_document_ai_urlpatterns
 from files.views.spa import spa_shell
 
 handler400 = "accounts.views.bad_request"
@@ -49,10 +50,17 @@ urlpatterns = [
     path("api/accounts/v1/", include("accounts.api_v1.urls")),
     path("api/workspaces/v1/", include("workspaces.api_v1.urls")),
     path("files/", include("files.urls")),
-    path("document-ai/sandbox/", SandboxPageView.as_view(), name="document-ai-sandbox"),
-    path("api/document-ai/", include("document_ai.urls")),
+    path("api/v1/", include("documents.urls")),
     path("api/sync/", include("files.sync_api.urls")),
     path("api/cli/v1/", include("config.cli_urls")),
+
+    # DEPRECATED -- scheduled for removal. Pre-api/v1 paths, kept only for
+    # clients that still call them; see documents/urls.py for the removal note.
+    path("document-ai/sandbox/", SandboxPageView.as_view(), name="document-ai-sandbox"),
+    path(
+        "api/document-ai/",
+        include((deprecated_document_ai_urlpatterns, "document_ai")),
+    ),
 
     # Swagger Documentation URLs
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),

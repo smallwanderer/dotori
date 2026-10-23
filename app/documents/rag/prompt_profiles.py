@@ -5,8 +5,8 @@ import html
 from copy import deepcopy
 from typing import Any
 
-from document_ai.search.profiles import RetrievalProfileError
-from workspaces.models import WorkspaceQualityProfileRevision
+from documents.search.profiles import RetrievalProfileError
+from documents.models import WorkspaceQualityProfileRevision
 
 
 PROMPT_CONTRACT_VERSION = 1

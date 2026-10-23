@@ -7,7 +7,7 @@ from django.utils.html import format_html
 from django.utils.text import Truncator
 
 from config.enums import AIStatus
-from document_ai.models import (
+from documents.models import (
     ChunkEmbedding,
     DocumentChunk,
     DocumentParseResult,
@@ -18,8 +18,8 @@ from document_ai.models import (
     SearchJob,
     UserLLMPreference,
 )
-from document_ai.orchestration import enqueue_embedding
-from document_ai.tracing_utils import enqueue_kwargs
+from documents.orchestration import enqueue_embedding
+from documents.tracing_utils import enqueue_kwargs
 
 
 def _format_duration(started_at, completed_at):

@@ -31,7 +31,7 @@
   "noApiTokens": "No API tokens issued yet.",
   "noApiTokensSub": "Issue a new token above to get started.",
   "settingsAccount": "Account",
-  "settingsSyncQuota": "Sync Quota",
+  "settingsStorage": "Storage",
   "settingsFiles": "Files",
   "settingsActiveFiles": "Active files",
   "tokenCreatedTitle": "Token created successfully",

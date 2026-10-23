@@ -14,7 +14,7 @@ from search_engine.query_engine.contracts import DSLFilter, DSLSort, QueryDSL
 from search_engine.query_engine.query_pipeline import QueryPipeline
 from search_engine.query_engine.translators import ORMCompiler, QueryDSLAdapter
 from search_engine.query_engine.validators import QueryDSLValidator
-from document_ai.tasks import _extract_llm_final_content
+from documents.tasks import _extract_llm_final_content
 
 
 def test_query_engine_extracts_time_filetype_and_keywords():

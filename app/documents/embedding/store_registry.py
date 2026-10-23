@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .stores import EmbeddingStore, PgVectorChunkEmbeddingStore
-from document_ai.services.embedding_runtime_config import (
+from documents.services.embedding_runtime_config import (
     EmbeddingRuntimeSnapshot,
     get_active_embedding_runtime,
 )

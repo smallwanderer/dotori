@@ -1,8 +1,8 @@
 from django.apps import AppConfig
 
-class DocumentAiConfig(AppConfig):
+class DocumentsConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'document_ai'
+    name = 'documents'
 
     def ready(self):
-        import document_ai.signals  # noqa
+        import documents.signals  # noqa

@@ -13,7 +13,7 @@ from typing import Any, Iterable
 from django.db import connection, transaction
 
 from config.enums import AIStatus
-from document_ai.models import (
+from documents.models import (
     ChunkEmbedding,
     DocumentChunk,
     DocumentParseResult,

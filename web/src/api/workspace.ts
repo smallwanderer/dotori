@@ -528,7 +528,7 @@ const djangoDocumentApi: WorkspaceApi = {
   },
 
   async searchDocuments(request) {
-    const payload = await apiRequest<ApiSearchResponse>('/api/document-ai/v1/search/', {
+    const payload = await apiRequest<ApiSearchResponse>('/api/v1/search/', {
       method: 'POST',
       json: {
         mode: request.mode,
@@ -575,12 +575,12 @@ const djangoDocumentApi: WorkspaceApi = {
   },
 
   async listRagConversations() {
-    const payload = await apiRequest<{ conversations: ApiRagConversation[] }>('/api/document-ai/v1/rag/conversations/')
+    const payload = await apiRequest<{ conversations: ApiRagConversation[] }>('/api/v1/rag/conversations/')
     return payload.conversations.map(mapRagConversation)
   },
 
   async createRagConversation(title, defaultNodeIds) {
-    const payload = await apiRequest<{ conversation: ApiRagConversation }>('/api/document-ai/v1/rag/conversations/', {
+    const payload = await apiRequest<{ conversation: ApiRagConversation }>('/api/v1/rag/conversations/', {
       method: 'POST',
       json: { title, default_node_ids: defaultNodeIds },
     })
@@ -588,12 +588,12 @@ const djangoDocumentApi: WorkspaceApi = {
   },
 
   async getRagConversation(uid) {
-    const payload = await apiRequest<{ conversation: ApiRagConversation }>(`/api/document-ai/v1/rag/conversations/${encodeURIComponent(uid)}/`)
+    const payload = await apiRequest<{ conversation: ApiRagConversation }>(`/api/v1/rag/conversations/${encodeURIComponent(uid)}/`)
     return mapRagConversation(payload.conversation)
   },
 
   async updateRagConversation(uid, expectedRevision, changes) {
-    const payload = await apiRequest<{ conversation: ApiRagConversation }>(`/api/document-ai/v1/rag/conversations/${encodeURIComponent(uid)}/`, {
+    const payload = await apiRequest<{ conversation: ApiRagConversation }>(`/api/v1/rag/conversations/${encodeURIComponent(uid)}/`, {
       method: 'PATCH',
       json: {
         expected_revision: expectedRevision,
@@ -605,16 +605,16 @@ const djangoDocumentApi: WorkspaceApi = {
   },
 
   async deleteRagConversation(uid) {
-    await apiRequest<void>(`/api/document-ai/v1/rag/conversations/${encodeURIComponent(uid)}/`, { method: 'DELETE' })
+    await apiRequest<void>(`/api/v1/rag/conversations/${encodeURIComponent(uid)}/`, { method: 'DELETE' })
   },
 
   async cancelRagConversation(uid) {
-    const payload = await apiRequest<{ cancel_requested: boolean }>(`/api/document-ai/v1/rag/conversations/${encodeURIComponent(uid)}/cancel/`, { method: 'POST' })
+    const payload = await apiRequest<{ cancel_requested: boolean }>(`/api/v1/rag/conversations/${encodeURIComponent(uid)}/cancel/`, { method: 'POST' })
     return payload.cancel_requested
   },
 
   async listRagConversationMessages(uid) {
-    const payload = await apiRequest<{ messages: ApiRagMessage[] }>(`/api/document-ai/v1/rag/conversations/${encodeURIComponent(uid)}/messages/`)
+    const payload = await apiRequest<{ messages: ApiRagMessage[] }>(`/api/v1/rag/conversations/${encodeURIComponent(uid)}/messages/`)
     return payload.messages.map(mapRagMessage)
   },
 
@@ -681,8 +681,8 @@ const djangoDocumentApi: WorkspaceApi = {
 
       try {
         const streamUrl = request.conversationUid
-          ? `/api/document-ai/v1/rag/conversations/${encodeURIComponent(request.conversationUid)}/messages/stream/`
-          : '/api/document-ai/v1/rag/stream/'
+          ? `/api/v1/rag/conversations/${encodeURIComponent(request.conversationUid)}/messages/stream/`
+          : '/api/v1/rag/stream/'
         const response = await apiFetch(streamUrl, {
           method: 'POST',
           signal: controller.signal,

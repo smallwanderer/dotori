@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from llm_installation.embedding_catalog.provider_options import TokenizerOptions, validate_provider_options
+
+from llm_installation.function_catalog import FunctionCapabilitySpec
 
 
 class EmbeddingFootprintSpec(BaseModel):
@@ -35,13 +39,30 @@ class EmbeddingModelEntry(BaseModel):
     revision: str = Field(min_length=7)
     tokenizer_id: str = Field(min_length=1)
     tokenizer_revision: str = Field(min_length=7)
+    tokenizer_options: TokenizerOptions = Field(default_factory=TokenizerOptions)
     dimension: int = Field(gt=0)
     model_input_max_tokens: int = Field(gt=0)
     languages: list[str] = Field(default_factory=list)
     footprint: EmbeddingFootprintSpec | None = None
 
 
-class EmbeddingProfileEntry(BaseModel):
+class _ProviderOptionsMixin(BaseModel):
+    provider_options: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_options(self):
+        self.provider_options = validate_provider_options(
+            self.provider, self.provider_options, dimension=self.dimension,
+            query_prefix=self.query_prefix, document_prefix=self.document_prefix,
+        )
+        if self.provider in {"sentence_transformers", "openai_compatible"} and self.supports_sparse:
+            raise ValueError(f"Provider {self.provider} does not produce sparse embeddings")
+        if self.provider == "bgem3_hybrid" and not self.normalize_embeddings:
+            raise ValueError("bgem3_hybrid requires normalized embeddings")
+        return self
+
+
+class EmbeddingProfileEntry(_ProviderOptionsMixin):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=1)
@@ -56,9 +77,10 @@ class EmbeddingProfileEntry(BaseModel):
     document_prefix: str = ""
     availability: Literal["supported", "experimental", "unavailable"]
     priority: int = 0
+    functions: list[FunctionCapabilitySpec] = Field(default_factory=list)
 
 
-class EmbeddingCatalogEntry(BaseModel):
+class EmbeddingCatalogEntry(_ProviderOptionsMixin):
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -70,6 +92,7 @@ class EmbeddingCatalogEntry(BaseModel):
     revision: str
     tokenizer_id: str
     tokenizer_revision: str
+    tokenizer_options: TokenizerOptions = Field(default_factory=TokenizerOptions)
     provider: str
     store: str
     dimension: int
@@ -86,3 +109,4 @@ class EmbeddingCatalogEntry(BaseModel):
     )
     languages: list[str] = Field(default_factory=list)
     footprint: EmbeddingFootprintSpec | None = None
+    functions: list[FunctionCapabilitySpec] = Field(default_factory=list)

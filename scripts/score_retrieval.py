@@ -4,7 +4,7 @@
 Computes Recall@K and nDCG@K (graded 0-3 relevance), unlike `evaluate_retrieval`
 which only reports HitRate/MRR from a separate, non-operational ranking
 implementation (see dev-docs/evaluation/evaluation-status.md). This script
-calls the real `/api/document-ai/v1/search/` endpoint instead, so results
+calls the real `/api/v1/search/` endpoint instead, so results
 reflect the actual VectorRetriever path.
 
 Matches check_search_load.py's pattern (requests, no extra deps, session
@@ -85,7 +85,7 @@ def run_query(args, item: dict) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dataset", required=True, help="Path to a graded relevance dataset JSON file.")
-    parser.add_argument("--url", default="http://localhost:8000/api/document-ai/v1/search/")
+    parser.add_argument("--url", default="http://localhost:8000/api/v1/search/")
     parser.add_argument("--cookie", required=True, help="Browser Cookie header value (session auth only).")
     parser.add_argument("--mode", default="basic", choices=["basic", "advanced"])
     parser.add_argument("--top-k", type=int, default=10, help="top_k sent to the search API.")

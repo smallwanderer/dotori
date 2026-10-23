@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from document_ai.services.rag_runtime_config import load_llm_runtime_config
+from llm_installation.rag_runtime_config import load_llm_runtime_config
 from llm_installation.memory_reservations import CLAIM_LLM, clear_claim
 from llm_installation.runtime_lifecycle import RuntimeLifecycleManager, get_repo_root
 

@@ -1,6 +1,6 @@
 import pytest
 
-from document_ai.search.hnsw_benchmark import (
+from documents.search.hnsw_benchmark import (
     _plan_facts,
     _set_planner_mode,
     latency_summary,

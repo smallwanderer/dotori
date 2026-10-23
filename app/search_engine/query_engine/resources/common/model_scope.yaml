@@ -9,15 +9,15 @@ fileblob:
   fields: [status, sha256, size, mime_type]
 
 parse_result:
-  model: document_ai.DocumentParseResult
+  model: documents.DocumentParseResult
   fields: [parser_name, status, chunk_count, metadata, created_at, updated_at]
 
 chunk:
-  model: document_ai.DocumentChunk
+  model: documents.DocumentChunk
   fields: [chunk_index, text, page_from, page_to, status, created_at, updated_at]
 
 embedding:
-  model: document_ai.ChunkEmbedding
+  model: documents.ChunkEmbedding
   fields: [model_name, model_version, vector, sparse_vector, status, embedded_at]
 
 user:

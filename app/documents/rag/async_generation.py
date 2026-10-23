@@ -15,9 +15,9 @@ from redis.asyncio import Redis as AsyncRedis
 
 from config.enums import AIStatus, QueryIntent, RAGStage
 from config.tracing import get_trace_id
-from document_ai.db_span import capture_db_spans
-from document_ai.performance import datetime_delta_ms, elapsed_ms, put_metric
-from document_ai.rag.generation import (
+from documents.db_span import capture_db_spans
+from documents.performance import datetime_delta_ms, elapsed_ms, put_metric
+from documents.rag.generation import (
     _build_generation_prompts,
     _build_llm_request,
     _build_rag_context,
@@ -31,11 +31,11 @@ from document_ai.rag.generation import (
     _insufficient_evidence_answer,
     _normalize_rag_answer,
 )
-from document_ai.services.rag_cancel_service import (
+from documents.services.rag_cancel_service import (
     get_rag_cancel_key,
     get_rag_cancel_redis_url,
 )
-from document_ai.services.rag_conversation_service import RAG_INTERRUPTED, renew_rag_job_lease
+from documents.services.rag_conversation_service import RAG_INTERRUPTED, renew_rag_job_lease
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +71,10 @@ def _finish_metrics(context: AsyncGenerationContext, *, completed_at=None, **ext
 def _prepare_generation_sync(
     rag_job_id: int,
 ) -> tuple[AsyncGenerationContext | None, dict | None]:
-    from document_ai.models import RAGJob
-    from document_ai.search.profiles import get_effective_generation_config
-    from document_ai.services.llm_endpoint_service import resolve_rag_llm_request_config
+    from documents.models import RAGJob
+    from documents.search.profiles import get_effective_generation_config
+    from documents.services.llm_endpoint_service import resolve_rag_llm_request_config
+    from llm_installation.rag_runtime_config import LLMRuntimeNotConfigured
 
     worker_started = time_module.perf_counter()
     with capture_db_spans():
@@ -228,7 +229,40 @@ def _prepare_generation_sync(
                 "citation_count": 0,
             }
 
-        llm_config = resolve_rag_llm_request_config(rag_job)
+        try:
+            llm_config = resolve_rag_llm_request_config(rag_job)
+        except LLMRuntimeNotConfigured as exc:
+            failed_at = timezone.now()
+            rag_job.status = AIStatus.FAILED
+            rag_job.stage = RAGStage.FAILED
+            rag_job.stage_message = "요청 당시 선택한 모델 라우트를 사용할 수 없습니다."
+            rag_job.completed_at = failed_at
+            rag_job.error_message = str(exc)
+            rag_job.performance_metrics = _finish_metrics(
+                context_stub,
+                completed_at=failed_at,
+                failed=True,
+                provider_resolution_failed=True,
+            )
+            rag_job.save(
+                update_fields=[
+                    "status",
+                    "stage",
+                    "stage_message",
+                    "completed_at",
+                    "error_message",
+                    "performance_metrics",
+                    "updated_at",
+                ]
+            )
+            return None, {
+                "status": "failed",
+                "job_id": rag_job_id,
+                "error": rag_job.error_message,
+            }
+        metrics["provider_resolution"] = llm_config.provider_resolution
+        rag_job.performance_metrics = metrics
+        rag_job.save(update_fields=["performance_metrics"])
         generation_config = get_effective_generation_config(rag_job.workspace)
         system_prompt, user_prompt, fewshot_user, fewshot_assistant = (
             _build_generation_prompts(
@@ -247,6 +281,8 @@ def _prepare_generation_sync(
             temperature=generation_config["temperature"],
             top_p=generation_config["top_p"],
         )
+        rag_job.performance_metrics = metrics
+        rag_job.save(update_fields=["performance_metrics"])
         context_stub.request_url = request_url
         context_stub.payload = payload
         context_stub.headers = llm_config.headers
@@ -259,8 +295,8 @@ def _complete_generation_sync(
     raw_answer: str,
     emitted_answer: str,
 ) -> tuple[dict, str]:
-    from document_ai.models import RAGJob
-    from document_ai.services.rag_cancel_service import clear_rag_cancel_signal
+    from documents.models import RAGJob
+    from documents.services.rag_cancel_service import clear_rag_cancel_signal
 
     with capture_db_spans():
         rag_job = RAGJob.objects.get(pk=context.job_id)
@@ -331,8 +367,8 @@ def _complete_generation_sync(
 
 
 def _mark_generation_canceled_sync(context: AsyncGenerationContext) -> dict:
-    from document_ai.models import RAGJob
-    from document_ai.services.rag_cancel_service import clear_rag_cancel_signal
+    from documents.models import RAGJob
+    from documents.services.rag_cancel_service import clear_rag_cancel_signal
 
     with capture_db_spans():
         rag_job = RAGJob.objects.get(pk=context.job_id)
@@ -367,7 +403,7 @@ def _mark_generation_failed_sync(
     error: str,
     timeout: bool = False,
 ) -> dict:
-    from document_ai.models import RAGJob
+    from documents.models import RAGJob
 
     with capture_db_spans():
         rag_job = RAGJob.objects.get(pk=context.job_id)
@@ -574,7 +610,7 @@ async def iter_rag_generation_events_async(
 
 
 def _mark_generation_interrupted_sync(context: AsyncGenerationContext) -> dict:
-    from document_ai.models import RAGJob
+    from documents.models import RAGJob
 
     now = timezone.now()
     updated = RAGJob.objects.filter(

@@ -5,8 +5,13 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+
+from llm_installation.embedding_catalog.provider_options import TokenizerOptions, validate_provider_options
+
+from llm_installation.function_catalog import FunctionCapabilitySpec
 
 
 class EmbeddingRuntimeConfigError(RuntimeError):
@@ -25,6 +30,7 @@ class EmbeddingRuntimeSnapshot(BaseModel):
     model_revision: str
     tokenizer_id: str
     tokenizer_revision: str
+    tokenizer_options: TokenizerOptions = Field(default_factory=TokenizerOptions)
     provider: str
     store: str
     dimension: int = Field(gt=0)
@@ -35,24 +41,55 @@ class EmbeddingRuntimeSnapshot(BaseModel):
     query_prefix: str = ""
     document_prefix: str = ""
     languages: list[str] = Field(default_factory=list)
+    functions: list[FunctionCapabilitySpec] = Field(default_factory=list)
+    provider_options: dict[str, Any] = Field(default_factory=dict)
     runtime_fingerprint: str = ""
     resolved_at: str | None = None
 
+    @field_serializer("tokenizer_options")
+    def serialize_tokenizer_options(self, options):
+        return options.model_dump(exclude_unset=True)
+
     @model_validator(mode="after")
     def populate_and_validate_fingerprint(self) -> "EmbeddingRuntimeSnapshot":
+        self.provider_options = validate_provider_options(
+            self.provider, self.provider_options, dimension=self.dimension,
+            query_prefix=self.query_prefix, document_prefix=self.document_prefix,
+        )
         payload = self.model_dump(exclude={"runtime_fingerprint"})
+        if not self.provider_options:
+            payload.pop("provider_options", None)
+        tokenizer_options = self.tokenizer_options.model_dump(exclude_unset=True)
+        if tokenizer_options:
+            payload["tokenizer_options"] = tokenizer_options
+        else:
+            payload.pop("tokenizer_options", None)
         canonical = json.dumps(
             payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
         expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         if self.runtime_fingerprint and self.runtime_fingerprint != expected:
-            # Backward compatibility check for v1 payloads generated without max_tokens
-            legacy_payload = {k: v for k, v in payload.items() if k != "max_tokens"}
-            legacy_canonical = json.dumps(
-                legacy_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            )
-            legacy_expected = hashlib.sha256(legacy_canonical.encode("utf-8")).hexdigest()
-            if self.runtime_fingerprint != legacy_expected:
+            # Runtime files predating catalog function metadata remain valid.
+            legacy_payloads = [
+                {key: value for key, value in payload.items() if key != "functions"},
+                {key: value for key, value in payload.items() if key != "max_tokens"},
+                {
+                    key: value for key, value in payload.items()
+                    if key not in {"functions", "max_tokens"}
+                },
+            ]
+            legacy_fingerprints = {
+                hashlib.sha256(
+                    json.dumps(
+                        legacy_payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                for legacy_payload in legacy_payloads
+            }
+            if self.runtime_fingerprint not in legacy_fingerprints:
                 raise ValueError("Embedding runtime fingerprint does not match payload.")
             expected = self.runtime_fingerprint
         self.runtime_fingerprint = expected
@@ -132,7 +169,7 @@ def get_active_embedding_runtime(
 def clear_embedding_runtime_cache() -> None:
     get_active_embedding_runtime.cache_clear()
     try:
-        from document_ai.parsers.config import clear_parser_tokenizer_cache
+        from documents.parsers.config import clear_parser_tokenizer_cache
 
         clear_parser_tokenizer_cache()
     except Exception:

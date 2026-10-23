@@ -2,8 +2,6 @@ from functools import wraps
 
 from accounts.api_responses import api_error_response
 
-from .models import WorkspaceMembership
-
 
 def workspace_member_required(function):
     """Require an authenticated user with a resolved active workspace."""
@@ -44,7 +42,7 @@ def workspace_admin_required(function):
                 "No active workspace.",
                 status=403,
             )
-        if request.workspace_membership.role != WorkspaceMembership.ROLE_ADMIN:
+        if not request.workspace_membership.is_admin:
             return api_error_response(
                 "PERMISSION_DENIED",
                 "Workspace admin access is required.",

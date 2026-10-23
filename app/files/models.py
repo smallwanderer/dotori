@@ -128,7 +128,7 @@ class Node(models.Model):
             return None
 
         from capabilities.registry import DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH
-        from document_ai.services.capability_admission import capability_enabled
+        from documents.services.capability_admission import capability_enabled
 
         extract_enabled = capability_enabled(DOCUMENT_EXTRACT)
         semantic_search_enabled = capability_enabled(DOCUMENT_SEMANTIC_SEARCH)
@@ -155,7 +155,7 @@ class Node(models.Model):
                 "searchable": False,
             }
 
-        from document_ai.services.embedding_runtime_config import (
+        from documents.services.embedding_runtime_config import (
             EmbeddingRuntimeConfigError,
             get_active_embedding_runtime,
         )
@@ -517,7 +517,7 @@ class FileBlob(models.Model):
 
 class FileOperationLog(models.Model):
     """One row per file-management API request (upload, rename, move, delete,
-    restore, ...), mirroring document_ai's SearchJob/RAGJob pattern so
+    restore, ...), mirroring documents's SearchJob/RAGJob pattern so
     response time can be queried the same way across operation types (see
     dev-docs/evaluation/performance-and-reliability.md, 파일 입출력 계측).
 

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from document_ai.services.rag_runtime_config import (
+from llm_installation.rag_runtime_config import (
     get_llm_runtime_config_path,
     normalize_serving_profile,
 )
@@ -148,7 +148,6 @@ def _build_runtime_payload(
             "generation_id": generation_id,
             "reason": target.reason,
             "fallback_used": target.fallback_used,
-            "priority_preset": target.priority_preset,
             "selection_mode": target.selection_mode,
             "selection_reason_code": target.selection_reason_code,
             "runtime_policy_input": target.runtime_policy_input,

@@ -60,7 +60,7 @@ def trash(request):
 @login_required
 @email_verification_required
 def rag_workspace(request):
-    from document_ai.services.llm_endpoint_service import (
+    from documents.services.llm_endpoint_service import (
         get_or_create_llm_preference,
         get_effective_rag_target,
     )
@@ -77,7 +77,7 @@ def rag_workspace(request):
 @login_required
 @email_verification_required
 def ai_search_history(request):
-    from document_ai.models import RAGJob
+    from documents.models import RAGJob
     from django.core.paginator import Paginator
 
     history_list = RAGJob.objects.filter(

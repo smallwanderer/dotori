@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand, CommandError
 
-from document_ai.embedding.validation import (
+from documents.embedding.validation import (
     get_active_embedding_config,
     validate_active_embedding_provider,
 )

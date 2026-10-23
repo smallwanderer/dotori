@@ -20,12 +20,14 @@ from documents.parsers.config import (
     get_embedding_document_batch_max_tokens,
     get_embedding_max_tokens,
     get_embedding_model,
-    get_hf_tokenizer,
     get_raw_tokenizer,
 )
 from documents.parsers.text_utils import normalize_extracted_text
 from documents.performance import datetime_delta_ms, elapsed_ms, put_metric
 from documents.tracing_utils import enqueue_kwargs, put_task_identity
+from documents.embedding.persistence import capture_batch_evidence, guarded_embedding_write
+from orchestration.receipts import ExecutionOwnershipLost
+from orchestration.execution import StaleExecution
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +64,12 @@ def truncate_embedding_input_text(text: str, max_tokens: int) -> str:
 
 def prepare_embedding_input_text(text: str, *, chunk=None) -> tuple[str, int, bool]:
     max_tokens = get_embedding_max_tokens()
-    tokenizer = get_hf_tokenizer()
-    token_count = tokenizer.count_tokens(text)
+    tokenizer = get_raw_tokenizer()
+    token_count = len(tokenizer.encode(text, add_special_tokens=False))
     if token_count > max_tokens:
         chunk_label = f"chunk_id={chunk.id}, " if chunk is not None else ""
         truncated_text = truncate_embedding_input_text(text, max_tokens)
-        truncated_token_count = tokenizer.count_tokens(truncated_text)
+        truncated_token_count = len(tokenizer.encode(truncated_text, add_special_tokens=False))
         logger.warning(
             "Embedding input truncated: %stokens=%s, truncated_tokens=%s, max_tokens=%s",
             chunk_label,
@@ -222,12 +224,15 @@ def _mark_embedding_failed(
         model_name=embedding_model,
         backend=embedding_backend,
     )
-    store.mark_chunk_embedding_failed(chunk=chunk, error_message=error_message)
-
-    chunk.status = AIStatus.FAILED
-    chunk.error_message = error_message
-    chunk.performance_metrics = performance_metrics
-    chunk.save(update_fields=["status", "error_message", "performance_metrics"])
+    expected = {chunk.pk: getattr(chunk, "_embedding_input_evidence", None) or capture_batch_evidence([chunk])[chunk.pk]}
+    with guarded_embedding_write([chunk], expected):
+        from documents.models import ChunkEmbedding
+        existing = ChunkEmbedding.objects.filter(chunk=chunk, status=AIStatus.COMPLETED).exists()
+        store.mark_chunk_embedding_failed(chunk=chunk, error_message=error_message)
+        chunk.status = AIStatus.COMPLETED if existing else AIStatus.FAILED
+        chunk.error_message = error_message
+        chunk.performance_metrics = performance_metrics
+        chunk.save(update_fields=["status", "error_message", "performance_metrics"])
 
 
 def _log_if_document_ready(node_id: int) -> None:
@@ -314,6 +319,9 @@ def embed_document_chunk_sync(
             "message": f"Chunk {chunk_id} is not valid state",
         }
 
+    evidence = capture_batch_evidence([chunk])
+    chunk._embedding_input_evidence = evidence[chunk.pk]
+
     try:
         with capture_db_spans():
             text = normalize_extracted_text(chunk.text or "")
@@ -334,7 +342,7 @@ def embed_document_chunk_sync(
                 embedding_backend,
             )
 
-            from documents.embedding.internal_views import run_embedding_with_admission
+            from documents.embedding.execution import run_embedding_with_admission
 
             embedding = run_embedding_with_admission(
                 "document", text=text
@@ -346,14 +354,13 @@ def embed_document_chunk_sync(
                 model_name=embedding_model,
                 backend=embedding_backend,
             )
-            store.save_chunk_embedding(chunk=chunk, embedding=embedding, status=AIStatus.COMPLETED)
-
-            chunk.status = AIStatus.COMPLETED
-            chunk.error_message = ""
-            chunk.performance_metrics = build_metrics(chunk)
-            chunk.save(update_fields=["status", "error_message", "performance_metrics"])
-
-            _log_if_document_ready(chunk.parse_result.node_id)
+            with guarded_embedding_write([chunk], evidence):
+                store.save_chunk_embedding(chunk=chunk, embedding=embedding, status=AIStatus.COMPLETED)
+                chunk.status = AIStatus.COMPLETED
+                chunk.error_message = ""
+                chunk.performance_metrics = build_metrics(chunk)
+                chunk.save(update_fields=["status", "error_message", "performance_metrics"])
+                _log_if_document_ready(chunk.parse_result.node_id)
 
             logger.info(
                 "Embedding completed: chunk_id=%s, node_id=%s, dense_dim=%s, sparse_terms=%s, model=%s, backend=%s",
@@ -370,6 +377,8 @@ def embed_document_chunk_sync(
                 "chunk_id": chunk_id,
             }
 
+    except (ExecutionOwnershipLost, StaleExecution):
+        raise
     except ValueError as exc:
         logger.warning("Embedding validation failed: chunk_id=%s, error=%s", chunk_id, exc)
         _mark_embedding_failed(
@@ -448,6 +457,33 @@ def embed_document_chunk_sync(
         }
 
 
+def execute_embedding_microbatch(*, chunks, texts, evidence, store, build_metrics,
+                                validate_approval=None):
+    """Shared model/write path; callers own selection and retry policy."""
+    from documents.embedding.execution import run_embedding_with_admission
+    if len(chunks) != len(texts) or not chunks:
+        raise ValueError("Microbatch requires one text for every chunk")
+    embeddings = run_embedding_with_admission("document", texts=texts)
+    if len(embeddings) != len(chunks):
+        raise RuntimeError("Embedding result count does not match input count")
+    with guarded_embedding_write(chunks, evidence):
+        if validate_approval is not None:
+            validate_approval()
+        succeeded = []
+        for chunk, embedding in zip(chunks, embeddings):
+            store.save_chunk_embedding(chunk=chunk, embedding=embedding, status=AIStatus.COMPLETED)
+            chunk.status = AIStatus.COMPLETED
+            chunk.error_message = ""
+            chunk.performance_metrics = build_metrics(chunk)
+            chunk.save(update_fields=["status", "error_message", "performance_metrics"])
+            succeeded.append(chunk.pk)
+        if validate_approval is not None:
+            validate_approval()
+        for node_id in {chunk.parse_result.node_id for chunk in chunks}:
+            _log_if_document_ready(node_id)
+    return succeeded
+
+
 def embed_document_chunks_batch_sync(
     chunk_ids: list[int],
     *,
@@ -493,6 +529,9 @@ def embed_document_chunks_batch_sync(
         chunk.id: chunk
         for chunk in DocumentChunk.objects.select_related("parse_result__node").filter(pk__in=chunk_ids)
     }
+    evidence = capture_batch_evidence(list(chunks_by_id.values()))
+    for chunk in chunks_by_id.values():
+        chunk._embedding_input_evidence = evidence[chunk.pk]
 
     skipped: list[dict] = []
     failed: list[dict] = []
@@ -563,12 +602,6 @@ def embed_document_chunks_batch_sync(
 
     try:
         with capture_db_spans():
-            from documents.embedding.internal_views import run_embedding_with_admission
-
-            embeddings = run_embedding_with_admission("document", texts=texts)
-            if len(embeddings) != len(valid_chunks):
-                raise RuntimeError("Embedding result count does not match input count")
-
             from documents.embedding.store_registry import get_embedding_store_instance
 
             store = get_embedding_store_instance(
@@ -576,20 +609,9 @@ def embed_document_chunks_batch_sync(
                 backend=embedding_backend,
             )
 
-            from documents.services.executor_snapshot import validate_execution
-            with transaction.atomic():
-                succeeded: list[int] = []
-                for chunk, embedding in zip(valid_chunks, embeddings):
-                    store.save_chunk_embedding(chunk=chunk, embedding=embedding, status=AIStatus.COMPLETED)
-                    chunk.status = AIStatus.COMPLETED
-                    chunk.error_message = ""
-                    chunk.performance_metrics = build_metrics(chunk)
-                    chunk.save(update_fields=["status", "error_message", "performance_metrics"])
-                    succeeded.append(chunk.id)
-
-                for node_id in {chunk.parse_result.node_id for chunk in valid_chunks}:
-                    _log_if_document_ready(node_id)
-                validate_execution()
+            succeeded = execute_embedding_microbatch(
+                chunks=valid_chunks, texts=texts, evidence=evidence,
+                store=store, build_metrics=build_metrics)
 
         logger.info(
             "Batch embedding completed: chunk_ids=%s, model=%s, backend=%s",
@@ -641,11 +663,10 @@ def embed_document_chunks_batch_sync(
             "skipped": skipped,
             "failed": failed,
         }
-
     except Exception as exc:
         valid_ids = [chunk.id for chunk in valid_chunks]
         from documents.services.executor_snapshot import StaleExecution
-        if isinstance(exc, StaleExecution):
+        if isinstance(exc, (StaleExecution, ExecutionOwnershipLost)):
             raise
         logger.warning(
             "Batch embedding failed (retrying): chunk_ids=%s, retries=%s/%s, error=%s",

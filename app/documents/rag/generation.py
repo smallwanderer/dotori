@@ -10,8 +10,8 @@ from django.utils import timezone
 
 from config.enums import AIStatus, QueryIntent, RAGStage
 from config.tracing import get_trace_id
-from document_ai.db_span import capture_db_spans
-from document_ai.performance import datetime_delta_ms, elapsed_ms, put_metric
+from documents.db_span import capture_db_spans
+from documents.performance import datetime_delta_ms, elapsed_ms, put_metric
 
 logger = logging.getLogger(__name__)
 
@@ -387,7 +387,7 @@ def _build_chat_completions_payload(
     }
 
 
-def _build_llm_request(*, llm_config, system_prompt, fewshot_user, fewshot_assistant, user_prompt, max_tokens, temperature, top_p):
+def _build_llm_request_payload(*, llm_config, system_prompt, fewshot_user, fewshot_assistant, user_prompt, max_tokens, temperature, top_p):
     if _uses_openai_responses_api(llm_config.base_url):
         return (
             llm_config.responses_url,
@@ -416,6 +416,16 @@ def _build_llm_request(*, llm_config, system_prompt, fewshot_user, fewshot_assis
             top_p=top_p,
         ),
     )
+
+
+
+def _build_llm_request(**kwargs):
+    request_url, payload = _build_llm_request_payload(**kwargs)
+    from .request_evidence import audit_request_evidence
+    audit_request_evidence(kwargs["llm_config"], payload, adapter_contract=(
+        "openai-responses-v1" if _uses_openai_responses_api(kwargs["llm_config"].base_url)
+        else "openai-compatible-chat-completions-v1"))
+    return request_url, payload
 
 
 def _normalize_rag_answer(raw_answer: str) -> str:
@@ -486,7 +496,7 @@ def _fallback_rag_answer(citations: list[dict], language: str) -> str:
 
 
 def _mark_rag_canceled(rag_job, redis_client, performance_metrics=None) -> dict:
-    from document_ai.services.rag_cancel_service import clear_rag_cancel_signal
+    from documents.services.rag_cancel_service import clear_rag_cancel_signal
 
     rag_job.status = AIStatus.CANCELED
     rag_job.stage = RAGStage.CANCELED
@@ -503,7 +513,7 @@ def _mark_rag_canceled(rag_job, redis_client, performance_metrics=None) -> dict:
 
 
 def _build_generation_prompts(rag_job, *, skip_retrieval: bool, context_text: str) -> tuple[str, str, str, str]:
-    from document_ai.rag.prompt_profiles import build_system_prompt
+    from documents.rag.prompt_profiles import build_system_prompt
 
     prompt_route = "no_retrieval" if skip_retrieval else "document_rag"
     system_prompt = build_system_prompt(
@@ -548,7 +558,7 @@ def _build_generation_prompts(rag_job, *, skip_retrieval: bool, context_text: st
     return system_prompt, user_prompt, fewshot_user, fewshot_assistant
 
 
-# DEPRECATED - superseded by the ASGI path (document_ai.rag.async_generation.
+# DEPRECATED - superseded by the ASGI path (documents.rag.async_generation.
 # iter_rag_generation_events_async, driven from streaming.create_rag_streaming_response_async).
 # RAGStreamView no longer calls this. Kept only because app/tests/test_rag_flow.py and
 # test_performance_instrumentation.py still exercise prompt-building/cancellation/endpoint
@@ -562,9 +572,9 @@ def _generate_rag_response_sync(rag_job_id: int, *, on_token=None) -> dict:
     import requests
     from redis import Redis
 
-    from document_ai.models import RAGJob
-    from document_ai.services.llm_endpoint_service import resolve_rag_llm_request_config
-    from document_ai.services.rag_cancel_service import (
+    from documents.models import RAGJob
+    from documents.services.llm_endpoint_service import resolve_rag_llm_request_config
+    from documents.services.rag_cancel_service import (
         is_rag_cancel_requested,
     )
 
@@ -617,9 +627,12 @@ def _generate_rag_response_sync(rag_job_id: int, *, on_token=None) -> dict:
     rag_job.performance_metrics = metrics
     rag_job.save(update_fields=["status", "stage", "stage_message", "started_at", "error_message", "performance_metrics"])
 
-    from document_ai.search.profiles import get_effective_generation_config
+    from documents.search.profiles import get_effective_generation_config
 
     llm_config = resolve_rag_llm_request_config(rag_job)
+    metrics["provider_resolution"] = llm_config.provider_resolution
+    rag_job.performance_metrics = metrics
+    rag_job.save(update_fields=["performance_metrics"])
     generation_config = get_effective_generation_config(rag_job.workspace)
     redis_url = os.getenv("RAG_REDIS_URL", os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"))
     request_timeout = _get_positive_int_env("RAG_REQUEST_TIMEOUT", 300)
@@ -675,6 +688,8 @@ def _generate_rag_response_sync(rag_job_id: int, *, on_token=None) -> dict:
             temperature=generation_config["temperature"],
             top_p=generation_config["top_p"],
         )
+        rag_job.performance_metrics = metrics
+        rag_job.save(update_fields=["performance_metrics"])
         llm_started = time_module.perf_counter()
         response = requests.post(
             request_url,
@@ -745,7 +760,7 @@ def _generate_rag_response_sync(rag_job_id: int, *, on_token=None) -> dict:
 
         rag_job.refresh_from_db(fields=["status", "stage"])
         if rag_job.status == AIStatus.CANCELED:
-            from document_ai.services.rag_cancel_service import clear_rag_cancel_signal
+            from documents.services.rag_cancel_service import clear_rag_cancel_signal
 
             rag_job.performance_metrics = finish_metrics(canceled=True)
             rag_job.save(update_fields=["performance_metrics"])

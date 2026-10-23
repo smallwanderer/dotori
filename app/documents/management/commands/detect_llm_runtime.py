@@ -4,7 +4,7 @@ import json
 from dataclasses import replace
 from django.core.management.base import BaseCommand, CommandError
 
-from document_ai.services.rag_runtime_config import (
+from llm_installation.rag_runtime_config import (
     ServerRAGTarget,
     clear_server_rag_target_cache,
     get_llm_runtime_config_path,
@@ -23,7 +23,6 @@ from llm_installation.cli import (
 )
 from llm_installation.config_store import write_llm_runtime_config, write_runtime_generation
 from llm_installation.planner import (
-    PRIORITY_PRESETS,
     assess_catalog_entry,
     build_serving_plan,
 )
@@ -51,12 +50,6 @@ class Command(BaseCommand):
             "--cluster-mode",
             action="store_true",
             help="Resolve compatible models to vLLM for clustered/distributed serving.",
-        )
-        parser.add_argument(
-            "--priority",
-            choices=PRIORITY_PRESETS,
-            default="balanced",
-            help="Optimize automatic model and serving settings for speed, balance, or quality.",
         )
         parser.add_argument(
             "--write",
@@ -135,7 +128,7 @@ class Command(BaseCommand):
             row_styles.append(styles)
         render_table(headers, widths, rows, self.stdout, row_styles=row_styles)
 
-    def _run_manual_selection(self, display_candidates, priority_preset):
+    def _run_manual_selection(self, display_candidates):
         total = len(display_candidates)
         last_page = max((total - 1) // self.PAGE_SIZE, 0)
         page = 0
@@ -166,7 +159,6 @@ class Command(BaseCommand):
             selected_artifact_id = display_candidates[int(choice) - 1].entry.id
             selection_result = select_catalog_model(
                 display_candidates,
-                priority_preset,
                 selection_mode="manual",
                 selected_artifact_id=selected_artifact_id,
             )
@@ -212,11 +204,6 @@ class Command(BaseCommand):
             self.stdout.write(f"Docker Available: {profile.docker_available} (Compose: {profile.docker_compose_available})")
             self.stdout.write("==================================================\n")
 
-            # Model selection ranking no longer varies by preset (see
-            # llm_installation/selection.py, RRF over TPS + parameter count).
-            # priority_preset is retained only as a stored/audit label.
-            priority_preset = "balanced"
-
             # Generate and calculate candidate fits
             selection_candidates = []
             for entry in catalog:
@@ -233,19 +220,17 @@ class Command(BaseCommand):
 
             selected_artifact_id = None
             if selection_mode == "manual":
-                ranked, non_selectable = rank_manual_candidates(selection_candidates, priority_preset)
+                ranked, non_selectable = rank_manual_candidates(selection_candidates)
                 display_candidates = ranked + non_selectable
-                selected_artifact_id = self._run_manual_selection(display_candidates, priority_preset)
+                selected_artifact_id = self._run_manual_selection(display_candidates)
                 selection_result = select_catalog_model(
                     display_candidates,
-                    priority_preset,
                     selection_mode="manual",
                     selected_artifact_id=selected_artifact_id,
                 )
             else:
                 selection_result = select_catalog_model(
                     selection_candidates,
-                    priority_preset,
                     selection_mode=selection_mode,
                 )
 
@@ -257,7 +242,6 @@ class Command(BaseCommand):
                     raise CommandError("RISKY model selection was not confirmed.")
                 selection_result = select_catalog_model(
                     selection_candidates,
-                    priority_preset,
                     selection_mode=selection_mode,
                     selected_artifact_id=selected_artifact_id,
                     risky_confirmed=True,
@@ -275,7 +259,7 @@ class Command(BaseCommand):
 
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Selected {selected_entry.id} using {selection_mode} mode for {priority_preset}."
+                    f"Selected {selected_entry.id} using {selection_mode} mode."
                 )
             )
 
@@ -295,7 +279,6 @@ class Command(BaseCommand):
                 fallback_used=False,
                 serving_profile=selected_plan.as_dict(),
                 diagnostics={"profile": {}, "candidates": []},
-                priority_preset=priority_preset,
                 selection_mode=selection_mode,
                 selection_reason_code=selection_result.reason_code,
                 runtime_policy_input=runtime_policy_input.as_dict(),
@@ -350,7 +333,6 @@ class Command(BaseCommand):
             catalog=catalog,
             check_endpoint=options["check_endpoint"],
             smoke_test=options["smoke_test"],
-            priority_preset=options["priority"],
         )
 
         json_payload = {
@@ -362,7 +344,6 @@ class Command(BaseCommand):
                 "runtime": target.runtime,
                 "fallback_used": target.fallback_used,
                 "reason": target.reason,
-                "priority_preset": target.priority_preset,
                 "serving_profile": target.serving_profile or {},
             },
             "diagnostics": target.diagnostics or {},
@@ -394,7 +375,6 @@ class Command(BaseCommand):
             self.stdout.write(f"runtime: {target.runtime}")
             self.stdout.write(f"fallback_used: {target.fallback_used}")
             self.stdout.write(f"reason: {target.reason}")
-            self.stdout.write(f"priority_preset: {target.priority_preset}")
             if target.serving_profile:
                 self.stdout.write(f"context_length: {target.serving_profile.get('context_length')}")
                 self.stdout.write(

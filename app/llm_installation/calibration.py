@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-CALIBRATION_SCHEMA_VERSION = 1
+# 2 dropped the per-preset calibration policy: reports no longer carry a
+# priority_preset, since a single server-wide latency budget now applies.
+CALIBRATION_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -25,15 +27,13 @@ class CalibrationPolicy:
         }
 
 
-CALIBRATION_POLICIES = {
-    # speed protects single-request responsiveness most aggressively.
-    "speed": CalibrationPolicy(1.15, 1.20, 0.10),
-    # balanced accepts some latency growth when aggregate throughput improves.
-    "balanced": CalibrationPolicy(1.35, 1.40, 0.08),
-    # quality normally resolves to a ceiling of one, but remains conservative
-    # if a future catalog entry permits more than one sequence.
-    "quality": CalibrationPolicy(1.25, 1.30, 0.08),
-}
+# The single server-wide serving latency budget. Raising concurrency stops as
+# soon as p95 TTFT grows past 1.35x the single-request baseline, p95 total
+# latency past 1.40x, or the marginal aggregate-throughput gain drops below 8%
+# -- i.e. some latency growth is accepted only while it still buys meaningful
+# throughput. These were the values every deployment already resolved to, back
+# when the budget was keyed by a priority preset that no longer exists.
+SERVING_CALIBRATION_POLICY = CalibrationPolicy(1.35, 1.40, 0.08)
 
 
 @dataclass(frozen=True)
@@ -277,10 +277,8 @@ def _positive_ratio(value: Any) -> float | None:
 
 
 def select_serving_concurrency(
-    step_summaries: list[dict[str, Any]], *, priority_preset: str
+    step_summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    if priority_preset not in CALIBRATION_POLICIES:
-        raise ValueError(f"unknown priority preset: {priority_preset}")
     if not step_summaries:
         raise ValueError("at least one calibration step is required")
 
@@ -288,7 +286,7 @@ def select_serving_concurrency(
     baseline = steps[0]
     if int(baseline["concurrency"]) != 1:
         raise ValueError("calibration must include concurrency=1 as the baseline")
-    policy = CALIBRATION_POLICIES[priority_preset]
+    policy = SERVING_CALIBRATION_POLICY
     baseline_ttft = _positive_ratio((baseline.get("client_ttft_ms") or {}).get("p95"))
     baseline_total = _positive_ratio((baseline.get("client_total_ms") or {}).get("p95"))
 
@@ -341,7 +339,6 @@ def select_serving_concurrency(
         previous_tps = throughput
 
     return {
-        "priority_preset": priority_preset,
         "policy": policy.as_dict(),
         "selected_serving_concurrency": selected,
         "decisions": decisions,

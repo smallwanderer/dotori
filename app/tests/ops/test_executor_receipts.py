@@ -1,6 +1,6 @@
 import pytest
 
-from document_ai.services.executor_jobs import (
+from documents.services.executor_jobs import (
     ExecutorJobConflict,
     claim_execution,
     finish_execution,

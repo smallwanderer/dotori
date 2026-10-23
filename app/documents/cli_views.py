@@ -18,15 +18,15 @@ from accounts.cli_tokens import (
     resolve_cli_workspace_context,
 )
 from accounts.client_identity import serialize_client_identity
-from document_ai.search.views import RAGStreamView, VectorSearchView
-from document_ai.services.result_access import (
+from documents.search.views import RAGStreamView, VectorSearchView
+from documents.services.result_access import (
     ResultAccessError,
     get_result,
     list_results,
     list_source_results,
 )
-from document_ai.services.server_policy import build_server_policy_payload
-from document_ai.status_views import server_policy
+from documents.services.server_policy import build_server_policy_payload
+from documents.status_views import server_policy
 
 
 @cli_token_required(CLI_STATUS_SCOPE)

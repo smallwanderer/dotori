@@ -5,10 +5,10 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from config.enums import AIStatus
-from document_ai.embedding.embeding_models import embed_document, embed_query
-from document_ai.models import DocumentChunk
-from document_ai.parsers.config import get_embedding_backend, get_embedding_model
-from document_ai.search.evaluation import rank_documents as _rank_documents
+from documents.embedding.embeding_models import embed_document, embed_query
+from documents.models import DocumentChunk
+from documents.parsers.config import get_embedding_backend, get_embedding_model
+from documents.search.evaluation import rank_documents as _rank_documents
 
 
 def _load_dataset(dataset_path: str) -> list[dict]:

@@ -30,6 +30,34 @@ MAX_UPLOAD_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
 MAX_RENAME_ATTEMPTS = 200
 
 
+def _storage_record(workspace) -> UserStorage:
+    storage, _ = UserStorage.objects.get_or_create(
+        workspace=workspace,
+        defaults={"user": workspace.created_by},
+    )
+    return storage
+
+
+def _quota_error(workspace, size_delta: int) -> str | None:
+    storage = _storage_record(workspace)
+    if storage.used_size + size_delta > storage.total_size:
+        remaining_mb = round(storage.remaining_size / 1024 / 1024, 2)
+        return f"Not enough storage space is available. Remaining: {remaining_mb} MB."
+    return None
+
+
+def check_workspace_room(workspace, size_delta: int) -> tuple[bool, str]:
+    """Whether `size_delta` more bytes fit in the workspace quota.
+
+    For callers that write through `save_file` and so do not run the rest of
+    `validate_upload`. Only the admission check has to be explicit: the
+    `FileBlob` signals keep `UserStorage.used_size` current by themselves, in
+    both directions, whichever path created or removed the blob.
+    """
+    error = _quota_error(workspace, size_delta)
+    return error is None, error or ""
+
+
 @dataclasses.dataclass
 class UploadValidationResult:
     ok: bool
@@ -54,16 +82,9 @@ def validate_upload(workspace, owner: AbstractBaseUser, uploaded_file: File) -> 
             errors=["The file exceeds the 2 GB upload limit."],
         )
 
-    storage, _ = UserStorage.objects.get_or_create(
-        workspace=workspace,
-        defaults={"user": workspace.created_by},
-    )
-    if storage.used_size + uploaded_file.size > storage.total_size:
-        remaining_mb = round(storage.remaining_size / 1024 / 1024, 2)
-        return UploadValidationResult(
-            ok=False,
-            errors=[f"Not enough storage space is available. Remaining: {remaining_mb} MB."],
-        )
+    quota_error = _quota_error(workspace, uploaded_file.size)
+    if quota_error:
+        return UploadValidationResult(ok=False, errors=[quota_error])
 
     ext = os.path.splitext(uploaded_file.name)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:

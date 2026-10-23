@@ -6,14 +6,15 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from config.enums import AIStatus, NodeType
-from document_ai.models import DocumentChunk, DocumentParseResult
-from document_ai.search.evaluation import execute_quality_evaluation_run
-from files.models import Node
-from workspaces.models import (
+from documents.models import (
+    DocumentChunk,
+    DocumentParseResult,
     WorkspaceEvaluationDataset,
-    WorkspaceMembership,
     WorkspaceQualityEvaluationRun,
 )
+from documents.search.evaluation import execute_quality_evaluation_run
+from files.models import Node
+from workspaces.models import WorkspaceMembership
 from workspaces.services import create_team_workspace
 
 
@@ -92,8 +93,8 @@ class RetrievalEvaluationApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "DATASET_VALIDATION_FAILED")
 
-    @patch("document_ai.search.execution.search_documents_sync")
-    @patch("document_ai.orchestration.enqueue_retrieval_evaluation")
+    @patch("documents.search.execution.search_documents_sync")
+    @patch("documents.orchestration.enqueue_retrieval_evaluation")
     def test_evaluation_run_end_to_end_and_verified_apply(self, mock_enqueue, mock_search):
         # The evaluation scores whatever the production retrieval path returns.
         mock_search.return_value = (
@@ -165,7 +166,7 @@ class RetrievalEvaluationApiTests(TestCase):
             "/api/workspaces/v1/current/quality-profile/draft/",
             {"expected_revision": 0, "retrieval": {"overrides": {"search_top_k": 9}, "reset_fields": []}, "note": "v1"},
         )
-        with patch("document_ai.orchestration.enqueue_retrieval_evaluation") as mock_enqueue:
+        with patch("documents.orchestration.enqueue_retrieval_evaluation") as mock_enqueue:
             started = self.request_json(
                 "post",
                 "/api/workspaces/v1/current/quality-profile/evaluate/",

@@ -15,27 +15,27 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.api_responses import api_error_response, session_access_error
-from document_ai.embedding.providers.base import EmbeddingBusyError
-from document_ai.search.serializers import (
+from documents.embedding.providers.base import EmbeddingBusyError
+from documents.search.serializers import (
     RAGRequestSerializer,
     SynchronousSearchResponseSerializer,
     VectorSearchRequestSerializer,
     VectorTuningRequestSerializer,
 )
-from document_ai.search.execution import search_documents_sync
-from document_ai.search.profiles import (
+from documents.search.execution import search_documents_sync
+from documents.search.profiles import (
     get_effective_retrieval_config,
     profile_threshold_to_retriever,
     retrieval_tuning_params,
 )
-from document_ai.parsers.text_utils import normalize_extracted_text
-from document_ai.services.llm_endpoint_service import build_rag_llm_snapshot
-from document_ai.services.capability_admission import CapabilityAdmissionError
-from document_ai.services.rag_admission import (
+from documents.parsers.text_utils import normalize_extracted_text
+from documents.services.llm_endpoint_service import build_rag_llm_snapshot
+from documents.services.capability_admission import CapabilityAdmissionError
+from documents.services.rag_admission import (
     acquire_rag_admission_token_async,
     rag_retry_after_seconds,
 )
-from document_ai.services.rag_runtime_config import (
+from llm_installation.rag_runtime_config import (
     LLMRuntimeNotConfigured,
     server_rag_runtime_availability,
 )
@@ -363,7 +363,7 @@ class RAGStreamView(View):
         node_ids = serializer.validated_data.get("node_ids") or []
         conversation_uid = kwargs.get("conversation_uid")
         if conversation_uid is not None:
-            from document_ai.services.rag_conversation_service import (
+            from documents.services.rag_conversation_service import (
                 ConversationIdempotencyConflict,
                 ConversationNotFound,
                 ConversationPermissionDenied,
@@ -411,7 +411,7 @@ class RAGStreamView(View):
         retrieval_query = normalize_extracted_text(question).strip()
         reserved_rag_job = None
         if conversation is not None:
-            from document_ai.services.rag_conversation_service import reserve_session_turn
+            from documents.services.rag_conversation_service import reserve_session_turn
             try:
                 reply_to, reserved_rag_job, created = await sync_to_async(
                     reserve_session_turn, thread_sensitive=True
@@ -438,7 +438,7 @@ class RAGStreamView(View):
         admission_token = await acquire_rag_admission_token_async(llm_snapshot)
         if admission_token is None:
             if reserved_rag_job is not None:
-                from document_ai.services.rag_conversation_service import fail_reserved_rag_job
+                from documents.services.rag_conversation_service import fail_reserved_rag_job
                 await sync_to_async(fail_reserved_rag_job, thread_sensitive=True)(
                     rag_job_id=reserved_rag_job.id,
                     error="RAG capacity limit reached before generation started.",
@@ -465,7 +465,7 @@ class RAGStreamView(View):
         handed_off = False
         try:
             if conversation_uid is not None and reserved_rag_job is None:
-                from document_ai.services.rag_conversation_service import (
+                from documents.services.rag_conversation_service import (
                     ConversationIdempotencyConflict,
                     ConversationNotFound,
                     ConversationPermissionDenied,
@@ -518,7 +518,7 @@ class RAGStreamView(View):
                     return api_error_response(
                         "PERMISSION_DENIED", "You cannot continue this conversation.", status=403
                     )
-            from document_ai.rag.streaming import (
+            from documents.rag.streaming import (
                 RAGConversationBusyError,
                 RAGSearchBusyError,
                 RAGSearchError,

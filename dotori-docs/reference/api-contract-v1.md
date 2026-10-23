@@ -1,9 +1,11 @@
 # Dotori 현재 API 계약 v1
 
+> 이전: [연동 가이드](../guides/integrate/README.md) · 다음: [인터페이스](./interfaces.md)
+
 > 기준일: 2026-08-29
 
 이 문서는 `web/` SPA와 `clients/dotori-cli/` CLI가 실제로 사용하는 HTTP 계약을 고정한 참조 자료입니다. Dotori 서버에 대해 직접 HTTP 클라이언트를 작성하려는 경우에도 이 문서가 기준입니다.
-실제 사용 절차가 필요하다면 [설치 가이드](../install/installation-guide.md), [운영 가이드](../operate/operation-guide.md), CLI 사용법(`clients/dotori-cli/README.md`)을 참고하세요.
+실제 사용 절차가 필요하다면 [설치 가이드](../guides/install/installation-guide.md), [운영 가이드](../guides/operate/operation-guide.md), CLI 사용법(`clients/dotori-cli/README.md`)을 참고하세요.
 
 ## 목차
 
@@ -151,7 +153,7 @@ bootstrap 응답:
 | `POST` | `/api/v1/search/tuning/` | 저수준 retrieval 가중치와 후보 설정 | sandbox | 일반 SPA 제외 |
 | `GET` | `/api/v1/search/sandbox/` | template HTML | sandbox | SPA API 아님 |
 
-검색 endpoint는 명시적 `mode=basic|advanced` 계약을 사용하며, 검색 tuning 파라미터는 일반 사용자 설정 UI로 노출하지 않습니다. sandbox의 용도와 접근 시 주의사항은 [운영 가이드](../operate/operation-guide.md#하이브리드-검색-튜닝)를 참고하세요.
+검색 endpoint는 명시적 `mode=basic|advanced` 계약을 사용하며, 검색 tuning 파라미터는 일반 사용자 설정 UI로 노출하지 않습니다. sandbox의 용도와 접근 시 주의사항은 [운영 가이드](../guides/operate/operation-guide.md#하이브리드-검색-튜닝)를 참고하세요.
 
 ### 서버 운영 API
 
@@ -336,7 +338,7 @@ SPA TypeScript 계약은 `web/src/api/types.ts`의 `ApiErrorResponse`, `SessionB
 ```
 
 - `question`: 필수 문자열
-- `top_k`: 기본 서버 설정값(`RAG_SEARCH_TOP_K`, [운영 가이드](../operate/operation-guide.md#rag-파라미터-조정) 참고), 범위 1–10
+- `top_k`: 기본 서버 설정값(`RAG_SEARCH_TOP_K`, [운영 가이드](../guides/operate/operation-guide.md#rag-파라미터-조정) 참고), 범위 1–10
 - `threshold`: 선택, 0 이상
 - `language`: `ko` 또는 `en`, 기본 `ko`
 - `node_ids`: 선택 UUID 배열. 검색과 같은 소유권·폴더 확장 규칙을 사용합니다.
@@ -377,7 +379,6 @@ event 규칙:
     "status": "healthy",
     "model": "model-name",
     "runtime": "llama.cpp",
-    "priority_preset": "balanced",
     "selection_mode": "automatic",
     "serving_concurrency": 1
   },
@@ -413,7 +414,7 @@ template은 변경 요청에 `X-CSRFToken`을 보내며 RAG stream을 `ReadableS
 ## 알려진 진행 중 항목
 
 - `parent_uid`: SPA는 UUID만 사용하는 방향으로 전환 중이며, 정수 `parent_id`는 기존 소비자가 전환된 뒤 제거될 예정인 과도기 필드입니다.
-- 문서 공유, 팀 단위 workspace 관리 API는 아직 없습니다. 관련 UI는 `예정` 상태로만 표시되며, API가 추가되기 전까지 동작하는 기능이나 성공 상태로 나타나지 않습니다.
+- 팀 workspace 생성·전환·멤버·초대 API는 `api/workspaces/v1/`에 존재합니다. 파일별 독립 공유 기능과 모든 협업 UI의 완료는 별도로 확인하며, 팀 관리 API 자체가 없다고 설명하지 않습니다. 권한·접근 범위는 [연동 가이드](../guides/integrate/README.md)를 따릅니다.
 
 이 계약이 바뀌는 각 단계의 상세 이력(무엇을 언제 왜 바꿨는지)은 이 문서가 아니라 프로젝트 내부 개발 기록에서 관리합니다. 이 문서는 항상 **현재 시점의 계약**만 반영합니다.
 

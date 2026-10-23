@@ -122,23 +122,3 @@ class CLIToken(models.Model):
         return f"{self.name} ({self.user.email})"
 
 
-class SyncQuota(models.Model):
-    """Separate storage quota for sync uploads."""
-
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="sync_quota",
-    )
-    total_size = models.BigIntegerField(default=10 * 1024 * 1024 * 1024)  # 10 GB
-    used_size = models.BigIntegerField(default=0)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    @property
-    def remaining_size(self):
-        return max(self.total_size - self.used_size, 0)
-
-    def __str__(self):
-        used_mb = round(self.used_size / 1024 / 1024, 2)
-        total_gb = round(self.total_size / 1024 / 1024 / 1024, 2)
-        return f"SyncQuota({self.user.email}) {used_mb}MB / {total_gb}GB"

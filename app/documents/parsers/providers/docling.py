@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from document_ai.parsers import docling_parser
-from document_ai.parsers.constants import (
+from documents.parsers import docling_parser
+from documents.parsers.constants import (
     BINARY_DOC_EXTENSIONS,
     HWP_EXTENSIONS,
     TEXT_LIKE_EXTENSIONS,
 )
-from document_ai.parsers.schema import ParseResult
+from documents.parsers.schema import ParseResult
 
 from .base import DocumentParserSpec
 
@@ -17,7 +17,7 @@ class DoclingParser:
     """기존 docling_parser.py 모듈 함수를 DocumentParser 계약으로 감싼 provider.
 
     파싱 로직 자체는 옮기지 않는다 -- docling_parser.py는 여러 테스트가 직접
-    import하거나 `unittest.mock.patch("document_ai.parsers.docling_parser.
+    import하거나 `unittest.mock.patch("documents.parsers.docling_parser.
     parse_document_entry", ...)` 형태로 patch하는 안정된 표면이라, 여기서는
     얇은 어댑터만 추가한다. 모듈을 통째로 import해 매 호출마다
     `docling_parser.parse_document_entry`로 속성 조회하는 이유도 이 patch가
@@ -40,8 +40,8 @@ class DoclingParser:
 
     def healthcheck(self) -> dict:
         from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
-        from document_ai.parsers.config import get_converter, get_hf_tokenizer, get_parser_tokenizer_id
-        from document_ai.services.capability_admission import capability_enabled
+        from documents.parsers.config import get_converter, get_hf_tokenizer, get_parser_tokenizer_id
+        from documents.services.capability_admission import capability_enabled
 
         try:
             get_converter()
@@ -56,4 +56,6 @@ class DoclingParser:
         }
         if capability_enabled(DOCUMENT_SEMANTIC_SEARCH):
             result["tokenizer"] = get_parser_tokenizer_id()
+            from documents.parsers.config import get_parser_tokenizer_status
+            result["tokenizer_identity"] = get_parser_tokenizer_status()
         return result

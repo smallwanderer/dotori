@@ -1136,7 +1136,7 @@
       const payload = existingPayload || buildPayload(question);
       lastRequest = { question, payload };
 
-      const response = await fetch('/api/document-ai/v1/rag/stream/', {
+      const response = await fetch('/api/v1/rag/stream/', {
         method: 'POST',
         headers: {
           'X-CSRFToken': getCookie('csrftoken'),

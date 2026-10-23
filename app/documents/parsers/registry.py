@@ -10,7 +10,7 @@ from .providers import DocumentParser
 # 등)이 전부 로드된다. 실제 import는 get_document_parser()가 선택된 backend
 # 하나에 대해서만, 호출 시점에 수행한다.
 _PARSER_FACTORIES: dict[str, tuple[str, str]] = {
-    "docling": ("document_ai.parsers.providers.docling", "DoclingParser"),
+    "docling": ("documents.parsers.providers.docling", "DoclingParser"),
 }
 
 

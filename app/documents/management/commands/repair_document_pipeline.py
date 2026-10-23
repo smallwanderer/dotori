@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from document_ai.processing.recovery import (
+from documents.processing.recovery import (
     get_embedding_recovery_chunk_ids,
     get_parse_recovery_node_ids,
     get_recovery_embedding_batch_size,

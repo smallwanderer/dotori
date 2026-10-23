@@ -1,4 +1,6 @@
+import ntpath
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -55,4 +57,7 @@ def fake_winreg(monkeypatch):
     fake = FakeWinReg()
     monkeypatch.setitem(sys.modules, "winreg", fake)
     monkeypatch.setattr(windows_menu.sys, "platform", "win32")
+    # Changing sys.platform alone leaves Linux's os.path semantics active.
+    # Emulate Windows paths only inside this module, without changing pytest's.
+    monkeypatch.setattr(windows_menu, "os", SimpleNamespace(path=ntpath))
     return fake

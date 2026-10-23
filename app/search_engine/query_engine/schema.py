@@ -35,19 +35,19 @@ QUERY_DSL_SCHEMA_NOTUSING_NOW = {
         "sortable_fields": {"email"},
     },
     "parse_result": {
-        "model": "document_ai.DocumentParseResult",
+        "model": "documents.DocumentParseResult",
         "prefix": "parse_result__",
         "fields": {},
         "sortable_fields": set(),
     },
     "chunk": {
-        "model": "document_ai.DocumentChunk",
+        "model": "documents.DocumentChunk",
         "prefix": "parse_result__chunks__",
         "fields": {},
         "sortable_fields": set(),
     },
     "embedding": {
-        "model": "document_ai.ChunkEmbedding",
+        "model": "documents.ChunkEmbedding",
         "prefix": "parse_result__chunks__embedding__",
         "fields": {},
         "sortable_fields": set(),

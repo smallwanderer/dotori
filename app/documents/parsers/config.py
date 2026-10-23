@@ -11,27 +11,27 @@ if TYPE_CHECKING:
 
 
 def get_embedding_model():
-    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+    from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
     return get_active_embedding_runtime().model_id
 
 def get_embedding_backend() -> str:
-    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+    from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
     return get_active_embedding_runtime().provider
 
 def get_embedding_dimension() -> int | None:
-    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+    from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
     return get_active_embedding_runtime().dimension
 
 def get_embedding_sparse_enabled() -> bool:
-    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+    from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
     return get_active_embedding_runtime().supports_sparse
 
 def get_embedding_store() -> str:
-    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+    from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
     return get_active_embedding_runtime().store
 
@@ -40,7 +40,7 @@ def get_parser_backend() -> str:
 
 def get_parser_tokenizer_id() -> str:
     try:
-        from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+        from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
         runtime = get_active_embedding_runtime()
         if runtime.tokenizer_id and runtime.catalog_id != "legacy-env":
@@ -51,7 +51,7 @@ def get_parser_tokenizer_id() -> str:
 
 def get_parser_tokenizer_revision() -> str | None:
     try:
-        from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+        from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
         runtime = get_active_embedding_runtime()
         if runtime.catalog_id != "legacy-env":
@@ -70,7 +70,7 @@ def get_embedding_token_headroom() -> int:
 
 def get_embedding_max_tokens() -> int:
     try:
-        from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+        from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
         runtime = get_active_embedding_runtime()
         if getattr(runtime, "max_tokens", None) and runtime.catalog_id != "legacy-env":
@@ -99,78 +99,39 @@ def get_max_tokens() -> int:
 
 
 @lru_cache(maxsize=1)
-def get_raw_tokenizer():
-    import logging
-    from transformers import AutoTokenizer
-    from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+def get_parser_tokenizer_load():
+    from types import SimpleNamespace
+    from documents.services.embedding_runtime_config import get_active_embedding_runtime
+    from .tokenizers import load_runtime_tokenizer
 
-    logger = logging.getLogger(__name__)
     runtime = get_active_embedding_runtime()
-    revision = (
-        runtime.tokenizer_revision
-        if runtime.tokenizer_revision not in {"", "legacy", "main", "external"}
-        else None
+    options = getattr(runtime, "tokenizer_options", {})
+    if hasattr(options, "model_dump"):
+        options = options.model_dump(exclude_unset=True)
+    target = SimpleNamespace(
+        tokenizer_id=get_parser_tokenizer_id(),
+        tokenizer_revision=get_parser_tokenizer_revision(), tokenizer_options=options,
     )
-    try:
-        return AutoTokenizer.from_pretrained(
-            runtime.tokenizer_id,
-            revision=revision,
-        )
-    except Exception as exc:
-        fallback_id = getattr(settings, "PARSER_TOKENIZER_ID", "BAAI/bge-m3")
-        fallback_rev = getattr(settings, "PARSER_TOKENIZER_REVISION", "5617a9f")
-        rev = fallback_rev if fallback_rev and fallback_rev != "legacy" else None
-        logger.warning(
-            "Failed to load raw tokenizer '%s' (%s). Falling back to '%s': %s",
-            runtime.tokenizer_id,
-            revision,
-            fallback_id,
-            exc,
-        )
-        return AutoTokenizer.from_pretrained(
-            fallback_id,
-            revision=rev,
-        )
+    return load_runtime_tokenizer(target, allow_fallback=True)
+
+
+def get_parser_tokenizer_status() -> dict:
+    return get_parser_tokenizer_load().identity()
+
+
+@lru_cache(maxsize=1)
+def get_raw_tokenizer():
+    return get_parser_tokenizer_load().tokenizer
 
 
 @lru_cache(maxsize=1)
 def get_hf_tokenizer() -> "HuggingFaceTokenizer":
-    import logging
-    from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
-    from transformers import AutoTokenizer
-
-    logger = logging.getLogger(__name__)
-    tokenizer_id = get_parser_tokenizer_id()
-    tokenizer_revision = get_parser_tokenizer_revision()
-
-    try:
-        hf_tok = AutoTokenizer.from_pretrained(
-            tokenizer_id,
-            revision=tokenizer_revision,
-        )
-    except Exception as exc:
-        fallback_id = getattr(settings, "PARSER_TOKENIZER_ID", "BAAI/bge-m3")
-        fallback_rev = getattr(settings, "PARSER_TOKENIZER_REVISION", "5617a9f")
-        rev = fallback_rev if fallback_rev and fallback_rev != "legacy" else None
-        logger.warning(
-            "Failed to load tokenizer '%s' (%s) for parser. Falling back to '%s': %s",
-            tokenizer_id,
-            tokenizer_revision,
-            fallback_id,
-            exc,
-        )
-        hf_tok = AutoTokenizer.from_pretrained(
-            fallback_id,
-            revision=rev,
-        )
-
-    return HuggingFaceTokenizer(
-        tokenizer=hf_tok,
-        max_tokens=get_chunk_max_tokens(),
-    )
+    from .tokenizers import wrap_chunk_tokenizer
+    return wrap_chunk_tokenizer(get_parser_tokenizer_load(), max_tokens=get_chunk_max_tokens())
 
 
 def clear_parser_tokenizer_cache() -> None:
+    get_parser_tokenizer_load.cache_clear()
     get_raw_tokenizer.cache_clear()
     get_hf_tokenizer.cache_clear()
     get_converter.cache_clear()

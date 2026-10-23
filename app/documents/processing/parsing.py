@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from time import perf_counter
 from typing import TYPE_CHECKING, Callable
+from uuid import uuid4
 
 from django.db import transaction
 from django.utils import timezone
@@ -97,6 +98,10 @@ def save_parse_result(node, pr: ParseResult) -> DocumentParseResult:
         parser_mode=pr.parser_mode or "",
         metadata=metadata,
     )
+    from documents.processing.parse_artifacts import (
+        current_parse_policy_fingerprint, parse_content_fingerprint,
+    )
+    metadata["parse_policy_fingerprint"] = current_parse_policy_fingerprint()
 
     raw_status = (pr.status or "").lower()
     parse_status = AIStatus.FAILED
@@ -108,6 +113,12 @@ def save_parse_result(node, pr: ParseResult) -> DocumentParseResult:
         parse_status = AIStatus.COMPLETED
 
     with transaction.atomic():
+        # Keep the source rows stable through snapshot validation and writes.
+        # Locks are short-lived: parser/model execution happens before here.
+        Node.objects.select_for_update().get(pk=node.pk)
+        from files.models import FileBlob
+        list(FileBlob.objects.select_for_update().filter(node_id=node.pk))
+        validate_execution()
         doc_result, _ = DocumentParseResult.objects.update_or_create(
             node=node,
             defaults={
@@ -123,6 +134,7 @@ def save_parse_result(node, pr: ParseResult) -> DocumentParseResult:
                 "errors": pr.errors or [],
                 "parsed_at": timezone.now(),
                 "metadata": metadata,
+                "parse_revision": uuid4(),
             },
         )
 
@@ -144,6 +156,11 @@ def save_parse_result(node, pr: ParseResult) -> DocumentParseResult:
             )
 
         DocumentChunk.objects.bulk_create(chunk_objects)
+        metadata["content_fingerprint"] = parse_content_fingerprint(
+            list(doc_result.chunks.values("id", "chunk_index", "text", "chunk_meta"))
+        )
+        doc_result.metadata = metadata
+        doc_result.save(update_fields=["metadata"])
         actual_chunk_count = len(chunk_objects)
         expected_chunk_count = len(pr.chunks)
         if actual_chunk_count != expected_chunk_count:

@@ -4,7 +4,7 @@ from io import StringIO
 import pytest
 from django.core.management import CommandError, call_command
 
-from document_ai.services.embedding_runtime_config import (
+from documents.services.embedding_runtime_config import (
     EmbeddingRuntimeConfigError,
     load_embedding_runtime,
 )
@@ -16,8 +16,8 @@ from llm_installation.embedding_config_store import (
     commit_active_embedding_runtime,
     write_embedding_runtime_generation,
 )
-from document_ai.models import EmbeddingGeneration
-from document_ai.management.commands import rollback_embedding_runtime
+from documents.models import EmbeddingGeneration
+from documents.management.commands import rollback_embedding_runtime
 
 
 pytestmark = pytest.mark.unit
@@ -122,15 +122,11 @@ def test_missing_runtime_ignores_legacy_embedding_environment(tmp_path, monkeypa
     assert runtime.dimension == 1024
 
 
-@pytest.mark.django_db
-def test_migration_seeds_legacy_embedding_generation():
-    generation = EmbeddingGeneration.objects.get(
-        generation_id="legacy-bge-m3"
-    )
-
-    assert generation.model_id == "BAAI/bge-m3"
-    assert generation.provider == "bgem3_hybrid"
-    assert generation.dimension == 1024
+# The "legacy-bge-m3" generation row used to be seeded by migration 0020 for
+# databases that predated generations. That backfill was dropped when the
+# migrations were replaced by a single 0001_initial: upgraded databases keep
+# the row they already have, and a new install gets its generation row from
+# detect_embedding_runtime instead.
 
 
 @pytest.mark.django_db
@@ -227,7 +223,7 @@ def test_legacy_fingerprint_compatibility(tmp_path):
 
 
 def test_dynamic_parser_config_resolution(monkeypatch):
-    from document_ai.parsers.config import (
+    from documents.parsers.config import (
         get_embedding_max_tokens,
         get_chunk_max_tokens,
         get_parser_tokenizer_id,
@@ -235,7 +231,7 @@ def test_dynamic_parser_config_resolution(monkeypatch):
         get_embedding_token_headroom,
         clear_parser_tokenizer_cache,
     )
-    from document_ai.services.embedding_runtime_config import EmbeddingRuntimeSnapshot
+    from documents.services.embedding_runtime_config import EmbeddingRuntimeSnapshot
 
     fake_runtime = EmbeddingRuntimeSnapshot(
         scope="production",
@@ -254,9 +250,9 @@ def test_dynamic_parser_config_resolution(monkeypatch):
         distance_strategy="cosine",
     )
 
-    import document_ai.parsers.config as p_config
+    import documents.parsers.config as p_config
     monkeypatch.setattr(
-        "document_ai.services.embedding_runtime_config.get_active_embedding_runtime",
+        "documents.services.embedding_runtime_config.get_active_embedding_runtime",
         lambda *args, **kwargs: fake_runtime,
     )
     clear_parser_tokenizer_cache()

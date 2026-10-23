@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from document_ai.parsers.schema import ParseResult
+from documents.parsers.schema import ParseResult
 
 __all__ = ["DocumentParserSpec", "DocumentParser", "ParseResult"]
 

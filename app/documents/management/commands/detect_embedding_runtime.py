@@ -1,8 +1,8 @@
 from django.core.management.base import BaseCommand, CommandError
 
-from document_ai.embedding.indexes import replace_active_hnsw_index
-from document_ai.models import EmbeddingGeneration
-from document_ai.services.embedding_runtime_config import load_embedding_runtime
+from documents.embedding.indexes import replace_active_hnsw_index
+from documents.models import EmbeddingGeneration
+from documents.services.embedding_runtime_config import load_embedding_runtime
 
 from llm_installation.embedding_catalog import (
     get_embedding_catalog_entry_for_preset,

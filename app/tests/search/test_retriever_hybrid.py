@@ -20,10 +20,26 @@ django.setup()
 pytestmark = pytest.mark.unit
 
 from config.enums import AIStatus
-from document_ai.models import DocumentChunk, DocumentParseResult
-from document_ai.search import retriever as retriever_module
-from document_ai.search.retriever import VectorRetriever, _sparse_dot_product
+from documents.models import DocumentChunk, DocumentParseResult
+from documents.search import retriever as retriever_module
+from documents.search.retriever import VectorRetriever, _sparse_dot_product
 from files.models import Node
+
+
+@pytest.fixture(autouse=True)
+def serving_store_boundary(monkeypatch):
+    # These ranking unit tests use a deliberately small fake queryset.
+    # JSON/SQL provenance filtering is covered by test_embedding_persistence.
+    from documents.embedding import persistence
+    original = persistence.valid_serving_rows
+    def valid_rows(queryset, store):
+        if isinstance(queryset, FakeQuerySet):
+            return queryset.filter(
+                chunk__status=AIStatus.COMPLETED,
+                chunk__parse_result__embedding_generation_id=store.spec.generation_id,
+                chunk__parse_result__embedding_runtime_fingerprint=store.runtime_fingerprint)
+        return original(queryset, store)
+    monkeypatch.setattr(persistence, "valid_serving_rows", valid_rows)
 
 
 def _make_embedding_row(
@@ -342,7 +358,7 @@ def test_retriever_hybrid_reranks_by_sparse_score(monkeypatch):
     fake_embedding_module = types.SimpleNamespace(embed_query=fake_embedder)
     monkeypatch.setitem(
         sys.modules,
-        "document_ai.embedding.embeding_models",
+        "documents.embedding.embeding_models",
         fake_embedding_module,
     )
 
@@ -427,7 +443,7 @@ def test_retriever_top_k_zero_returns_all_candidates(monkeypatch):
     )
     monkeypatch.setitem(
         sys.modules,
-        "document_ai.embedding.embeding_models",
+        "documents.embedding.embeding_models",
         fake_embedding_module,
     )
 
@@ -479,7 +495,7 @@ def test_retriever_excludes_trashed_nodes(monkeypatch):
         )
 
     fake_embedding_module = types.SimpleNamespace(embed_query=fake_embedder)
-    monkeypatch.setitem(sys.modules, "document_ai.embedding.embeding_models", fake_embedding_module)
+    monkeypatch.setitem(sys.modules, "documents.embedding.embeding_models", fake_embedding_module)
 
     retriever = VectorRetriever()
     results = retriever.retrieve(query="query", top_k=5, user=owner)
@@ -528,7 +544,7 @@ def test_retriever_applies_querydsl_orm_filters(monkeypatch):
             sparse_vector={"999": 1.0},
         )
     )
-    monkeypatch.setitem(sys.modules, "document_ai.embedding.embeding_models", fake_embedding_module)
+    monkeypatch.setitem(sys.modules, "documents.embedding.embeding_models", fake_embedding_module)
 
     retriever = VectorRetriever()
     results = retriever.retrieve(
@@ -612,7 +628,7 @@ def test_retriever_normalizes_evidence_text(monkeypatch):
     fake_embedding_module = types.SimpleNamespace(embed_query=fake_embedder)
     monkeypatch.setitem(
         sys.modules,
-        "document_ai.embedding.embeding_models",
+        "documents.embedding.embeding_models",
         fake_embedding_module,
     )
 

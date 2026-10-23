@@ -9,7 +9,7 @@ from unittest.mock import patch
 from files.models import FileBlob, Node, NodeType, UserStorage
 from files.services.access import can_modify_subtree
 from files.services.storage import validate_upload
-from document_ai.search.execution import search_documents_sync
+from documents.search.execution import search_documents_sync
 from workspaces.models import Workspace, WorkspaceInvitation, WorkspaceInviteCode, WorkspaceMembership
 from workspaces.services import (
     change_member_role,
@@ -188,7 +188,7 @@ class WorkspaceP0Tests(TestCase):
             WorkspaceMembership.objects.filter(workspace=self.team, user_id=self.admin.pk).exists()
         )
 
-    @patch("document_ai.search.retriever.VectorRetriever.retrieve", return_value=[])
+    @patch("documents.search.retriever.VectorRetriever.retrieve", return_value=[])
     def test_search_contract_passes_workspace_to_retriever(self, retrieve):
         self.add_member(self.member)
         search_documents_sync(

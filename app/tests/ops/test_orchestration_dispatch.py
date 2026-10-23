@@ -3,9 +3,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from capabilities.config import write_capability_config
-from document_ai.services.capability_admission import CapabilityAdmissionError
-from document_ai.orchestration import TASK_ENVELOPE_VERSION, TASK_ROUTES, WorkKind
+from capabilities.deployment import clear_deployment_snapshot_cache
+from capabilities.modules import DOCUMENTS_MODULE
+from installation.deployment import build_module_deployment_plan, write_deployment_plan
+from documents.services.capability_admission import CapabilityAdmissionError
+from documents.orchestration import TASK_ENVELOPE_VERSION, TASK_ROUTES, WorkKind
+
+
+@pytest.fixture(autouse=True)
+def active_module_plan(tmp_path, monkeypatch):
+    plan = build_module_deployment_plan([DOCUMENTS_MODULE])
+    path = write_deployment_plan(plan, repo_root=tmp_path)
+    monkeypatch.setenv("DOTORI_DEPLOYMENT_PLAN_PATH", str(path))
+    clear_deployment_snapshot_cache()
+    yield
+    clear_deployment_snapshot_cache()
 
 
 def assert_enveloped_call(mock, *, args, queue, work_kind, trace_id, parent_job_id=None):
@@ -22,15 +34,15 @@ def assert_enveloped_call(mock, *, args, queue, work_kind, trace_id, parent_job_
 
 
 def test_dispatch_facade_delegates_to_current_celery_tasks():
-    from document_ai.orchestration import enqueue_embedding, enqueue_parse
+    from documents.orchestration import enqueue_embedding, enqueue_parse
 
     with (
-        patch("document_ai.tasks.parse_document_with_docling.apply_async") as parse,
-        patch("document_ai.tasks.enqueue_embedding_tasks.apply_async") as embed,
-        patch("document_ai.tasks.embedding_document_batch_with_bge.apply_async") as embed_batch,
-        patch("document_ai.tasks.run_quality_evaluation_task.apply_async") as evaluation,
+        patch("documents.tasks.parse_document_with_docling.apply_async") as parse,
+        patch("documents.tasks.enqueue_embedding_tasks.apply_async") as embed,
+        patch("documents.tasks.embedding_document_batch_with_bge.apply_async") as embed_batch,
+        patch("documents.tasks.run_quality_evaluation_task.apply_async") as evaluation,
     ):
-        from document_ai.orchestration import (
+        from documents.orchestration import (
             enqueue_embedding_batch,
             enqueue_retrieval_evaluation,
         )
@@ -71,9 +83,9 @@ def test_dispatch_facade_delegates_to_current_celery_tasks():
 
 
 def test_dispatch_preserves_explicit_job_lineage():
-    from document_ai.orchestration import enqueue_embedding_batch
+    from documents.orchestration import enqueue_embedding_batch
 
-    with patch("document_ai.tasks.embedding_document_batch_with_bge.apply_async") as task:
+    with patch("documents.tasks.embedding_document_batch_with_bge.apply_async") as task:
         enqueue_embedding_batch(
             [10],
             job_id="job-10",
@@ -102,11 +114,11 @@ def test_route_contract_matches_worker_queues_and_task_names():
     assert TASK_ROUTES[WorkKind.PLAN_DOCUMENT_EMBEDDING].queue == "embed"
     assert TASK_ROUTES[WorkKind.EMBED_DOCUMENT_BATCH].queue == "embed"
     assert TASK_ROUTES[WorkKind.EVALUATE_RETRIEVAL].queue == "embed"
-    assert all(route.task_name.startswith("document_ai.tasks.") for route in TASK_ROUTES.values())
+    assert all(route.task_name.startswith("documents.tasks.") for route in TASK_ROUTES.values())
 
 
 def test_executor_followup_uses_registered_route_and_preserves_job_lineage():
-    from document_ai.tasks import _publish_executor_followups
+    from documents.tasks import _publish_executor_followups
 
     response = {"followups": [{
         "work_kind": "embed_document_batch",
@@ -114,13 +126,13 @@ def test_executor_followup_uses_registered_route_and_preserves_job_lineage():
         "job_id": "child-1",
         "parent_job_id": "parent-1",
     }]}
-    with patch("capabilities.work_dispatch.require_capability"), patch(
-        "capabilities.work_dispatch.require_registered_work"
+    with patch("orchestration.dispatch.require_capability"), patch(
+        "orchestration.dispatch.require_registered_work"
     ), patch("celery.current_app.send_task") as send:
         _publish_executor_followups(response)
 
     call = send.call_args
-    assert call.args == ("document_ai.tasks.embedding_document_batch_with_bge",)
+    assert call.args == ("documents.tasks.embedding_document_batch_with_bge",)
     assert call.kwargs["args"] == [[20, 21]]
     assert call.kwargs["queue"] == "embed"
     assert call.kwargs["task_id"] == "child-1"
@@ -129,15 +141,15 @@ def test_executor_followup_uses_registered_route_and_preserves_job_lineage():
 
 
 def test_executor_followup_rejects_undeclared_payload_without_publication():
-    from document_ai.tasks import _publish_executor_followups
+    from documents.tasks import _publish_executor_followups
 
     response = {"followups": [{
         "work_kind": "plan_document_embedding",
         "payload": {"node_id": 1, "unexpected": True},
         "job_id": "child-1",
     }]}
-    with patch("capabilities.work_dispatch.require_capability"), patch(
-        "capabilities.work_dispatch.require_registered_work"
+    with patch("orchestration.dispatch.require_capability"), patch(
+        "orchestration.dispatch.require_registered_work"
     ), patch("celery.current_app.send_task") as send:
         with pytest.raises(ValueError, match="Invalid payload fields"):
             _publish_executor_followups(response)
@@ -145,7 +157,7 @@ def test_executor_followup_rejects_undeclared_payload_without_publication():
 
 
 def test_unknown_later_followup_prevents_partial_publication():
-    from document_ai.tasks import _publish_executor_followups
+    from documents.tasks import _publish_executor_followups
     from capabilities.work_dispatch import WorkContractError
 
     response = {"followups": [
@@ -159,13 +171,17 @@ def test_unknown_later_followup_prevents_partial_publication():
 
 
 def test_dispatch_rejects_disabled_capability_before_publication(tmp_path, monkeypatch):
-    config_path = tmp_path / "capabilities.json"
-    write_capability_config([], path=config_path)
-    monkeypatch.setenv("DOTORI_CAPABILITIES_CONFIG_PATH", str(config_path))
+    plan = build_module_deployment_plan(
+        [DOCUMENTS_MODULE],
+        disabled_provider_roles=("parser", "embedding", "llm"),
+    )
+    plan_path = write_deployment_plan(plan, repo_root=tmp_path)
+    monkeypatch.setenv("DOTORI_DEPLOYMENT_PLAN_PATH", str(plan_path))
+    clear_deployment_snapshot_cache()
 
-    from document_ai.orchestration import enqueue_parse
+    from documents.orchestration import enqueue_parse
 
-    with patch("document_ai.tasks.parse_document_with_docling.apply_async") as task:
+    with patch("documents.tasks.parse_document_with_docling.apply_async") as task:
         with pytest.raises(CapabilityAdmissionError) as error:
             enqueue_parse(1)
 
@@ -174,7 +190,7 @@ def test_dispatch_rejects_disabled_capability_before_publication(tmp_path, monke
 
 
 def test_consumer_finalizes_queued_work_when_capability_was_disabled():
-    from document_ai.tasks import _dispatch_or_retry
+    from documents.tasks import _dispatch_or_retry
 
     task = SimpleNamespace(request=SimpleNamespace(headers={}, retries=0))
     error = CapabilityAdmissionError(
@@ -183,10 +199,10 @@ def test_consumer_finalizes_queued_work_when_capability_was_disabled():
         "Document extraction is disabled",
     )
     with patch(
-        "document_ai.services.capability_admission.require_capability",
+        "orchestration.celery_adapter.require_capability",
         side_effect=error,
     ), patch(
-        "document_ai.processing.capability_state.finalize_capability_rejection"
+        "documents.processing.capability_state.finalize_capability_rejection"
     ) as finalize:
         result = _dispatch_or_retry(
             task,

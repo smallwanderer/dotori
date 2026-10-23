@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from django.db import connection
 
-from document_ai.embedding.stores.pgvector_chunk import DIMENSION_FIELD_MAP
-from document_ai.models import ChunkEmbedding
+from documents.embedding.stores.pgvector_chunk import DIMENSION_FIELD_MAP
+from documents.models import ChunkEmbedding
 
 
 ACTIVE_HNSW_INDEX = "chunk_embedding_active_hnsw_idx"

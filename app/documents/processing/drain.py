@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from document_ai.models import ExecutorJobReceipt
-from document_ai.orchestration import WorkKind, get_task_route
+from documents.models import ExecutorJobReceipt
+from documents.orchestration import WorkKind, get_task_route
 
 
 DOCUMENT_WORK_KINDS = tuple(kind.value for kind in WorkKind)
@@ -24,7 +24,7 @@ class DocumentDrainSnapshot:
 
 def document_drain_snapshot(*, redis_client=None) -> DocumentDrainSnapshot:
     if redis_client is None:
-        from document_ai.orchestration import broker_redis_client
+        from documents.orchestration import broker_redis_client
 
         redis_client = broker_redis_client()
     parse_queue = get_task_route(WorkKind.PARSE_DOCUMENT).queue

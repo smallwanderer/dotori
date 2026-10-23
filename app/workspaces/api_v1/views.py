@@ -9,6 +9,27 @@ from django.views.decorators.http import require_http_methods
 
 from accounts.api_responses import api_error_response
 from accounts.decorators import email_verification_required
+from documents.search.evaluation import (
+    create_evaluation_dataset,
+    get_evaluation_run,
+    list_evaluation_datasets,
+    start_retrieval_evaluation,
+)
+from documents.search.profiles import RetrievalProfileError
+from documents.search.quality_profile import (
+    apply_quality_profile_draft,
+    discard_quality_profile_draft,
+    list_quality_profile_versions,
+    preview_prompt_draft,
+    quality_profile_envelope,
+    save_quality_profile_draft,
+)
+from documents.services.llm_endpoint_service import (
+    get_effective_rag_target,
+    get_or_create_llm_preference,
+    get_server_rag_default_model,
+    set_user_rag_model,
+)
 from workspaces import services
 from workspaces.decorators import workspace_admin_required, workspace_member_required
 from workspaces.models import Workspace, WorkspaceInvitation, WorkspaceMembership
@@ -305,7 +326,6 @@ def decline_invite(request, invitation_id):
 @email_verification_required
 @require_http_methods(["GET"])
 def quality_profile(request):
-    from document_ai.search.quality_profile import quality_profile_envelope
 
     can_edit = request.workspace_membership.role == WorkspaceMembership.ROLE_ADMIN
     return JsonResponse(
@@ -321,8 +341,6 @@ def quality_profile(request):
 @email_verification_required
 @require_http_methods(["PATCH"])
 def quality_profile_draft(request):
-    from document_ai.search.profiles import RetrievalProfileError
-    from document_ai.search.quality_profile import save_quality_profile_draft
 
     payload = _json_object(request)
     if payload is None:
@@ -346,8 +364,6 @@ def quality_profile_draft(request):
 @email_verification_required
 @require_http_methods(["POST"])
 def quality_profile_draft_discard(request):
-    from document_ai.search.profiles import RetrievalProfileError
-    from document_ai.search.quality_profile import discard_quality_profile_draft
 
     payload = _json_object(request)
     if payload is None:
@@ -366,8 +382,6 @@ def quality_profile_draft_discard(request):
 @email_verification_required
 @require_http_methods(["POST"])
 def quality_profile_draft_preview_prompt(request):
-    from document_ai.search.profiles import RetrievalProfileError
-    from document_ai.search.quality_profile import preview_prompt_draft
 
     payload = _json_object(request)
     if payload is None:
@@ -387,8 +401,6 @@ def quality_profile_draft_preview_prompt(request):
 @email_verification_required
 @require_http_methods(["POST"])
 def quality_profile_apply(request):
-    from document_ai.search.profiles import RetrievalProfileError
-    from document_ai.search.quality_profile import apply_quality_profile_draft
 
     payload = _json_object(request)
     if payload is None:
@@ -411,8 +423,6 @@ def quality_profile_apply(request):
 @email_verification_required
 @require_http_methods(["GET", "POST"])
 def evaluation_datasets(request):
-    from document_ai.search.evaluation import create_evaluation_dataset, list_evaluation_datasets
-    from document_ai.search.profiles import RetrievalProfileError
 
     if request.method == "GET":
         axis = request.GET.get("axis", "retrieval")
@@ -440,8 +450,6 @@ def evaluation_datasets(request):
 @email_verification_required
 @require_http_methods(["GET"])
 def evaluation_run_detail(request, run_uid):
-    from document_ai.search.evaluation import get_evaluation_run
-    from document_ai.search.profiles import RetrievalProfileError
 
     try:
         result = get_evaluation_run(request.workspace, run_uid=run_uid)
@@ -454,8 +462,6 @@ def evaluation_run_detail(request, run_uid):
 @email_verification_required
 @require_http_methods(["POST"])
 def quality_profile_evaluate(request):
-    from document_ai.search.evaluation import start_retrieval_evaluation
-    from document_ai.search.profiles import RetrievalProfileError
 
     payload = _json_object(request)
     if payload is None:
@@ -473,12 +479,6 @@ def quality_profile_evaluate(request):
 
 
 def _serialize_llm_settings(workspace, *, can_edit):
-    from document_ai.services.llm_endpoint_service import (
-        get_effective_rag_target,
-        get_or_create_llm_preference,
-        get_server_rag_default_model,
-    )
-
     preference = get_or_create_llm_preference(workspace)
     endpoints = workspace.llm_endpoints.filter(is_active=True).order_by("name")
     return {
@@ -512,7 +512,6 @@ def llm_settings(request):
 @email_verification_required
 @require_http_methods(["POST"])
 def llm_settings_select(request):
-    from document_ai.services.llm_endpoint_service import set_user_rag_model
 
     payload = _json_object(request)
     if payload is None:
@@ -531,7 +530,6 @@ def llm_settings_select(request):
 @email_verification_required
 @require_http_methods(["GET"])
 def quality_profile_versions(request):
-    from document_ai.search.quality_profile import list_quality_profile_versions
 
     try:
         page = int(request.GET.get("page", 1))

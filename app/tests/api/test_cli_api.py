@@ -11,13 +11,30 @@ from django.urls import reverse
 from accounts.cli_tokens import issue_cli_token
 from config.enums import NodeType
 from config.enums import AIStatus
-from document_ai.models import DocumentChunk, DocumentParseResult
-from document_ai.services.capability_admission import CapabilityAdmissionError
+from documents.models import DocumentChunk, DocumentParseResult
+from documents.services.capability_admission import CapabilityAdmissionError
 from files.models import FileBlob, Node
 from workspaces.models import Workspace, WorkspaceMembership
 
 
 pytestmark = pytest.mark.unit
+
+@pytest.fixture(autouse=True)
+def isolated_deployment(tmp_path, monkeypatch):
+    """Do not inherit the operator's enabled capabilities or cached plan."""
+    from capabilities.deployment import clear_deployment_snapshot_cache, load_deployment_snapshot
+    from installation.deployment import build_module_deployment_plan, write_deployment_plan
+
+    plan = build_module_deployment_plan(["documents"], disabled_provider_roles=("embedding", "llm"))
+    path = write_deployment_plan(plan, repo_root=tmp_path)
+    monkeypatch.setenv("DOTORI_DEPLOYMENT_PLAN_PATH", str(path))
+    clear_deployment_snapshot_cache()
+    snapshot = load_deployment_snapshot()
+    assert snapshot.is_enabled("documents.extract")
+    assert not snapshot.is_enabled("documents.semantic_search")
+    yield
+    clear_deployment_snapshot_cache()
+
 
 User = get_user_model()
 
@@ -54,7 +71,7 @@ class CLIHttpApiTests(TestCase):
             node_type=NodeType.FILE,
             trashed=trashed,
         )
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             blob = FileBlob.objects.create(
                 node=node,
                 original_name="result.txt",
@@ -161,19 +178,21 @@ class CLIHttpApiTests(TestCase):
             [str(own.uid)],
         )
 
-    @patch("document_ai.signals.enqueue_parse")
+    @patch("documents.signals.enqueue_parse")
     def test_upload_uses_cli_token_owner_without_csrf(self, parse_delay):
-        response = self.client.post(
-            reverse("cli_api:upload"),
-            data={
-                "file": SimpleUploadedFile(
-                    "cli.txt",
-                    b"from cli",
-                    content_type="text/plain",
-                )
-            },
-            HTTP_AUTHORIZATION=self.authorization,
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                reverse("cli_api:upload"),
+                data={
+                    "file": SimpleUploadedFile(
+                        "cli.txt",
+                        b"from cli",
+                        content_type="text/plain",
+                    )
+                },
+                HTTP_AUTHORIZATION=self.authorization,
+            )
+            parse_delay.assert_not_called()
 
         self.assertEqual(response.status_code, 200)
         node = Node.objects.get(uid=response.json()["file"]["uid"])
@@ -205,7 +224,7 @@ class CLIHttpApiTests(TestCase):
 
     def test_search_uses_cli_token_owner(self):
         with patch(
-            "document_ai.search.views.search_documents_sync",
+            "documents.search.views.search_documents_sync",
             return_value=([], {"request_search_ms": 1.5}),
         ) as search:
             response = self.client.post(
@@ -225,7 +244,7 @@ class CLIHttpApiTests(TestCase):
             "Capability documents.semantic_search is disabled on this server",
         )
         with patch(
-            "document_ai.search.views.search_documents_sync",
+            "documents.search.views.search_documents_sync",
             side_effect=error,
         ):
             response = self.client.post(
@@ -243,7 +262,7 @@ class CLIHttpApiTests(TestCase):
         def status_response(request):
             return JsonResponse({"ok": True, "user": request.user.email})
 
-        with patch("document_ai.cli_views.server_policy", side_effect=status_response):
+        with patch("documents.cli_views.server_policy", side_effect=status_response):
             response = self.client.get(
                 reverse("cli_api:status"),
                 HTTP_AUTHORIZATION=self.authorization,
@@ -252,7 +271,7 @@ class CLIHttpApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["user"], self.user.email)
 
-    @patch("document_ai.cli_views.build_server_policy_payload")
+    @patch("documents.cli_views.build_server_policy_payload")
     def test_capabilities_reuses_server_policy_contract(self, build_policy):
         build_policy.return_value = {"capabilities": {"documents.extract": {"enabled": True}}}
         response = self.client.get(

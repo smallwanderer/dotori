@@ -67,7 +67,7 @@ def _parse_docling_document(
 ) -> ParseResult:
 
     from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
-    from document_ai.services.capability_admission import capability_enabled
+    from documents.services.capability_admission import capability_enabled
 
     semantic_search_enabled = capability_enabled(DOCUMENT_SEMANTIC_SEARCH)
     tokenizer = get_hf_tokenizer() if semantic_search_enabled else None

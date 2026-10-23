@@ -7,14 +7,14 @@ from django.views.decorators.http import require_GET, require_POST
 
 from accounts.api_responses import api_error_response
 from accounts.decorators import operator_api_required
-from document_ai.services.operation_metrics import (
+from documents.services.operation_metrics import (
     WINDOWS,
     build_events_payload,
     build_metrics_payload,
     build_trace_payload,
 )
-from document_ai.services.operation_status import build_operation_status
-from document_ai.services.resource_snapshot import (
+from documents.services.operation_status import build_operation_status
+from documents.services.resource_snapshot import (
     collect_resource_snapshots,
     latest_resource_snapshots,
     serialize_resource_snapshot,

@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from config.enums import NodeType
-from document_ai.models import DocumentParseResult
-from document_ai.services.result_envelope import document_extract_result_envelope
+from documents.models import DocumentParseResult
+from documents.services.result_envelope import document_extract_result_envelope
 from files.models import Node
 from files.services.access import is_active_member
 

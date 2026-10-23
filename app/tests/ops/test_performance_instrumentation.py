@@ -9,15 +9,15 @@ from django.utils import timezone
 
 from config.enums import AIStatus, NodeType
 from config.tracing import get_trace_id, new_trace_id, set_trace_id
-from document_ai.db_span import capture_db_spans
-from document_ai.models import DocumentChunk, DocumentParseResult, RAGJob, SearchJob
-from document_ai.embedding.executor import (
+from documents.db_span import capture_db_spans
+from documents.models import DocumentChunk, DocumentParseResult, RAGJob, SearchJob
+from documents.embedding.executor import (
     RetryableEmbeddingError,
     embed_document_chunk_sync,
     embed_document_chunks_batch_sync,
 )
-from document_ai.rag.generation import generate_rag_response_sync
-from document_ai.tracing_utils import enqueue_kwargs
+from documents.rag.generation import generate_rag_response_sync
+from documents.tracing_utils import enqueue_kwargs
 from files.models import FileBlob, Node
 
 pytestmark = pytest.mark.integration
@@ -27,9 +27,9 @@ User = get_user_model()
 
 class EmbeddingInstrumentationTests(TestCase):
     def setUp(self):
-        tokenizer = SimpleNamespace(count_tokens=lambda text: len(text.split()))
+        tokenizer = SimpleNamespace(encode=lambda text, add_special_tokens=False: text.split())
         tokenizer_patcher = patch(
-            "document_ai.embedding.executor.get_hf_tokenizer",
+            "documents.embedding.executor.get_raw_tokenizer",
             return_value=tokenizer,
         )
         tokenizer_patcher.start()
@@ -44,7 +44,7 @@ class EmbeddingInstrumentationTests(TestCase):
         node = Node.objects.create(
             owner=self.user, name="doc.txt", ext=".txt", node_type=NodeType.FILE
         )
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             FileBlob.objects.create(
                 node=node,
                 original_name="doc.txt",
@@ -73,8 +73,8 @@ class EmbeddingInstrumentationTests(TestCase):
         fake_embedding = SimpleNamespace(dense_vector=[0.1, 0.2], sparse_vector={"1": 1.0})
 
         with patch(
-            "document_ai.embedding.embeding_models.embed_document", return_value=fake_embedding
-        ), patch("document_ai.embedding.store_registry.get_embedding_store_instance") as get_store:
+            "documents.embedding.embeding_models.embed_document", return_value=fake_embedding
+        ), patch("documents.embedding.store_registry.get_embedding_store_instance") as get_store:
             result = embed_document_chunk_sync(
                 chunk.id, trace_id="fixed-trace-id", enqueued_at=enqueued_at
             )
@@ -124,8 +124,8 @@ class EmbeddingInstrumentationTests(TestCase):
             ]
 
         with patch(
-            "document_ai.embedding.embeding_models.embed_documents", fake_embed_documents
-        ), patch("document_ai.embedding.store_registry.get_embedding_store_instance") as get_store:
+            "documents.embedding.embeding_models.embed_documents", fake_embed_documents
+        ), patch("documents.embedding.store_registry.get_embedding_store_instance") as get_store:
             result = embed_document_chunks_batch_sync(
                 [chunk_a.id, chunk_b.id], trace_id="batch-trace-id", enqueued_at=enqueued_at
             )
@@ -153,8 +153,8 @@ class EmbeddingInstrumentationTests(TestCase):
             ]
 
         with patch(
-            "document_ai.embedding.embeding_models.embed_documents", fake_embed_documents
-        ), patch("document_ai.embedding.store_registry.get_embedding_store_instance"):
+            "documents.embedding.embeding_models.embed_documents", fake_embed_documents
+        ), patch("documents.embedding.store_registry.get_embedding_store_instance"):
             result = embed_document_chunks_batch_sync(
                 [chunk_a.id, empty_chunk.id, chunk_b.id],
                 enqueued_at=timezone.now().isoformat(),
@@ -180,7 +180,7 @@ class EmbeddingInstrumentationTests(TestCase):
             raise RuntimeError("embedding-executor is busy (EMBEDDING_BUSY), retry after 5s")
 
         with patch(
-            "document_ai.embedding.embeding_models.embed_documents", failing_embed_documents
+            "documents.embedding.embeding_models.embed_documents", failing_embed_documents
         ):
             with self.assertRaises(RetryableEmbeddingError):
                 embed_document_chunks_batch_sync(
@@ -204,7 +204,7 @@ class EmbeddingInstrumentationTests(TestCase):
             raise RuntimeError("GPU OOM while embedding batch")
 
         with patch(
-            "document_ai.embedding.embeding_models.embed_documents", failing_embed_documents
+            "documents.embedding.embeding_models.embed_documents", failing_embed_documents
         ):
             result = embed_document_chunks_batch_sync(
                 [chunk_a.id, chunk_b.id],
@@ -232,7 +232,7 @@ class ParseInstrumentationTests(TestCase):
         node = Node.objects.create(
             owner=self.user, name="parse-me.txt", ext=".txt", node_type=NodeType.FILE
         )
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             FileBlob.objects.create(
                 node=node,
                 original_name="parse-me.txt",
@@ -244,7 +244,7 @@ class ParseInstrumentationTests(TestCase):
         return node
 
     def test_success_path_records_metrics_on_parse_result(self):
-        from document_ai.processing.parsing import execute_parse_node
+        from documents.processing.parsing import execute_parse_node
 
         node = self._create_file_node()
         fake_parse_result = SimpleNamespace(
@@ -276,7 +276,7 @@ class ParseInstrumentationTests(TestCase):
         self.assertIn("parse_processing_ms", metrics)
 
     def test_failure_path_records_metrics_on_parse_result(self):
-        from document_ai.processing.parsing import ParseExecutionFailed, execute_parse_node
+        from documents.processing.parsing import ParseExecutionFailed, execute_parse_node
 
         node = self._create_file_node()
 
@@ -343,7 +343,7 @@ class RagTokenThroughputTests(TestCase):
             email_verified=True,
         )
         self.server_target_patch = patch(
-            "document_ai.services.llm_endpoint_service.get_cached_server_rag_target",
+            "documents.services.llm_endpoint_service.get_cached_server_rag_target",
             return_value=SimpleNamespace(
                 base_url="http://test-rag:8080",
                 model="test-rag-model",
@@ -418,6 +418,8 @@ class RagTokenThroughputTests(TestCase):
 
         with patch("requests.post", return_value=FakeResponse()) as post, patch(
             "redis.Redis.from_url", return_value=FakeRedisNoCancel()
+        ), patch(
+            "capabilities.execution.require_registered_role"
         ):
             result = generate_rag_response_sync(rag_job.id)
 

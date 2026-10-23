@@ -11,7 +11,7 @@ from uuid import UUID
 
 from django.utils import timezone
 
-from document_ai.parsers.text_utils import normalize_extracted_text
+from documents.parsers.text_utils import normalize_extracted_text
 
 logger = logging.getLogger(__name__)
 

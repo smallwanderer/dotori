@@ -10,13 +10,13 @@ from django.db.models import Count
 from django.utils import timezone
 
 from config.enums import AIStatus
-from document_ai.models import DocumentChunk, DocumentParseResult
-from document_ai.services.embedding_runtime_config import (
+from documents.models import DocumentChunk, DocumentParseResult
+from documents.services.embedding_runtime_config import (
     EmbeddingRuntimeConfigError,
     get_active_embedding_runtime,
 )
-from document_ai.services.operation_metrics import _safe_error_summary
-from document_ai.services.server_policy import build_server_policy_payload
+from documents.services.operation_metrics import _safe_error_summary
+from documents.services.server_policy import build_server_policy_payload
 
 
 def _status_counts(queryset) -> dict:
@@ -47,7 +47,7 @@ def _database_status() -> dict:
 
 def _processing_status() -> dict:
     from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
-    from document_ai.services.capability_admission import capability_enabled
+    from documents.services.capability_admission import capability_enabled
 
     try:
         active_runtime = (

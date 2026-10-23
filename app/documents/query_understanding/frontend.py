@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from config.enums import QueryAnswerMode, QueryIntent
-from document_ai.models import QueryUnderstandingLog
-from document_ai.parsers.text_utils import normalize_extracted_text
+from documents.models import QueryUnderstandingLog
+from documents.parsers.text_utils import normalize_extracted_text
 
 
 @dataclass(frozen=True)
@@ -146,7 +146,7 @@ def prepare_retrieval_query(raw_query: str, *, mode: str = "search", owner=None,
         )
 
     try:
-        from document_ai.query_understanding.parser_service import parse_user_query_sync
+        from documents.query_understanding.parser_service import parse_user_query_sync
 
         result = parse_user_query_sync(normalized_query, mode)
         query_log = _create_query_log(owner=owner, workspace=workspace, raw_query=raw_query, mode=mode, result=result)

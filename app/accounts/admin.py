@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import APIToken, CLIToken, SyncQuota, User
+from .models import APIToken, CLIToken, User
 
 
 @admin.register(User)
@@ -43,21 +43,3 @@ class CLITokenAdmin(admin.ModelAdmin):
     def scope_list(self, obj):
         return ", ".join(obj.scopes or [])
     scope_list.short_description = "Scopes"
-
-
-@admin.register(SyncQuota)
-class SyncQuotaAdmin(admin.ModelAdmin):
-    list_display = ("user", "used_mb", "total_gb", "remaining_mb")
-    search_fields = ("user__email",)
-
-    def used_mb(self, obj):
-        return round(obj.used_size / 1024 / 1024, 2)
-    used_mb.short_description = "Used (MB)"
-
-    def total_gb(self, obj):
-        return round(obj.total_size / 1024 / 1024 / 1024, 2)
-    total_gb.short_description = "Total (GB)"
-
-    def remaining_mb(self, obj):
-        return round(obj.remaining_size / 1024 / 1024, 2)
-    remaining_mb.short_description = "Remaining (MB)"

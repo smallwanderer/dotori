@@ -7,7 +7,6 @@ import logging
 from functools import wraps
 
 from django.http import JsonResponse
-from django.utils import timezone
 
 from accounts.cli_tokens import (
     CLI_SYNC_SCOPE,
@@ -15,7 +14,7 @@ from accounts.cli_tokens import (
     CLITokenAuthenticationError,
     authenticate_cli_token,
 )
-from accounts.models import APIToken
+from accounts.legacy_tokens import LegacyAPITokenError, authenticate_legacy_api_token
 from workspaces.models import Workspace, WorkspaceMembership
 
 logger = logging.getLogger(__name__)
@@ -54,22 +53,12 @@ def api_token_required(view_func):
                 )
         else:
             try:
-                token = APIToken.objects.select_related("user").get(key=key, is_active=True)
-            except APIToken.DoesNotExist:
+                token = authenticate_legacy_api_token(key)
+            except LegacyAPITokenError as exc:
                 return JsonResponse(
-                    {"ok": False, "errors": ["Invalid or inactive API token."]},
-                    status=401,
+                    {"ok": False, "errors": [exc.message], "code": exc.code},
+                    status=exc.status,
                 )
-
-        if not token.user.is_active:
-            return JsonResponse(
-                {"ok": False, "errors": ["User account is inactive."]},
-                status=403,
-            )
-
-        if isinstance(token, APIToken):
-            # Keep the legacy connector token's usage timestamp current.
-            APIToken.objects.filter(pk=token.pk).update(last_used_at=timezone.now())
 
         request.user = token.user
         request.api_token = token

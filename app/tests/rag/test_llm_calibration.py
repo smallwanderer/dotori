@@ -6,8 +6,8 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from config.enums import AIStatus, RAGStage
-from document_ai.models import RAGJob, SearchJob
-from document_ai.rag.streaming import create_rag_streaming_response
+from documents.models import RAGJob, SearchJob
+from documents.rag.streaming import create_rag_streaming_response
 from llm_installation.calibration import (
     load_workload,
     select_serving_concurrency,
@@ -169,7 +169,6 @@ def _step(concurrency, throughput, ttft=100, total=1000):
 def test_selection_stops_when_marginal_throughput_gain_is_too_small():
     result = select_serving_concurrency(
         [_step(1, 40), _step(2, 70, ttft=120, total=1200), _step(3, 73)],
-        priority_preset="balanced",
     )
 
     assert result["selected_serving_concurrency"] == 2
@@ -292,13 +291,13 @@ def test_rag_stream_terminal_event_exposes_persisted_performance_metrics():
         return {"status": "success", "job_id": job_id}
 
     with patch(
-        "document_ai.search.execution.perform_vector_search_sync",
+        "documents.search.execution.perform_vector_search_sync",
         side_effect=complete_search,
     ), patch(
-        "document_ai.rag.generation._build_rag_context",
+        "documents.rag.generation._build_rag_context",
         return_value=("", []),
     ), patch(
-        "document_ai.rag.generation.generate_rag_response_sync",
+        "documents.rag.generation.generate_rag_response_sync",
         side_effect=complete_generation,
     ):
         response = create_rag_streaming_response(

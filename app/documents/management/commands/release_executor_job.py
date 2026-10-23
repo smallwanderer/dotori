@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
-from document_ai.models import ExecutorJobReceipt
-from document_ai.services.executor_jobs import fail_execution
+from documents.models import ExecutorJobReceipt
+from documents.services.executor_jobs import fail_execution
 
 
 class Command(BaseCommand):

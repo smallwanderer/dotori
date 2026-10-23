@@ -62,6 +62,9 @@ class DocumentParseResult(models.Model):
     # Chunk Statistics
     chunk_count = models.PositiveIntegerField(default=0)
 
+    # NULL is deliberate for legacy rows: never invent historical provenance.
+    parse_revision = models.UUIDField(null=True, blank=True, editable=False)
+
     # One server-wide embedding contract applies to the whole document.
     # Keeping this marker here avoids repeating a generation FK on every
     # chunk embedding row.
@@ -101,8 +104,8 @@ class DocumentParseResult(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=["parser_name"]),
-            models.Index(fields=["input_document_hash"]),
+            models.Index(fields=["parser_name"], name="docs_parse_parser_name_idx"),
+            models.Index(fields=["input_document_hash"], name="docs_parse_input_hash_idx"),
         ]
         ordering = ["-created_at"]
 
@@ -134,7 +137,7 @@ class DocumentParseResult(models.Model):
 
 class DocumentChunk(models.Model):
     parse_result = models.ForeignKey(
-        "document_ai.DocumentParseResult",
+        "documents.DocumentParseResult",
         on_delete=models.CASCADE,
         related_name="chunks",
         db_index=False,

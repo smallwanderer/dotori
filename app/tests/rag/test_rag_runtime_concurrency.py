@@ -12,7 +12,7 @@ from urllib.error import URLError
 
 import pytest
 
-from document_ai.services.rag_runtime_config import (
+from llm_installation.rag_runtime_config import (
     get_server_rag_serving_concurrency,
     normalize_serving_profile,
     probe_server_rag_runtime,
@@ -47,7 +47,7 @@ def test_runtime_probe_uses_shallow_health_endpoint(monkeypatch):
         return _ProbeResponse()
 
     monkeypatch.setattr(
-        "document_ai.services.rag_runtime_config.urlopen",
+        "llm_installation.rag_runtime_config.urlopen",
         fake_urlopen,
     )
 
@@ -65,7 +65,7 @@ def test_runtime_probe_returns_false_when_endpoint_is_unreachable(monkeypatch):
     [핵심 검증 2: 엔드포인트 접속 불가 시 False 안전 반환]
     """
     monkeypatch.setattr(
-        "document_ai.services.rag_runtime_config.urlopen",
+        "llm_installation.rag_runtime_config.urlopen",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(URLError("offline")),
     )
 

@@ -1,10 +1,10 @@
 from django.core.management.base import BaseCommand
 
 from config.enums import NodeType
-from document_ai.tasks import parse_document_with_docling
-from document_ai.orchestration import enqueue_parse
-from document_ai.tracing_utils import enqueue_kwargs
-from document_ai.processing.input_routing import resolve_blob_work
+from documents.tasks import parse_document_with_docling
+from documents.orchestration import enqueue_parse
+from documents.tracing_utils import enqueue_kwargs
+from documents.processing.input_routing import resolve_blob_work
 from capabilities.registry import DOCUMENT_EXTRACT
 from files.models import Node
 

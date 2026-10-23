@@ -17,17 +17,16 @@ import os
 import uuid
 
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import Q
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from accounts.models import SyncQuota
 from accounts.client_identity import serialize_client_identity
 from config.enums import NodeType
 from files.models import FileBlob, Node
 from files.services import file_service
-from files.services.storage import ALLOWED_EXTENSIONS, save_file
+from files.services.storage import ALLOWED_EXTENSIONS, check_workspace_room, save_file
 from files.services.utils import calculate_sha256
 
 from .auth import api_token_required
@@ -205,20 +204,6 @@ def _ensure_directory(workspace, user, sync_folder, rel_path):
         parent = _restore_folder_if_needed(child)
         final_created = created
     return parent, final_created
-
-
-def _check_sync_quota(user, file_size):
-    """Check if sync quota allows the upload. Returns (ok, error_msg)."""
-    quota, _ = SyncQuota.objects.get_or_create(user=user)
-    if quota.used_size + file_size > quota.total_size:
-        remaining_mb = round(quota.remaining_size / 1024 / 1024, 2)
-        return False, f"Sync quota exceeded. Remaining: {remaining_mb} MB."
-    return True, ""
-
-
-def _update_sync_quota(user, file_size):
-    """Increase used_size in sync quota."""
-    SyncQuota.objects.filter(user=user).update(used_size=F("used_size") + file_size)
 
 
 def _bool_from_request(value, default=True):
@@ -433,7 +418,7 @@ def upload(request):
             else 0
         )
         quota_delta = max(0, uploaded_file.size - old_size)
-        ok, err = _check_sync_quota(request.user, quota_delta)
+        ok, err = check_workspace_room(request.workspace, quota_delta)
         if not ok:
             return JsonResponse({"ok": False, "errors": [err]}, status=400)
 
@@ -464,10 +449,6 @@ def upload(request):
                     mime_type=getattr(uploaded_file, "content_type", ""),
                     sha256=content_hash,
                 )
-            # Adjust quota: subtract old, add new
-            SyncQuota.objects.filter(user=request.user).update(
-                used_size=F("used_size") - old_size + uploaded_file.size
-            )
             return JsonResponse({
                 "ok": True,
                 "node_uid": str(existing.uid),
@@ -484,9 +465,6 @@ def upload(request):
             parent=parent,
             ai_processing_enabled=_bool_from_request(ai_processing_value, default=True),
         )
-
-        # Update sync quota
-        _update_sync_quota(request.user, uploaded_file.size)
 
         return JsonResponse({
             "ok": True,

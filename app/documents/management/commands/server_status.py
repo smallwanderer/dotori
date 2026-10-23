@@ -12,11 +12,11 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management.base import BaseCommand
 from django.db import connection
 
-from document_ai.services.rag_runtime_config import (
+from llm_installation.rag_runtime_config import (
     load_llm_runtime_status,
     target_from_persisted_config,
 )
-from document_ai.services.embedding_runtime_config import (
+from documents.services.embedding_runtime_config import (
     EmbeddingRuntimeConfigError,
     load_embedding_runtime,
 )
@@ -111,7 +111,7 @@ def _file_io_status(*, skip: bool) -> dict:
 
 def _embedding_status() -> dict:
     from capabilities.registry import DOCUMENT_SEMANTIC_SEARCH
-    from document_ai.services.capability_admission import capability_enabled
+    from documents.services.capability_admission import capability_enabled
 
     enabled = capability_enabled(DOCUMENT_SEMANTIC_SEARCH)
     try:
@@ -192,7 +192,6 @@ def _rag_status(*, timeout: int) -> dict:
         "base_url": target.base_url,
         "model": target.model,
         "runtime": target.runtime,
-        "priority_preset": target.priority_preset,
         "selection_mode": target.selection_mode,
         "fallback_used": target.fallback_used,
         "search_top_k": settings.RAG_SEARCH_TOP_K,
@@ -276,8 +275,8 @@ class Command(BaseCommand):
             self.stdout.write(f"embedding: {embedding.get('message')}")
         if rag.get("configured"):
             self.stdout.write(
-                f"rag: model={rag['model']} runtime={rag['runtime']} base_url={rag['base_url']} "
-                f"priority_preset={rag['priority_preset']}"
+                f"rag: model={rag['model']} runtime={rag['runtime']} "
+                f"base_url={rag['base_url']}"
             )
             health = rag.get("health_status")
             if health:

@@ -148,7 +148,7 @@
       <span class="stat-sub">{{ user.email }} · 가입일: {{ user.created_at|date:"Y-m-d" }}</span>
     </div>
     <div class="stat-cell">
-      <span class="stat-label" data-i18n="settingsSyncQuota">동기화 용량</span>
+      <span class="stat-label" data-i18n="settingsStorage">저장 용량</span>
       <span class="stat-value">{{ quota_used_mb }} <small style="font-size:13px;font-weight:400;color:var(--muted)">MB / {{ quota_total_gb }} GB</small></span>
       <div class="quota-bar"><div class="quota-fill" style="width:{{ quota_pct }}%"></div></div>
     </div>

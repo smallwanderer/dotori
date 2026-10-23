@@ -90,6 +90,7 @@ def document_extract_result_envelope(parse_result, *, include_payload: bool = Tr
     occurrences = metadata.get("occurrences") or []
     envelope = {
         "id": f"document-extract:{parse_result.id}",
+        "revision": str(parse_result.parse_revision or ""),
         "kind": DOCUMENT_EXTRACT_RESULT_KIND,
         "schema": DOCUMENT_EXTRACT_RESULT_SCHEMA,
         "capability_id": DOCUMENT_EXTRACT,

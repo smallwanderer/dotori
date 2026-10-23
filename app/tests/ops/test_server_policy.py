@@ -1,10 +1,10 @@
-import json
-
 import pytest
 
-from capabilities.config import write_capability_config
+from capabilities.deployment import clear_deployment_snapshot_cache
+from capabilities.modules import DOCUMENTS_MODULE
 from capabilities.registry import DOCUMENT_EXTRACT
-from document_ai.services.server_policy import build_server_policy_payload
+from documents.services.server_policy import build_server_policy_payload
+from installation.deployment import build_module_deployment_plan, write_deployment_plan
 
 
 pytestmark = pytest.mark.unit
@@ -13,30 +13,19 @@ pytestmark = pytest.mark.unit
 def test_server_policy_uses_deployed_extract_mode_and_hides_embedding_runtime(
     monkeypatch, tmp_path
 ):
-    config_path = tmp_path / "capabilities.json"
-    config = write_capability_config([DOCUMENT_EXTRACT], path=config_path)
-    deployment_path = tmp_path / "deployment_scopes" / "production" / "deployment_plan.json"
-    deployment_path.parent.mkdir(parents=True)
-    deployment_path.write_text(
-        json.dumps(
-            {
-                "mode": "extract",
-                "core_services": ["db", "redis", "app", "dotori-orchestrator"],
-                "workers": [{"compose_service": "parser-executor", "enabled": True}],
-                "enabled_capabilities": [DOCUMENT_EXTRACT],
-                "capability_revision": config.revision,
-            }
-        ),
-        encoding="utf-8",
+    plan = build_module_deployment_plan(
+        [DOCUMENTS_MODULE], disabled_provider_roles=("embedding", "llm")
     )
-    monkeypatch.setenv("DOTORI_CAPABILITIES_CONFIG_PATH", str(config_path))
+    deployment_path = write_deployment_plan(plan, repo_root=tmp_path)
+    monkeypatch.setenv("DOTORI_DEPLOYMENT_PLAN_PATH", str(deployment_path))
+    clear_deployment_snapshot_cache()
     monkeypatch.setenv("DOTORI_OPERATION_MODE", "search")
     monkeypatch.setattr(
-        "document_ai.services.server_policy.load_embedding_runtime",
+        "documents.services.server_policy.load_embedding_runtime",
         lambda: pytest.fail("disabled semantic search must not load embedding runtime"),
     )
     monkeypatch.setattr(
-        "document_ai.services.server_policy.build_rag_summary",
+        "documents.services.server_policy.build_rag_summary",
         lambda **_kwargs: {"configured": False, "available": False},
     )
 

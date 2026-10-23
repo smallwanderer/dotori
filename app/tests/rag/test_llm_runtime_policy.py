@@ -75,20 +75,19 @@ def _profile(*, ram_mb=32768, gpu_vram_mb=0):
     )
 
 
-def _handoff(entry, profile, preset="balanced"):
+def _handoff(entry, profile):
     assessment = assess_catalog_entry(entry, profile)
     fit_evaluation = SimpleNamespace(fit_status=assessment.fit_status)
     selection = SelectionResult(
         selection_status="SELECTED",
         selection_mode="automatic",
-        priority_preset=preset,
         selected_candidate=SelectionCandidate(
             entry,
             assessment,
             fit_evaluation,
         ),
         ranked_artifact_ids=[entry.id],
-        reason_code=f"SELECTED_FIT_BY_{preset.upper()}",
+        reason_code="SELECTED_FIT",
         risky_confirmed=assessment.fit_status == "RISKY",
     )
     return build_runtime_policy_input(selection, profile)

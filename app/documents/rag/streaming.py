@@ -13,9 +13,9 @@ from django.utils import timezone
 
 from config.enums import AIStatus, QueryAnswerMode, QueryIntent, RAGStage
 from config.tracing import get_trace_id, set_trace_id
-from document_ai.models import RAGJob, SearchJob
-from document_ai.services.rag_cancel_service import set_rag_cancel_signal
-from document_ai.services.rag_conversation_service import (
+from documents.models import RAGJob, SearchJob
+from documents.services.rag_cancel_service import set_rag_cancel_signal
+from documents.services.rag_conversation_service import (
     rag_execution_deadline_seconds,
     rag_execution_lease_seconds,
     recover_expired_rag_jobs,
@@ -58,7 +58,10 @@ def _create_rag_jobs_sync(
     reply_to=None,
     reserved_rag_job=None,
 ) -> tuple[SearchJob, RAGJob]:
-    from document_ai.search.execution import perform_vector_search_sync
+    from documents.search.execution import perform_vector_search_sync
+    from documents.services.llm_endpoint_service import split_rag_llm_snapshot
+
+    llm_job_fields, initial_metrics = split_rag_llm_snapshot(llm_snapshot)
 
     rag_job_values = dict(
         owner=owner,
@@ -74,7 +77,8 @@ def _create_rag_jobs_sync(
         node_ids=[str(node_id) for node_id in requested_node_ids],
         stage=RAGStage.SEARCHING,
         stage_message="답변에 필요한 문서를 검색하고 있습니다.",
-        **llm_snapshot,
+        performance_metrics=initial_metrics,
+        **llm_job_fields,
     )
     if reserved_rag_job is not None:
         rag_job = reserved_rag_job
@@ -83,7 +87,7 @@ def _create_rag_jobs_sync(
         rag_job.save(update_fields=["stage", "stage_message", "updated_at"])
     elif conversation is not None and reply_to is not None:
         from django.db.models import Max
-        from document_ai.models import RAGConversation, RAGMessage
+        from documents.models import RAGConversation, RAGMessage
 
         busy = False
         try:
@@ -173,7 +177,7 @@ def _create_rag_jobs_sync(
 
 
 # DEPRECATED - thread-per-request sync path, superseded by create_rag_streaming_response_async.
-# RAGStreamView (document_ai/search/views.py) only calls the async version now. Kept because
+# RAGStreamView (documents/search/views.py) only calls the async version now. Kept because
 # app/tests/test_llm_calibration.py still drives it directly; do not route live requests here.
 def create_rag_streaming_response(
     *,
@@ -222,7 +226,7 @@ def create_rag_streaming_response(
 
     def event_stream():
         from django.db import close_old_connections
-        from document_ai.rag.generation import (
+        from documents.rag.generation import (
             _build_rag_context,
             _get_positive_int_env,
             generate_rag_response_sync,
@@ -372,8 +376,8 @@ async def create_rag_streaming_response_async(
         await admission_token.release_async()
         raise
 
-    from document_ai.rag.async_generation import iter_rag_generation_events_async
-    from document_ai.rag.generation import _build_rag_context, _get_positive_int_env
+    from documents.rag.async_generation import iter_rag_generation_events_async
+    from documents.rag.generation import _build_rag_context, _get_positive_int_env
 
     _, initial_citations = _build_rag_context(
         search_job.results,

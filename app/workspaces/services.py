@@ -19,7 +19,7 @@ def require_admin(*, workspace, actor) -> WorkspaceMembership:
         user=actor,
         status=WorkspaceMembership.STATUS_ACTIVE,
     ).first()
-    if not membership or membership.role != WorkspaceMembership.ROLE_ADMIN:
+    if not membership or not membership.is_admin:
         raise PermissionDenied("Workspace admin access is required.")
     return membership
 

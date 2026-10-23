@@ -203,7 +203,7 @@ def test_direct_https_keeps_rag_streaming_unbuffered():
     ).read_text(encoding="utf-8")
 
     stream_location = template.split(
-        "location /api/document-ai/v1/rag/stream/ {", 1
+        "location /api/v1/rag/stream/ {", 1
     )[1].split("}", 1)[0]
     assert "proxy_http_version 1.1;" in stream_location
     assert "proxy_buffering off;" in stream_location

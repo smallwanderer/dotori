@@ -3,7 +3,7 @@ from math import ceil
 
 import pytest
 
-from document_ai.services.rag_runtime_config import (
+from llm_installation.rag_runtime_config import (
     LLMRuntimeNotConfigured,
     get_configured_server_rag_target,
     target_from_persisted_config,
@@ -142,7 +142,6 @@ def test_gpu_host_does_not_fallback_from_gguf_to_cpu_profile():
     plan = build_serving_plan(
         get_catalog_entry(GGUF_MODEL_ID),
         _profile(ram_mb=65536, gpu_vram_mb=256),
-        "quality",
     )
 
     assert plan.fit_status == "NOFIT"
@@ -153,7 +152,7 @@ def test_gpu_host_does_not_fallback_from_gguf_to_cpu_profile():
 def test_llamacpp_concurrency_is_capped_by_sanity_ceiling_when_memory_is_abundant():
     entry = get_catalog_entry(GGUF_MODEL_ID)
 
-    plan = build_serving_plan(entry, _profile(ram_mb=32768), "speed")
+    plan = build_serving_plan(entry, _profile(ram_mb=32768))
 
     assert plan.parallel == 32
     assert plan.concurrency == 32
@@ -163,27 +162,24 @@ def test_llamacpp_concurrency_is_capped_by_sanity_ceiling_when_memory_is_abundan
     assert plan.cache_type_k == "q8_0"
 
 
-def test_llamacpp_batch_and_ubatch_size_are_fixed_regardless_of_preset():
+def test_llamacpp_batch_and_ubatch_size_are_fixed():
     entry = get_catalog_entry(GGUF_MODEL_ID)
 
-    speed = build_serving_plan(entry, _profile(ram_mb=32768), "speed")
-    quality = build_serving_plan(entry, _profile(ram_mb=32768), "quality")
+    plan = build_serving_plan(entry, _profile(ram_mb=32768))
 
-    assert speed.batch_size == quality.batch_size == 1024
-    assert speed.ubatch_size == quality.ubatch_size == 256
+    assert plan.batch_size == 1024
+    assert plan.ubatch_size == 256
 
 
-def test_llamacpp_threads_leave_headroom_regardless_of_preset():
+def test_llamacpp_threads_leave_headroom():
     profile = _profile(ram_mb=32768)
     profile = ServerRuntimeProfile(
         **{**profile.__dict__, "physical_cpu_cores": 4, "cpu_count": 16}
     )
 
-    speed = build_serving_plan(get_catalog_entry(GGUF_MODEL_ID), profile, "speed")
-    balanced = build_serving_plan(get_catalog_entry(GGUF_MODEL_ID), profile, "balanced")
+    plan = build_serving_plan(get_catalog_entry(GGUF_MODEL_ID), profile)
 
-    assert speed.threads == 2
-    assert balanced.threads == 2
+    assert plan.threads == 2
 
 
 def test_llamacpp_context_candidates_respect_server_context_cap():
@@ -192,7 +188,7 @@ def test_llamacpp_context_candidates_respect_server_context_cap():
         **{**profile.__dict__, "configured_context_cap": 4096}
     )
 
-    plan = build_serving_plan(get_catalog_entry(GGUF_MODEL_ID), profile, "quality")
+    plan = build_serving_plan(get_catalog_entry(GGUF_MODEL_ID), profile)
 
     assert plan.ctx_size_per_slot == 4096
     assert plan.configured_context_cap == 4096
@@ -204,7 +200,7 @@ def test_llamacpp_places_kv_in_ram_when_kv_offload_is_unsupported():
         **{**profile.__dict__, "llamacpp_kv_offload_supported": False}
     )
 
-    plan = build_serving_plan(get_catalog_entry(GGUF_MODEL_ID), profile, "balanced")
+    plan = build_serving_plan(get_catalog_entry(GGUF_MODEL_ID), profile)
 
     assert plan.kv_cache_placement == "ram"
     assert plan.memory_placement["ram_components_mb"]["kv_cache"] > 0
@@ -244,8 +240,8 @@ def test_unknown_quant_uses_conservative_f32_fallback():
 def test_quality_context_is_fixed_and_concurrency_absorbs_memory_pressure():
     entry = get_catalog_entry(GGUF_MODEL_ID)
 
-    constrained = build_serving_plan(entry, _profile(ram_mb=6200), "quality")
-    roomy = build_serving_plan(entry, _profile(ram_mb=32768), "quality")
+    constrained = build_serving_plan(entry, _profile(ram_mb=6200))
+    roomy = build_serving_plan(entry, _profile(ram_mb=32768))
 
     assert constrained.context_length == 8192
     assert constrained.fit_status == "FIT"
@@ -261,7 +257,7 @@ def test_quality_uses_installation_capacity_not_transient_free_ram():
         **{**profile.__dict__, "ram_available_mb": 1024}
     )
 
-    plan = build_serving_plan(get_catalog_entry(GGUF_MODEL_ID), profile, "quality")
+    plan = build_serving_plan(get_catalog_entry(GGUF_MODEL_ID), profile)
 
     assert plan.ctx_size_per_slot == 8192
     assert plan.fit_status == "FIT"
@@ -277,7 +273,6 @@ def test_vllm_fit_is_checked_per_gpu_not_by_aggregate_vram():
             gpu_vram_free_list=[12000, 2000],
             cluster_mode=True,
         ),
-        "balanced",
     )
 
     assert plan.runtime == "vllm"
@@ -323,7 +318,6 @@ def test_router_allows_operator_selected_risky_llamacpp_plan():
         catalog=[entry],
         check_endpoint=False,
         risky_confirmed=True,
-        priority_preset="balanced",
     )
 
     assert target.fallback_used is False
@@ -342,7 +336,7 @@ def test_runtime_policy_preserves_risky_catalog_status():
     profile = _profile(ram_mb=estimate.logical_total_memory_mb)
 
     assessment = assess_catalog_entry(entry, profile)
-    plan = build_serving_plan(entry, profile, "balanced")
+    plan = build_serving_plan(entry, profile)
 
     assert assessment.fit_status == "RISKY"
     assert plan.fit_status == "RISKY"
@@ -354,7 +348,6 @@ def test_disk_shortage_is_a_hard_blocker_independent_of_memory_fit():
     plan = build_serving_plan(
         entry,
         _profile(ram_mb=32768, disk_free_mb=entry.artifact.disk_required_mb - 1),
-        "balanced",
     )
 
     assert plan.fit_status == "NOFIT"
@@ -367,7 +360,6 @@ def test_disk_headroom_produces_risky_status():
     plan = build_serving_plan(
         entry,
         _profile(ram_mb=32768, disk_free_mb=entry.artifact.disk_required_mb),
-        "balanced",
     )
 
     assert plan.fit_status == "RISKY"
@@ -386,24 +378,21 @@ def test_router_uses_llamacpp_on_cpu_only_host():
     target = resolve_server_rag_target(
         profile=_profile(ram_mb=16384),
         check_endpoint=False,
-        priority_preset="balanced",
     )
 
     assert target.model == "gemma-3-4b-it-qat-q4_0-gguf"
     assert target.runtime == "llama.cpp"
-    assert target.priority_preset == "balanced"
     assert target.serving_profile["safe_concurrency_ceiling"] == 24
     assert target.serving_profile["serving_concurrency"] == 1
     assert target.serving_profile["concurrency"] == 1
     assert target.serving_profile["calibration_status"] == "pending"
 
 
-def test_speed_priority_selects_awq_vllm_candidate():
+def test_router_selects_awq_vllm_candidate_on_gpu_host():
     target = resolve_server_rag_target(
         profile=_profile(ram_mb=32768, gpu_vram_mb=24000),
         catalog=[get_catalog_entry(GGUF_MODEL_ID), get_catalog_entry(AWQ_MODEL_ID)],
         check_endpoint=False,
-        priority_preset="speed",
     )
 
     assert target.model == AWQ_MODEL_ID
@@ -430,7 +419,6 @@ def test_router_does_not_reselect_after_endpoint_failure(monkeypatch):
             profile=_profile(ram_mb=32768, gpu_vram_mb=24000),
             catalog=[get_catalog_entry(GGUF_MODEL_ID), get_catalog_entry(AWQ_MODEL_ID)],
             check_endpoint=True,
-            priority_preset="speed",
         )
 
 
@@ -451,7 +439,6 @@ def test_router_does_not_reselect_after_smoke_failure(monkeypatch):
             catalog=[get_catalog_entry(GGUF_MODEL_ID), get_catalog_entry(AWQ_MODEL_ID)],
             check_endpoint=False,
             smoke_test=True,
-            priority_preset="speed",
         )
 
 
@@ -486,7 +473,6 @@ def test_router_loads_persisted_config_without_live_probe(monkeypatch, tmp_path)
                     "runtime": "llama.cpp",
                     "reason": "test config",
                     "fallback_used": False,
-                    "priority_preset": "quality",
                     "serving_profile": {"context_length": 8192, "concurrency": 1},
                 }
             }
@@ -503,7 +489,6 @@ def test_router_loads_persisted_config_without_live_probe(monkeypatch, tmp_path)
 
     assert target.model == "configured-model"
     assert target.base_url == "http://configured-rag:8080"
-    assert target.priority_preset == "quality"
     assert target.serving_profile["context_length"] == 8192
     assert target.serving_profile["safe_concurrency_ceiling"] == 1
     assert target.serving_profile["serving_concurrency"] == 1
@@ -527,7 +512,6 @@ def test_write_runtime_config_persists_plan_and_llama_args(tmp_path):
         profile=profile,
         catalog=catalog,
         check_endpoint=False,
-        priority_preset="balanced",
     )
 
     config_path = write_llm_runtime_config(
@@ -539,7 +523,6 @@ def test_write_runtime_config_persists_plan_and_llama_args(tmp_path):
 
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     args = (tmp_path / "llama_rag.args").read_text(encoding="utf-8").splitlines()
-    assert payload["target"]["priority_preset"] == "balanced"
     serving_profile = payload["target"]["serving_profile"]
     assert serving_profile["safe_concurrency_ceiling"] == 24
     assert serving_profile["serving_concurrency"] == 1
@@ -561,7 +544,6 @@ def test_llamacpp_spills_to_ram_when_vram_is_insufficient():
     plan = build_serving_plan(
         get_catalog_entry(GGUF_MODEL_ID),
         _profile(ram_mb=32768, gpu_vram_mb=4096),
-        "balanced",
     )
 
     assert plan.runtime == "llama.cpp"
@@ -578,7 +560,6 @@ def test_llamacpp_full_offload_does_not_require_weight_copy_in_ram():
     plan = build_serving_plan(
         get_catalog_entry(GGUF_MODEL_ID),
         _profile(ram_mb=1024, gpu_vram_mb=16000),
-        "balanced",
     )
 
     assert plan.candidate_type == "GPU full-offload"
@@ -596,7 +577,6 @@ def test_awq_does_not_fall_back_to_ram_when_vram_is_insufficient():
     plan = build_serving_plan(
         get_catalog_entry(AWQ_MODEL_ID),
         _profile(ram_mb=65536, gpu_vram_mb=4096),
-        "balanced",
     )
 
     assert plan.runtime == "vllm"
@@ -611,7 +591,6 @@ def test_write_runtime_config_generates_vllm_args_for_awq(tmp_path):
         profile=profile,
         catalog=catalog,
         check_endpoint=False,
-        priority_preset="speed",
     )
 
     config_path = write_llm_runtime_config(

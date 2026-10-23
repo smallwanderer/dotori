@@ -1,6 +1,6 @@
 from django.urls import path
 
-from document_ai.cli_views import (
+from documents.cli_views import (
     CLIRAGStreamView,
     CLIVectorSearchView,
     cli_capabilities,

@@ -197,6 +197,11 @@ class RuntimeLifecycleManager:
             ["docker", "compose", "-f", compose_file, *args], cwd=str(self.repo_root)
         )
 
+    def observe_backend(self, spec: RuntimeSpec) -> dict:
+        """Observe this managed runtime without waking it or changing deployment."""
+        from llm_installation.backend_observation import observe_llm_backend
+        return observe_llm_backend(self, spec)
+
     # -- inspection -----------------------------------------------------
 
     def ensure_network(self, scope: str) -> bool:

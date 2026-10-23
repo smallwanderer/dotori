@@ -1,15 +1,32 @@
 import os
 import sys
 
-# app/ 디렉토리를 sys.path에 추가 (tests/ 하위에서 실행해도 config나 document_ai를 찾을 수 있도록)
+# app/ 디렉토리를 sys.path에 추가 (tests/ 하위에서 실행해도 config나 documents를 찾을 수 있도록)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 from pathlib import Path
 
-from document_ai.parsers.docling_parser import parse_document_entry, ParseResult
+from documents.parsers.docling_parser import parse_document_entry, ParseResult
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def isolated_deployment(tmp_path, monkeypatch):
+    """Do not inherit the operator's enabled capabilities or cached plan."""
+    from capabilities.deployment import clear_deployment_snapshot_cache, load_deployment_snapshot
+    from installation.deployment import build_module_deployment_plan, write_deployment_plan
+
+    plan = build_module_deployment_plan(["documents"], disabled_provider_roles=("embedding", "llm"))
+    path = write_deployment_plan(plan, repo_root=tmp_path)
+    monkeypatch.setenv("DOTORI_DEPLOYMENT_PLAN_PATH", str(path))
+    clear_deployment_snapshot_cache()
+    snapshot = load_deployment_snapshot()
+    assert snapshot.is_enabled("documents.extract")
+    assert not snapshot.is_enabled("documents.semantic_search")
+    yield
+    clear_deployment_snapshot_cache()
 
 
 def test_parse_document_entry_with_real_markdown_file(tmp_path: Path):
@@ -46,8 +63,8 @@ def test_parse_document_entry_with_real_markdown_file(tmp_path: Path):
     assert first_chunk.chunk_index >= 0
     assert isinstance(first_chunk.serialized_text, str)
     assert first_chunk.serialized_text.strip() != ""
-    assert isinstance(first_chunk.tokens, int)
-    assert first_chunk.tokens > 0
+    # Extract-only parsing must not require an embedding model/tokenizer.
+    assert first_chunk.tokens is None
 
     # ConversionResult 기반 추가 정보
     # 값이 항상 채워진다고 단정하지 말고, 타입 위주로 확인
@@ -121,8 +138,8 @@ def test_parse_document_entry_with_file(tmp_path: Path):
     assert first_chunk.chunk_index >= 0
     assert isinstance(first_chunk.serialized_text, str)
     assert first_chunk.serialized_text.strip() != ""
-    assert isinstance(first_chunk.tokens, int)
-    assert first_chunk.tokens > 0
+    # Extract-only parsing must not require an embedding model/tokenizer.
+    assert first_chunk.tokens is None
 
     # print("\n\n======== [ 파싱 결과 예시 (.hwpx) ] ========")
     # print(result.model_dump_json(indent=2))

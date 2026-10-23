@@ -99,7 +99,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     command: >
-      bash -lc "python manage.py collectstatic --noinput && python manage.py migrate && gunicorn config.asgi:application --worker-class uvicorn_worker.UvicornWorker --bind 0.0.0.0:8000 --workers $${WEB_CONCURRENCY:-2} --timeout $${GUNICORN_TIMEOUT:-360}"
+      bash -lc "python manage.py collectstatic --noinput && python manage.py collapse_migration_history && python manage.py migrate && gunicorn config.asgi:application --worker-class uvicorn_worker.UvicornWorker --bind 0.0.0.0:8000 --workers $${WEB_CONCURRENCY:-2} --timeout $${GUNICORN_TIMEOUT:-360}"
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/files/healthcheck/')" ]
       interval: 3s
@@ -124,6 +124,8 @@ services:
       - ./installation:/app/installation:ro
       - ./install.py:/workspace/install.py:ro
       - ./docker-compose.yml:/workspace/docker-compose.yml:ro
+      - ./dotori-docs:/workspace/dotori-docs:ro
+      - ./clients:/workspace/clients:ro
     # Resource-snapshot tests need the production config mount point to exist,
     # but must never inspect or mutate the host's real runtime configuration.
     tmpfs:

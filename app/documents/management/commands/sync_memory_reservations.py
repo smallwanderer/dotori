@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 
-from document_ai.services.embedding_runtime_config import load_embedding_runtime
-from document_ai.services.rag_runtime_config import load_llm_runtime_config
+from documents.services.embedding_runtime_config import load_embedding_runtime
+from llm_installation.rag_runtime_config import load_llm_runtime_config
 
 from llm_installation.embedding_footprint import claim_embedding_from_generation
 from llm_installation.memory_reservations import (

@@ -1,80 +1,91 @@
 import json
+
 import pytest
 
-from capabilities.config import CapabilityConfigError, LEGACY_DOCUMENT_CAPABILITIES, load_capability_config, write_capability_config
+from capabilities.deployment import (
+    DeploymentSnapshotError,
+    clear_deployment_snapshot_cache,
+    load_deployment_snapshot,
+)
+from capabilities.modules import DOCUMENTS_MODULE
 from capabilities.registry import DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH
-from document_ai.services.capability_admission import CapabilityAdmissionError, require_capability
+from documents.services.capability_admission import CapabilityAdmissionError, require_capability
+from installation.deployment import build_module_deployment_plan, write_deployment_plan
 
 pytestmark = pytest.mark.unit
 
 
-def test_missing_config_preserves_legacy_documents_selection(tmp_path):
-    config = load_capability_config(path=tmp_path / "missing.json")
-    assert config.enabled_capabilities == LEGACY_DOCUMENT_CAPABILITIES
-    assert config.source == "legacy_missing_config"
+@pytest.fixture(autouse=True)
+def clear_snapshot_cache():
+    clear_deployment_snapshot_cache()
+    yield
+    clear_deployment_snapshot_cache()
 
 
-def test_explicit_empty_selection_is_core_only(tmp_path):
-    path = tmp_path / "capabilities.json"
-    written = write_capability_config([], path=path)
-    assert load_capability_config(path=path) == written
-    assert written.enabled_capabilities == ()
+def _write_plan(tmp_path, monkeypatch, *, disabled_roles=()):
+    plan = build_module_deployment_plan(
+        [DOCUMENTS_MODULE], disabled_provider_roles=disabled_roles
+    )
+    path = write_deployment_plan(plan, repo_root=tmp_path)
+    monkeypatch.setenv("DOTORI_DEPLOYMENT_PLAN_PATH", str(path))
+    clear_deployment_snapshot_cache()
+    return plan, path
 
 
-def test_semantic_search_requires_document_extract(tmp_path):
-    with pytest.raises(CapabilityConfigError, match="requires documents.extract"):
-        write_capability_config([DOCUMENT_SEMANTIC_SEARCH], path=tmp_path / "config.json")
+def test_missing_deployment_plan_fails_closed(tmp_path):
+    with pytest.raises(DeploymentSnapshotError, match="does not exist"):
+        load_deployment_snapshot(path=tmp_path / "missing.json")
 
 
-def test_unknown_capability_is_rejected(tmp_path):
-    with pytest.raises(CapabilityConfigError, match="Unknown capabilities"):
-        write_capability_config(["audio.unknown"], path=tmp_path / "config.json")
+def test_single_snapshot_exposes_installed_and_enabled_state(tmp_path, monkeypatch):
+    _plan, path = _write_plan(
+        tmp_path, monkeypatch, disabled_roles=("embedding", "llm")
+    )
+
+    snapshot = load_deployment_snapshot(path=path)
+
+    assert snapshot.is_installed(DOCUMENT_SEMANTIC_SEARCH) is True
+    assert snapshot.is_enabled(DOCUMENT_SEMANTIC_SEARCH) is False
+    assert snapshot.is_enabled(DOCUMENT_EXTRACT) is True
 
 
-@pytest.mark.parametrize("payload,message", [
-    ({"schema_version": 2, "enabled_capabilities": []}, "schema_version"),
-    ({"schema_version": 1, "enabled_capabilities": "documents.extract"}, "list of strings"),
-    ({"schema_version": 1, "enabled_capabilities": [DOCUMENT_EXTRACT], "revision": "cap-wrong"}, "revision"),
-])
-def test_invalid_config_is_rejected(tmp_path, payload, message):
-    path = tmp_path / "capabilities.json"
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    with pytest.raises(CapabilityConfigError, match=message):
-        load_capability_config(path=path)
+@pytest.mark.parametrize(
+    "mutate,message",
+    [
+        (lambda plan: plan.update(schema_version=1), "schema_version"),
+        (lambda plan: plan.update(enabled_capabilities="documents.extract"), "list of strings"),
+        (lambda plan: plan.update(capability_revision="cap-wrong"), "revision"),
+        (lambda plan: plan.update(installed_capabilities=[]), "subset"),
+    ],
+)
+def test_invalid_deployment_snapshot_is_rejected(
+    tmp_path, monkeypatch, mutate, message
+):
+    plan, path = _write_plan(tmp_path, monkeypatch)
+    mutate(plan)
+    path.write_text(json.dumps(plan), encoding="utf-8")
+    clear_deployment_snapshot_cache()
+
+    with pytest.raises(DeploymentSnapshotError, match=message):
+        load_deployment_snapshot()
 
 
-def test_enabled_capability_requires_matching_deployment_revision(tmp_path, monkeypatch):
-    config_path = tmp_path / "capabilities.json"
-    config = write_capability_config(LEGACY_DOCUMENT_CAPABILITIES, path=config_path)
-    monkeypatch.setenv("DOTORI_CAPABILITIES_CONFIG_PATH", str(config_path))
+def test_admission_uses_only_the_active_deployment_snapshot(tmp_path, monkeypatch):
+    _plan, _path = _write_plan(
+        tmp_path, monkeypatch, disabled_roles=("embedding", "llm")
+    )
+
+    snapshot = require_capability(DOCUMENT_EXTRACT)
+    assert snapshot.is_enabled(DOCUMENT_EXTRACT)
+
+    with pytest.raises(CapabilityAdmissionError) as disabled:
+        require_capability(DOCUMENT_SEMANTIC_SEARCH)
+    assert disabled.value.code == "CAPABILITY_DISABLED"
+
+
+def test_unknown_capability_is_not_installed(tmp_path, monkeypatch):
+    _write_plan(tmp_path, monkeypatch)
 
     with pytest.raises(CapabilityAdmissionError) as missing:
-        require_capability(DOCUMENT_EXTRACT)
+        require_capability("audio.unknown")
     assert missing.value.code == "CAPABILITY_NOT_INSTALLED"
-
-    deployment_path = tmp_path / "deployment_scopes" / "production" / "deployment_plan.json"
-    deployment_path.parent.mkdir(parents=True)
-    deployment_path.write_text(
-        json.dumps(
-            {
-                "enabled_capabilities": list(config.enabled_capabilities),
-                "capability_revision": "cap-stale",
-            }
-        ),
-        encoding="utf-8",
-    )
-    with pytest.raises(CapabilityAdmissionError) as stale:
-        require_capability(DOCUMENT_EXTRACT)
-    assert stale.value.code == "CAPABILITY_UNAVAILABLE"
-    assert stale.value.retryable is True
-
-    deployment_path.write_text(
-        json.dumps(
-            {
-                "enabled_capabilities": list(config.enabled_capabilities),
-                "capability_revision": config.revision,
-            }
-        ),
-        encoding="utf-8",
-    )
-    assert require_capability(DOCUMENT_EXTRACT) == config

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from document_ai.services.rag_runtime_config import (
+from llm_installation.rag_runtime_config import (
     LLMRuntimeNotConfigured,
     ServerRAGTarget,
 )
@@ -64,7 +64,6 @@ def _candidate_diagnostic(
     health_status: EndpointStatus | None = None,
     endpoint_status: EndpointStatus | None = None,
     smoke_status: SmokeTestStatus | None = None,
-    priority_preset: str = "balanced",
     serving_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     runtime = serving_profile.get("runtime") if serving_profile else "unknown"
@@ -79,7 +78,6 @@ def _candidate_diagnostic(
         "health_status": _status_to_dict(health_status),
         "endpoint_status": _status_to_dict(endpoint_status),
         "smoke_status": _status_to_dict(smoke_status),
-        "priority_preset": priority_preset,
         "serving_profile": serving_profile or {},
     }
 
@@ -124,7 +122,6 @@ def resolve_server_rag_target(
     selection_mode: str = "automatic",
     selected_artifact_id: str | None = None,
     risky_confirmed: bool = False,
-    priority_preset: str = "balanced",
 ) -> ServerRAGTarget:
     profile = profile or probe_server_runtime()
     catalog = catalog if catalog is not None else get_rag_model_catalog()
@@ -145,7 +142,6 @@ def resolve_server_rag_target(
                 _candidate_diagnostic(
                     entry,
                     rejected_reason=rejection_reason,
-                    priority_preset=priority_preset,
                     serving_profile=assessment.as_dict(),
                 )
             )
@@ -155,7 +151,6 @@ def resolve_server_rag_target(
 
     selection_result = select_catalog_model(
         selection_candidates,
-        priority_preset,
         selection_mode=selection_mode,
         selected_artifact_id=selected_artifact_id,
         risky_confirmed=risky_confirmed,
@@ -202,7 +197,6 @@ def resolve_server_rag_target(
                         rejected_reason=endpoint_status.message,
                         health_status=health_status,
                         endpoint_status=endpoint_status,
-                        priority_preset=priority_preset,
                         serving_profile=serving_profile,
                     )
                 )
@@ -218,7 +212,6 @@ def resolve_server_rag_target(
                         health_status=health_status,
                         endpoint_status=endpoint_status,
                         smoke_status=smoke_status,
-                        priority_preset=priority_preset,
                         serving_profile=serving_profile,
                     )
                 )
@@ -230,7 +223,6 @@ def resolve_server_rag_target(
                 health_status=health_status,
                 endpoint_status=endpoint_status,
                 smoke_status=smoke_status,
-                priority_preset=priority_preset,
                 serving_profile=serving_profile,
             )
         )
@@ -249,7 +241,6 @@ def resolve_server_rag_target(
             health_status=health_status,
             smoke_status=smoke_status,
             diagnostics=_diagnostics(profile, candidate_diagnostics),
-            priority_preset=priority_preset,
             selection_mode=selection_mode,
             selection_reason_code=selection_result.reason_code,
             runtime_policy_input=runtime_policy_input.as_dict(),

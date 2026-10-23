@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from document_ai.parsers.docling_parser import _parse_docling_document, ParseResult
+from documents.parsers.docling_parser import _parse_docling_document, ParseResult
 
 pytestmark = pytest.mark.unit
 
@@ -76,7 +76,8 @@ class FakeResult:
 
 @pytest.fixture
 def mock_dependencies(monkeypatch):
-    from document_ai.parsers import docling_parser
+    from documents.parsers import docling_parser
+    monkeypatch.setattr("documents.services.capability_admission.capability_enabled", lambda capability: True)
 
     monkeypatch.setattr(docling_parser, "get_hf_tokenizer", lambda: FakeTokenizer())
     monkeypatch.setattr(
@@ -147,10 +148,10 @@ def test_parse_docling_document_returns_parse_result(mock_dependencies):
 
 
 def test_extract_only_uses_hierarchical_chunking_without_tokenizer(monkeypatch):
-    from document_ai.parsers import docling_parser
+    from documents.parsers import docling_parser
 
     monkeypatch.setattr(
-        "document_ai.services.capability_admission.capability_enabled",
+        "documents.services.capability_admission.capability_enabled",
         lambda _capability_id: False,
     )
     monkeypatch.setattr(docling_parser, "HierarchicalChunker", lambda serializer_provider=None: FakeChunker())
@@ -230,7 +231,7 @@ def test_parse_docling_document_missing_fields(mock_dependencies):
 
 
 def test_parse_document_string(mock_dependencies, monkeypatch):
-    from document_ai.parsers import docling_parser
+    from documents.parsers import docling_parser
 
     # Mock convert_to_markdown to return a simple string
     monkeypatch.setattr(docling_parser, "convert_to_markdown", lambda f: "Markdown Content")
@@ -252,7 +253,7 @@ def test_parse_document_string(mock_dependencies, monkeypatch):
 
 
 def test_parse_document_hwp_wraps_extracted_text_as_markdown(mock_dependencies, monkeypatch):
-    from document_ai.parsers import docling_parser
+    from documents.parsers import docling_parser
 
     monkeypatch.setattr(
         docling_parser,
@@ -287,8 +288,8 @@ def test_parse_document_hwp_wraps_extracted_text_as_markdown(mock_dependencies, 
     assert captured["content"] == "# Document: sample.hwp\n\nConverted HWP body"
 
 
-def test_parse_docling_document_normalizes_chunk_whitespace(monkeypatch):
-    from document_ai.parsers import docling_parser
+def test_parse_docling_document_normalizes_chunk_whitespace(monkeypatch, mock_dependencies):
+    from documents.parsers import docling_parser
 
     monkeypatch.setattr(docling_parser, "get_hf_tokenizer", lambda: FakeTokenizer())
 

@@ -10,14 +10,14 @@ from django.utils import timezone
 from asgiref.sync import async_to_sync
 
 from config.enums import AIStatus, NodeType
-from document_ai.models import RAGConversation, RAGJob, RAGMessage
-from document_ai.rag.async_generation import (
+from documents.models import RAGConversation, RAGJob, RAGMessage
+from documents.rag.async_generation import (
     AsyncGenerationContext,
     _complete_generation_sync,
     _mark_generation_canceled_sync,
 )
-from document_ai.rag.streaming import _create_rag_jobs_sync
-from document_ai.services.rag_conversation_service import (
+from documents.rag.streaming import _create_rag_jobs_sync
+from documents.services.rag_conversation_service import (
     ConversationIdempotencyConflict,
     append_user_message,
     fail_reserved_rag_job,
@@ -61,7 +61,7 @@ class RAGConversationApiTests(TestCase):
     def test_workspace_members_can_read_but_only_owner_or_admin_can_edit(self):
         self._login(self.owner)
         created = self.client.post(
-            "/api/document-ai/v1/rag/conversations/",
+            "/api/v1/rag/conversations/",
             data=json.dumps({"title": "계약 검토", "default_node_ids": []}),
             content_type="application/json",
         )
@@ -72,12 +72,12 @@ class RAGConversationApiTests(TestCase):
 
         self.client.logout()
         self._login(self.member)
-        listed = self.client.get("/api/document-ai/v1/rag/conversations/")
+        listed = self.client.get("/api/v1/rag/conversations/")
         self.assertEqual(listed.status_code, 200)
         self.assertEqual([item["uid"] for item in listed.json()["conversations"]], [conversation["uid"]])
         self.assertFalse(listed.json()["conversations"][0]["can_manage"])
         forbidden = self.client.patch(
-            f"/api/document-ai/v1/rag/conversations/{conversation['uid']}/",
+            f"/api/v1/rag/conversations/{conversation['uid']}/",
             data=json.dumps({"title": "수정", "expected_revision": 1}),
             content_type="application/json",
         )
@@ -115,13 +115,13 @@ class RAGConversationApiTests(TestCase):
             node_type=NodeType.FOLDER, path="/scope",
         )
         valid = self.client.post(
-            "/api/document-ai/v1/rag/conversations/",
+            "/api/v1/rag/conversations/",
             data=json.dumps({"default_node_ids": [str(node.uid)]}),
             content_type="application/json",
         )
         self.assertEqual(valid.status_code, 201)
         invalid = self.client.post(
-            "/api/document-ai/v1/rag/conversations/",
+            "/api/v1/rag/conversations/",
             data=json.dumps({"default_node_ids": ["not-a-uuid", str(uuid.uuid4())]}),
             content_type="application/json",
         )
@@ -133,7 +133,7 @@ class RAGConversationApiTests(TestCase):
         conversation = RAGConversation.objects.create(
             workspace=self.workspace, created_by=self.owner, title="v1"
         )
-        path = f"/api/document-ai/v1/rag/conversations/{conversation.uid}/"
+        path = f"/api/v1/rag/conversations/{conversation.uid}/"
         first = self.client.patch(
             path, data=json.dumps({"title": "v2", "expected_revision": 1}),
             content_type="application/json",
@@ -153,7 +153,7 @@ class RAGConversationApiTests(TestCase):
         conversation = RAGConversation.objects.create(
             workspace=self.workspace, created_by=self.owner, title="삭제 대상"
         )
-        path = f"/api/document-ai/v1/rag/conversations/{conversation.uid}/"
+        path = f"/api/v1/rag/conversations/{conversation.uid}/"
 
         RAGJob.objects.create(
             workspace=self.workspace, owner=self.owner, conversation=conversation,
@@ -168,7 +168,7 @@ class RAGConversationApiTests(TestCase):
         self.assertEqual(deleted.status_code, 204)
         self.assertEqual(self.client.get(path).status_code, 404)
         self.assertEqual(
-            self.client.get("/api/document-ai/v1/rag/conversations/").json()["conversations"],
+            self.client.get("/api/v1/rag/conversations/").json()["conversations"],
             [],
         )
 
@@ -181,10 +181,10 @@ class RAGConversationApiTests(TestCase):
             question="진행 중 질문", status=AIStatus.PROCESSING,
         )
         self._login(self.owner)
-        path = f"/api/document-ai/v1/rag/conversations/{conversation.uid}/cancel/"
+        path = f"/api/v1/rag/conversations/{conversation.uid}/cancel/"
 
         with patch(
-            "document_ai.services.rag_conversation_service.set_rag_cancel_signal",
+            "documents.services.rag_conversation_service.set_rag_cancel_signal",
             return_value=True,
         ) as cancel_signal:
             requested = self.client.post(path)
@@ -211,10 +211,10 @@ class RAGConversationApiTests(TestCase):
             question="취소 대기 질문", status=AIStatus.PROCESSING,
         )
         self._login(self.owner)
-        cancel_path = f"/api/document-ai/v1/rag/conversations/{conversation.uid}/cancel/"
-        delete_path = f"/api/document-ai/v1/rag/conversations/{conversation.uid}/"
+        cancel_path = f"/api/v1/rag/conversations/{conversation.uid}/cancel/"
+        delete_path = f"/api/v1/rag/conversations/{conversation.uid}/"
 
-        with patch("document_ai.services.rag_conversation_service.set_rag_cancel_signal"):
+        with patch("documents.services.rag_conversation_service.set_rag_cancel_signal"):
             requested = self.client.post(cancel_path)
         self.assertEqual(requested.status_code, 200)
         still_busy = self.client.delete(delete_path)
@@ -237,15 +237,15 @@ class RAGConversationApiTests(TestCase):
         )
         self._login(self.owner)
         with patch(
-            "document_ai.search.views.build_rag_llm_snapshot", return_value={"llm_model": "test"}
+            "documents.search.views.build_rag_llm_snapshot", return_value={"llm_model": "test"}
         ), patch(
-            "document_ai.search.views.server_rag_runtime_availability", return_value=(True, {})
+            "documents.search.views.server_rag_runtime_availability", return_value=(True, {})
         ), patch(
-            "document_ai.search.views.acquire_rag_admission_token_async",
+            "documents.search.views.acquire_rag_admission_token_async",
             new=AsyncMock(),
         ) as acquire_rag_admission_token_async:
             response = self.client.post(
-                f"/api/document-ai/v1/rag/conversations/{conversation.uid}/messages/stream/",
+                f"/api/v1/rag/conversations/{conversation.uid}/messages/stream/",
                 data=json.dumps({
                     "question": "다른 질문", "language": "ko",
                     "client_request_id": str(request_id),
@@ -277,17 +277,17 @@ class RAGConversationApiTests(TestCase):
         )
         self._login(self.owner)
         with patch(
-            "document_ai.search.views.build_rag_llm_snapshot", return_value={"llm_model": "test"}
+            "documents.search.views.build_rag_llm_snapshot", return_value={"llm_model": "test"}
         ), patch(
-            "document_ai.search.views.server_rag_runtime_availability", return_value=(True, {})
+            "documents.search.views.server_rag_runtime_availability", return_value=(True, {})
         ), patch(
-            "document_ai.search.views.acquire_rag_admission_token_async",
+            "documents.search.views.acquire_rag_admission_token_async",
             new=AsyncMock(),
         ) as acquire_rag_admission_token_async, patch(
-            "document_ai.search.execution.perform_vector_search_sync"
+            "documents.search.execution.perform_vector_search_sync"
         ) as vector_search:
             response = self.client.post(
-                f"/api/document-ai/v1/rag/conversations/{conversation.uid}/messages/stream/",
+                f"/api/v1/rag/conversations/{conversation.uid}/messages/stream/",
                 data=json.dumps({
                     "question": "기존 질문", "language": "ko",
                     "client_request_id": str(request_id),
@@ -314,17 +314,17 @@ class RAGConversationApiTests(TestCase):
         self._login(self.owner)
         admission_token = SimpleNamespace(release=Mock(), release_async=AsyncMock())
         with patch(
-            "document_ai.search.views.build_rag_llm_snapshot", return_value={"llm_model": "test"}
+            "documents.search.views.build_rag_llm_snapshot", return_value={"llm_model": "test"}
         ), patch(
-            "document_ai.search.views.server_rag_runtime_availability", return_value=(True, {})
+            "documents.search.views.server_rag_runtime_availability", return_value=(True, {})
         ), patch(
-            "document_ai.search.views.acquire_rag_admission_token_async",
+            "documents.search.views.acquire_rag_admission_token_async",
             new=AsyncMock(return_value=admission_token),
         ), patch(
-            "document_ai.search.execution.perform_vector_search_sync"
+            "documents.search.execution.perform_vector_search_sync"
         ) as vector_search:
             response = self.client.post(
-                f"/api/document-ai/v1/rag/conversations/{conversation.uid}/messages/stream/",
+                f"/api/v1/rag/conversations/{conversation.uid}/messages/stream/",
                 data=json.dumps({
                     "question": "동시에 보낸 질문", "language": "ko",
                     "client_request_id": str(uuid.uuid4()),
@@ -359,16 +359,34 @@ class RAGConversationApiTests(TestCase):
             client_request_id=uuid.uuid4(), node_ids=[],
         )
         with patch(
-            "document_ai.search.execution.perform_vector_search_sync",
+            "documents.search.execution.perform_vector_search_sync",
             return_value={"status": "success"},
         ):
             _, rag_job = _create_rag_jobs_sync(
                 owner=self.owner, workspace=self.workspace, question="질문",
                 retrieval_query="질문", top_k=3, threshold=None, language="ko",
-                requested_node_ids=[], scoped_node_ids=[], llm_snapshot={},
+                requested_node_ids=[], scoped_node_ids=[],
+                llm_snapshot={
+                    "llm_model": "test-model",
+                    "_provider_resolution": {
+                        "function_id": "text.generate",
+                        "source": "server_runtime",
+                        "selection": "deployment_default_route",
+                        "verification": "contract_verified",
+                        "deployment_generation_id": "deployment-generation-2",
+                        "runtime_generation_id": "runtime-generation-2",
+                        "model_installation_id": "llm:runtime-generation-2",
+                    },
+                },
                 conversation=conversation, reply_to=user_message,
             )
         self.assertEqual(rag_job.conversation_id, conversation.id)
+        self.assertEqual(
+            rag_job.performance_metrics["provider_resolution"][
+                "deployment_generation_id"
+            ],
+            "deployment-generation-2",
+        )
         assistant = RAGMessage.objects.get(rag_job=rag_job)
         self.assertEqual(assistant.reply_to_id, user_message.id)
         self.assertEqual(assistant.sequence, 2)
@@ -379,7 +397,7 @@ class RAGConversationApiTests(TestCase):
         rag_job.save(update_fields=["status", "answer", "citations", "updated_at"])
         self._login(self.owner)
         restored = self.client.get(
-            f"/api/document-ai/v1/rag/conversations/{conversation.uid}/messages/"
+            f"/api/v1/rag/conversations/{conversation.uid}/messages/"
         )
         self.assertEqual(restored.status_code, 200)
         messages = restored.json()["messages"]
@@ -415,21 +433,33 @@ class RAGConversationApiTests(TestCase):
             yield {"type": "terminal", "result": {"status": "success"}}
 
         with patch(
-            "document_ai.search.views.build_rag_llm_snapshot", return_value={"llm_model": "test"}
+            "documents.search.views.build_rag_llm_snapshot",
+            return_value={
+                "llm_model": "test",
+                "_provider_resolution": {
+                    "function_id": "text.generate",
+                    "source": "server_runtime",
+                    "selection": "deployment_default_route",
+                    "verification": "contract_verified",
+                    "deployment_generation_id": "deployment-generation-1",
+                    "runtime_generation_id": "runtime-generation-1",
+                    "model_installation_id": "llm:runtime-generation-1",
+                },
+            },
         ), patch(
-            "document_ai.search.views.server_rag_runtime_availability", return_value=(True, {})
+            "documents.search.views.server_rag_runtime_availability", return_value=(True, {})
         ), patch(
-            "document_ai.search.views.acquire_rag_admission_token_async",
+            "documents.search.views.acquire_rag_admission_token_async",
             new=AsyncMock(return_value=admission_token),
         ), patch(
-            "document_ai.search.execution.perform_vector_search_sync",
+            "documents.search.execution.perform_vector_search_sync",
             return_value={"status": "success"},
         ), patch(
-            "document_ai.rag.async_generation.iter_rag_generation_events_async",
+            "documents.rag.async_generation.iter_rag_generation_events_async",
             side_effect=generation_events,
         ):
             response = self.client.post(
-                f"/api/document-ai/v1/rag/conversations/{conversation.uid}/messages/stream/",
+                f"/api/v1/rag/conversations/{conversation.uid}/messages/stream/",
                 data=json.dumps({
                     "question": "세션 질문", "language": "ko",
                     "client_request_id": str(request_id),
@@ -451,6 +481,12 @@ class RAGConversationApiTests(TestCase):
         self.assertEqual([message.role for message in messages], ["user", "assistant"])
         self.assertEqual(str(messages[1].uid), events[0]["message_uid"])
         self.assertEqual(messages[1].rag_job.conversation_id, conversation.id)
+        self.assertEqual(
+            messages[1].rag_job.performance_metrics["provider_resolution"][
+                "model_installation_id"
+            ],
+            "llm:runtime-generation-1",
+        )
         admission_token.release_async.assert_awaited_once()
 
     def test_job_and_message_link_roll_back_together(self):
@@ -462,9 +498,9 @@ class RAGConversationApiTests(TestCase):
             client_request_id=uuid.uuid4(), node_ids=[],
         )
         with patch(
-            "document_ai.search.execution.perform_vector_search_sync",
+            "documents.search.execution.perform_vector_search_sync",
             return_value={"status": "success"},
-        ), patch("document_ai.models.RAGMessage.objects.create", side_effect=RuntimeError("failed")):
+        ), patch("documents.models.RAGMessage.objects.create", side_effect=RuntimeError("failed")):
             with self.assertRaises(RuntimeError):
                 _create_rag_jobs_sync(
                     owner=self.owner, workspace=self.workspace, question="질문",
@@ -483,7 +519,7 @@ class RAGConversationApiTests(TestCase):
             client_request_id=uuid.uuid4(), node_ids=[],
         )
         with patch(
-            "document_ai.search.execution.perform_vector_search_sync",
+            "documents.search.execution.perform_vector_search_sync",
             side_effect=RuntimeError("search crashed"),
         ):
             with self.assertRaisesMessage(RuntimeError, "search crashed"):
@@ -545,7 +581,7 @@ class RAGConversationApiTests(TestCase):
         self._login(self.owner)
 
         response = self.client.get(
-            f"/api/document-ai/v1/rag/conversations/{conversation.uid}/messages/"
+            f"/api/v1/rag/conversations/{conversation.uid}/messages/"
         )
 
         self.assertEqual(response.status_code, 200)
@@ -609,7 +645,7 @@ class RAGConversationApiTests(TestCase):
             created_at=job.created_at, conversation_job=True,
         )
 
-        with patch("document_ai.services.rag_cancel_service.clear_rag_cancel_signal") as clear_signal:
+        with patch("documents.services.rag_cancel_service.clear_rag_cancel_signal") as clear_signal:
             result = _mark_generation_canceled_sync(context)
 
         self.assertEqual(result, {"status": AIStatus.COMPLETED, "job_id": job.id, "updated": False})

@@ -144,10 +144,10 @@ function query(window: OperationsWindow) {
 }
 
 export const operationsApi = {
-  getStatus: () => apiRequest<OperationsStatus>('/api/document-ai/v1/operations/status/'),
-  getMetrics: (window: OperationsWindow) => apiRequest<OperationsMetrics>(`/api/document-ai/v1/operations/metrics/?${query(window)}`),
-  getEvents: (window: OperationsWindow) => apiRequest<OperationsEvents>(`/api/document-ai/v1/operations/events/?${query(window)}`),
-  getResources: () => apiRequest<OperationsResources>('/api/document-ai/v1/operations/resources/'),
-  collectResources: () => apiRequest<OperationsResources>('/api/document-ai/v1/operations/resources/collect/', { method: 'POST' }),
-  getTrace: (traceId: string) => apiRequest<OperationTrace>(`/api/document-ai/v1/operations/traces/${encodeURIComponent(traceId)}/`),
+  getStatus: () => apiRequest<OperationsStatus>('/api/v1/operations/status/'),
+  getMetrics: (window: OperationsWindow) => apiRequest<OperationsMetrics>(`/api/v1/operations/metrics/?${query(window)}`),
+  getEvents: (window: OperationsWindow) => apiRequest<OperationsEvents>(`/api/v1/operations/events/?${query(window)}`),
+  getResources: () => apiRequest<OperationsResources>('/api/v1/operations/resources/'),
+  collectResources: () => apiRequest<OperationsResources>('/api/v1/operations/resources/collect/', { method: 'POST' }),
+  getTrace: (traceId: string) => apiRequest<OperationTrace>(`/api/v1/operations/traces/${encodeURIComponent(traceId)}/`),
 }

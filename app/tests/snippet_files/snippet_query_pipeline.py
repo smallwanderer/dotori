@@ -22,8 +22,8 @@ django.setup()
 
 from django.contrib.auth import get_user_model
 
-from document_ai.search.query_frontend import RetrievalQueryPlan, prepare_retrieval_query
-from document_ai.tasks import parse_user_query
+from documents.search.query_frontend import RetrievalQueryPlan, prepare_retrieval_query
+from documents.tasks import parse_user_query
 
 
 DEFAULT_QUERIES = [

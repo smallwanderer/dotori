@@ -1,14 +1,14 @@
 # 도토리 문서
 
-도토리는 문서 관리, 하이브리드 검색, 검색 증강 생성(RAG) 등 모든 과정을 직접 운영할 수 있는 셀프호스팅 문서 작업 공간입니다. 문서, 검색 인덱스, 로컬 AI 런타임을 운영자가 관리하는 Docker Compose 환경 안에 보관합니다.
+도토리는 운영자의 파일을 AI가 활용할 수 있는 결과로 미리 준비하는 lightweight·full-stack·self-hosted 연결 기반입니다. 문서 관리·검색·RAG와 외부 읽기 전용 MCP/API가 같은 준비 결과를 재사용합니다. 현재 Documents를 제공하며 별도 Images·Audio·Videos 모듈은 향후 목표입니다. 로컬 AI 지원과 명시적인 외부 endpoint 연결을 함께 유지합니다.
 
-개인 및 소규모 팀이 외부 클라우드 서비스를 사용하지 않고 최소한의 리소스로 쾌적하게 문서 검색 및 RAG를 경험할 수 있습니다. 웹 UI 뿐만 아닌 CLI 및 MCP 서버로 확장을 도와줍니다. 사용 중인 PC나 원격 저장소에 쉽게 설치하여 어디서든 사용할 수 있습니다.
+개인 및 소규모 팀이 관리하는 서버 한 대를 대상으로 합니다. 선택 설치에서 사용하지 않는 모델·서비스를 올리지 않으며 실제 자원·속도는 기능과 모델에 따라 달라집니다. 준비된 결과의 외부 활용에 Dotori RAG가 필수인 것은 아닙니다.
 
 <p align="center">
-  <img src="./docs/statics/dotori_files.png" width="80%" alt="Dotori document workspace">
+  <img src="./dotori-docs/statics/dotori_files.png" width="80%" alt="Dotori document workspace">
 </p>
 
-영문 문서는 [README.md](README.md)를 참고하세요.  상세 내용은 [Walkthrough](./docs/WALKTHROUGH.md)을 참고하세요.
+영문 문서는 [README.md](README.md)를 참고하세요.  상세 내용은 [문서 안내](./dotori-docs/README.md)를 참고하세요.
 
 ## 주요 기능
 
@@ -16,8 +16,8 @@
 - 휴지통, 즐겨찾기, 최근 파일 등을 포함한 폴더 및 파일 관리
 - 다양한 형식의 텍스트 파일의 분석 기능
 - 자연어 검색을 통한 문서 검색 기능
-- 외부로 정보가 유출되지 않고 문서 내용을 기반으로 답변을 제공하는 RAG 기능
-- 시스템 사양을 바탕으로 직접 고르는 로컬 LLM 설치 및 사용 기능
+- 문서 근거와 출처를 제공하는 RAG 기능과 선택한 로컬 추론 경로
+- 시스템 사양을 바탕으로 서버 전체 모델·runtime 설정을 정하는 로컬 LLM 설치 기능
 - 원하는 기능만을 선택하여 설치 및 운영할 수 있습니다
 - 한국어와 영어 웹 UI
 - 외부 AI 모델 연동을 위한 기능
@@ -25,19 +25,19 @@
 
 > 주의
 > 로컬 LLM은 Dotori 설치 도우미를 통해 설치하거나 직접 운영 중인 로컬 LLM을 사용해야 인터넷 연결 없이 안전하게 사용할 수 있습니다.
-> 외부 LLM(ChatGPT, Claude 등)을 선택하는 경우, 문서 내용이 외부로 제공될 수 있습니다.
+> 외부 embedding/LLM endpoint를 사용하면 텍스트가 그 서비스에 전달될 수 있습니다. MCP/API로 읽은 결과를 외부 AI가 다시 전송하는지는 해당 클라이언트의 설정도 확인해야 합니다.
 
 
 ## 설치 모드
 
 시스템에 제공하는 설치 도우미(start.bat)을 통해 코딩 없이 서버를 설치할 수 있습니다.
-관련 내용은 [설치 가이드](docs/install/installation-guide.md)를 참고하세요.
+관련 내용은 [설치 가이드](dotori-docs/guides/install/installation-guide.md)를 참고하세요.
 
 설치 모드에서 제공하는 옵션은 다음과 같습니다:
 1. 선택적 기능 활성화(자연어 검색 기능, RAG 기능을 끄고 킬 수 있습니다)
 2. 로컬 LLM 설치 가이드
 3. 서버 운영 환경설정 가이드
-4. 서버 외부접속 도메인설정
+4. 모델 설정과 분리된 선택적 직접 HTTPS 외부 접속 설정
 
 
 ## 빠른 시작

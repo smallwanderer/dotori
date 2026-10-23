@@ -190,7 +190,7 @@ class ProtectedApiErrorContractTests(TestCase):
 
     def test_document_ai_apis_return_the_same_unauthenticated_error(self):
         search_response = self.client.post(
-            reverse("document_ai:vector-search"),
+            reverse("documents:vector-search"),
             data=json.dumps({"query": "test"}),
             content_type="application/json",
         )
@@ -198,12 +198,12 @@ class ProtectedApiErrorContractTests(TestCase):
         csrf_client = Client(enforce_csrf_checks=True)
         csrf_client.get(reverse("accounts_api:session"))
         rag_response = csrf_client.post(
-            reverse("document_ai:rag-stream"),
+            reverse("documents:rag-stream"),
             data=json.dumps({"question": "test"}),
             content_type="application/json",
             HTTP_X_CSRFTOKEN=csrf_client.cookies["csrftoken"].value,
         )
-        policy_response = self.client.get(reverse("document_ai:server-policy"))
+        policy_response = self.client.get(reverse("documents:server-policy"))
 
         assert_api_error(self, search_response, status=401, code="AUTHENTICATION_REQUIRED")
         assert_api_error(self, rag_response, status=401, code="AUTHENTICATION_REQUIRED")
@@ -220,7 +220,7 @@ class ProtectedApiErrorContractTests(TestCase):
         drf_client = Client(enforce_csrf_checks=True)
         drf_client.force_login(self.verified_user)
         search_response = drf_client.post(
-            reverse("document_ai:vector-search"),
+            reverse("documents:vector-search"),
             data=json.dumps({"query": "blocked"}),
             content_type="application/json",
         )

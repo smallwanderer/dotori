@@ -5,13 +5,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 import httpx
 
-from document_ai.embedding.providers.base import EmbeddingBusyError
-from document_ai.embedding.providers.openai_compatible import (
+from documents.embedding.providers.base import EmbeddingBusyError
+from documents.embedding.providers.openai_compatible import (
     OpenAIEmbeddingProvider,
     _normalize_embeddings_url,
 )
-from document_ai.embedding.providers.remote import RemoteEmbeddingProxyProvider
-from document_ai.embedding.registry import get_embedding_provider
+from documents.embedding.providers.remote import RemoteEmbeddingProxyProvider
+from documents.embedding.registry import get_embedding_provider
 
 pytestmark = pytest.mark.unit
 

@@ -16,7 +16,7 @@ class QueryUnderstandingLog(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
-        related_name="document_ai_query_understanding_logs",
+        related_name="documents_query_understanding_logs",
     )
     mode = models.CharField(max_length=32, default="search", db_index=True)
     raw_query = models.TextField()
@@ -49,9 +49,9 @@ class QueryUnderstandingLog(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=["workspace", "mode", "-created_at"], name="docai_qu_ws_mode_created_idx"),
-            models.Index(fields=["owner", "mode", "-created_at"]),
-            models.Index(fields=["intent", "-created_at"]),
-            models.Index(fields=["retrieval_required", "-created_at"]),
+            models.Index(fields=["owner", "mode", "-created_at"], name="docs_qu_owner_mode_created_idx"),
+            models.Index(fields=["intent", "-created_at"], name="docs_qu_intent_created_idx"),
+            models.Index(fields=["retrieval_required", "-created_at"], name="docs_qu_retrieval_created_idx"),
         ]
         ordering = ["-created_at"]
 
@@ -73,10 +73,10 @@ class SearchJob(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
-        related_name="document_ai_search_jobs",
+        related_name="documents_search_jobs",
     )
     query_log = models.ForeignKey(
-        "document_ai.QueryUnderstandingLog",
+        "documents.QueryUnderstandingLog",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -108,7 +108,7 @@ class SearchJob(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=["workspace", "status", "-created_at"], name="docai_se_ws_status_created_idx"),
-            models.Index(fields=["owner", "status", "-created_at"]),
+            models.Index(fields=["owner", "status", "-created_at"], name="docs_sj_own_st_created_idx"),
         ]
         ordering = ["-created_at"]
 

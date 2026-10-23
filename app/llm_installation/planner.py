@@ -10,7 +10,6 @@ from llm_installation.runtime_handoff import (
 )
 
 
-PRIORITY_PRESETS = ("speed", "balanced", "quality")
 HEADROOM_MULTIPLIER = 1.25
 DISK_HEADROOM_MULTIPLIER = 1.15
 CPU_RUNTIME_OVERHEAD_MB = 512
@@ -72,13 +71,6 @@ class RuntimeChoice:
     backend_status: Literal["AVAILABLE", "UNAVAILABLE"] = "AVAILABLE"
     reason_code: str = ""
     reason: str = ""
-
-
-@dataclass(frozen=True)
-class PresetPolicy:
-    priority_preset: str
-    memory_policy: str
-    engine_preference: str
 
 
 @dataclass(frozen=True)
@@ -209,7 +201,6 @@ class ServingPlan:
     offload: str
     fit_status: str
     reason: str
-    priority_preset: str
     context_length: int
     ctx_size_per_slot: int
     server_ctx_size: int
@@ -237,14 +228,10 @@ class ServingPlan:
     planning_ram_mb: int
     memory_placement: dict[str, Any]
 
-    @property
-    def preset(self) -> str:
-        return self.priority_preset
-
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
-        # ``concurrency`` is the preset- and memory-derived calibration
-        # ceiling at this planning stage.  ServerRAGTarget normalizes it into
+        # ``concurrency`` is the memory-derived calibration ceiling at this
+        # planning stage.  ServerRAGTarget normalizes it into
         # a separate initial operating value before persistence.
         payload["safe_concurrency_ceiling"] = self.concurrency
         payload["required_vram_per_gpu_mb"] = list(
@@ -309,16 +296,6 @@ def _resolved_disk_required_mb(entry: Any) -> int | None:
     if explicit_required:
         return explicit_required
     return None
-
-
-def convert_policy(priority_preset: str) -> PresetPolicy:
-    if priority_preset not in PRIORITY_PRESETS:
-        raise ValueError(f"Unknown priority preset: {priority_preset}")
-    return {
-        "speed": PresetPolicy("speed", "latency", "highest estimated decode TPS"),
-        "balanced": PresetPolicy("balanced", "headroom", "catalog recommendation"),
-        "quality": PresetPolicy("quality", "context", "highest model quality"),
-    }[priority_preset]
 
 
 def select_runtime(entry: Any, profile: Any) -> RuntimeChoice:
@@ -802,7 +779,6 @@ def _llamacpp_concurrency_seed(
 def _plan_llamacpp(
     entry: Any,
     profile: Any,
-    preset: str,
     backend_profile: str,
     preserved_fit_status: str | None,
 ) -> ServingPlan:
@@ -913,7 +889,6 @@ def _plan_llamacpp(
                     offload=offload,
                     fit_status=output_status,
                     reason=reason,
-                    priority_preset=preset,
                     context_length=context,
                     ctx_size_per_slot=context,
                     server_ctx_size=context * parallel,
@@ -987,7 +962,6 @@ def _plan_llamacpp(
         offload="none",
         fit_status=status,
         reason=reason,
-        priority_preset=preset,
         context_length=context,
         ctx_size_per_slot=context,
         server_ctx_size=context,
@@ -1051,7 +1025,6 @@ def _vllm_max_concurrency(entry: Any, profile: Any, context: int) -> int:
 def _plan_vllm(
     entry: Any,
     profile: Any,
-    preset: str,
     preserved_fit_status: str | None,
 ) -> ServingPlan:
     context = _context_target(entry, profile)
@@ -1085,7 +1058,6 @@ def _plan_vllm(
         offload="full",
         fit_status=preserved_fit_status or status,
         reason=reason,
-        priority_preset=preset,
         context_length=context,
         ctx_size_per_slot=context,
         server_ctx_size=context * parallel,
@@ -1131,7 +1103,6 @@ def _entry_from_handoff(handoff: RuntimePolicyInput) -> Any:
 def build_serving_plan(
     runtime_policy_input_or_entry: Any,
     profile: Any | None = None,
-    priority_preset: str = "balanced",
 ) -> ServingPlan:
     handoff = (
         runtime_policy_input_or_entry
@@ -1145,7 +1116,6 @@ def build_serving_plan(
             )
         entry = _entry_from_handoff(handoff)
         profile = _attr(handoff.hardware_profile)
-        priority_preset = handoff.priority_preset
         backend_profile = handoff.backend_profile
         preserved_fit_status = handoff.fit_status
     else:
@@ -1158,17 +1128,12 @@ def build_serving_plan(
             raise RuntimeConfigUnresolvable(assessment.fit_reason)
         backend_profile = choice.backend_profile
         preserved_fit_status = None
-    if priority_preset not in PRIORITY_PRESETS:
-        raise ValueError(f"Unknown priority preset: {priority_preset}")
     if backend_profile == "vllm-cuda":
-        plan = _plan_vllm(
-            entry, profile, priority_preset, preserved_fit_status
-        )
+        plan = _plan_vllm(entry, profile, preserved_fit_status)
     else:
         plan = _plan_llamacpp(
             entry,
             profile,
-            priority_preset,
             backend_profile,
             preserved_fit_status,
         )

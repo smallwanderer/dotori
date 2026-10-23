@@ -5,7 +5,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from uuid import UUID
 
-from document_ai.parsers.text_utils import normalize_extracted_text
+from documents.parsers.text_utils import normalize_extracted_text
 from config.enums import QueryAnswerMode, QueryIntent
 
 from search_engine.query_engine.contracts import DSLFilter, DSLSort, QueryDSL

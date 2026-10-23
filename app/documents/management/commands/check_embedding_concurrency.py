@@ -72,8 +72,8 @@ class Command(BaseCommand):
 
         torch.set_num_threads(max(1, options["torch_threads"]))
 
-        from document_ai.embedding.providers.bgem3 import BGEM3HybridProvider
-        from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+        from documents.embedding.providers.bgem3 import BGEM3HybridProvider
+        from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
         runtime = get_active_embedding_runtime()
         if runtime.provider != "bgem3_hybrid":

@@ -20,12 +20,12 @@ from django.test import AsyncClient, override_settings
 from django.utils import timezone
 
 from config.middleware import TraceIdMiddleware
-from document_ai.rag.async_generation import (
+from documents.rag.async_generation import (
     AsyncGenerationContext,
     iter_rag_generation_events_async,
 )
-from document_ai.rag.streaming import create_rag_streaming_response_async
-from document_ai.services.rag_admission import (
+from documents.rag.streaming import create_rag_streaming_response_async
+from documents.services.rag_admission import (
     RAGAdmissionToken,
     _target_admission_policy,
 )
@@ -81,13 +81,13 @@ def test_async_stream_relays_tokens_without_starting_a_background_thread():
         ]
 
     with patch(
-        "document_ai.rag.streaming._create_rag_jobs_sync",
+        "documents.rag.streaming._create_rag_jobs_sync",
         return_value=(search_job, rag_job),
     ), patch(
-        "document_ai.rag.async_generation.iter_rag_generation_events_async",
+        "documents.rag.async_generation.iter_rag_generation_events_async",
         side_effect=generation_events,
     ), patch(
-        "document_ai.rag.streaming._load_terminal_job_sync",
+        "documents.rag.streaming._load_terminal_job_sync",
         return_value=terminal_job,
     ):
         events = async_to_sync(exercise_stream)()
@@ -102,10 +102,58 @@ def test_async_stream_relays_tokens_without_starting_a_background_thread():
     admission_token.release_async.assert_awaited_once()
 
 
+def test_route_change_before_generation_marks_the_rag_job_failed():
+    from config.enums import AIStatus, QueryIntent, RAGStage
+    from documents.rag.async_generation import _prepare_generation_sync
+    from llm_installation.rag_runtime_config import LLMRuntimeNotConfigured
+
+    now = timezone.now()
+    rag_job = SimpleNamespace(
+        id=71,
+        performance_metrics={
+            "provider_resolution": {
+                "function_id": "text.generate",
+                "source": "server_runtime",
+                "selection": "deployment_default_route",
+                "deployment_generation_id": "old-plan",
+            }
+        },
+        language="ko",
+        created_at=now,
+        conversation_id=None,
+        search_job=None,
+        search_job_id=None,
+        retrieval_required=False,
+        query_intent=QueryIntent.AMBIGUOUS,
+        deadline_at=None,
+        status=AIStatus.PENDING,
+        stage=RAGStage.QUEUED,
+        stage_message="queued",
+        started_at=None,
+        error_message="",
+        node_ids=[],
+        save=Mock(),
+    )
+
+    with patch("documents.models.RAGJob.objects.select_related") as select_related, patch(
+        "documents.services.llm_endpoint_service.resolve_rag_llm_request_config",
+        side_effect=LLMRuntimeNotConfigured("deployment plan changed"),
+    ):
+        select_related.return_value.get.return_value = rag_job
+        context, result = _prepare_generation_sync(rag_job.id)
+
+    assert context is None
+    assert result["status"] == "failed"
+    assert "deployment plan changed" in result["error"]
+    assert rag_job.status == AIStatus.FAILED
+    assert rag_job.stage == RAGStage.FAILED
+    assert rag_job.performance_metrics["provider_resolution_failed"] is True
+
+
 def test_admission_policy_separates_local_and_external_capacity(monkeypatch):
     monkeypatch.setenv("RAG_EXTERNAL_LLM_CONCURRENCY", "6")
     with patch(
-        "document_ai.services.rag_admission.get_server_rag_serving_concurrency",
+        "documents.services.rag_admission.get_server_rag_serving_concurrency",
         return_value=3,
     ):
         assert _target_admission_policy({}) == ("server", 3)
@@ -166,16 +214,16 @@ def test_async_generation_uses_httpx_stream_and_emits_direct_deltas():
         ]
 
     with patch(
-        "document_ai.rag.async_generation._prepare_generation_sync",
+        "documents.rag.async_generation._prepare_generation_sync",
         return_value=(context, None),
     ), patch(
-        "document_ai.rag.async_generation._complete_generation_sync",
+        "documents.rag.async_generation._complete_generation_sync",
         return_value=({"status": "success", "job_id": context.job_id}, ""),
     ) as complete, patch(
-        "document_ai.rag.async_generation.AsyncRedis.from_url",
+        "documents.rag.async_generation.AsyncRedis.from_url",
         return_value=FakeRedis(),
     ), patch(
-        "document_ai.rag.async_generation.httpx.AsyncClient",
+        "documents.rag.async_generation.httpx.AsyncClient",
         side_effect=make_client,
     ) as async_client:
         events = async_to_sync(exercise_generation)()
@@ -241,19 +289,19 @@ def test_client_disconnect_marks_generation_canceled_and_propagates_cancel():
                 pass
 
     with patch(
-        "document_ai.rag.async_generation._prepare_generation_sync",
+        "documents.rag.async_generation._prepare_generation_sync",
         return_value=(context, None),
     ), patch(
-        "document_ai.rag.async_generation.AsyncRedis.from_url",
+        "documents.rag.async_generation.AsyncRedis.from_url",
         return_value=FakeRedis(),
     ), patch(
-        "document_ai.rag.async_generation.httpx.AsyncClient",
+        "documents.rag.async_generation.httpx.AsyncClient",
         return_value=FakeClient(),
     ), patch(
-        "document_ai.rag.async_generation.renew_rag_job_lease",
+        "documents.rag.async_generation.renew_rag_job_lease",
         return_value=True,
     ), patch(
-        "document_ai.rag.async_generation._mark_generation_canceled_sync",
+        "documents.rag.async_generation._mark_generation_canceled_sync",
         return_value={"status": "canceled", "job_id": context.job_id},
     ) as mark_canceled:
         async_to_sync(consume)()
@@ -304,26 +352,26 @@ def test_rag_view_runs_through_django_asgi_request_stack():
         client = AsyncClient()
         await client.aforce_login(user)
         return await client.post(
-            "/api/document-ai/v1/rag/stream/",
+            "/api/v1/rag/stream/",
             data=json.dumps({"question": "문서 요약", "language": "ko"}),
             content_type="application/json",
         )
 
     with patch(
-        "document_ai.search.views.build_rag_llm_snapshot",
+        "documents.search.views.build_rag_llm_snapshot",
         return_value={
             "llm_endpoint_name": "Server runtime",
             "llm_base_url": "http://rag-runtime:8080",
             "llm_model": "test-model",
         },
     ), patch(
-        "document_ai.search.views.server_rag_runtime_availability",
+        "documents.search.views.server_rag_runtime_availability",
         return_value=(True, {}),
     ), patch(
-        "document_ai.search.views.acquire_rag_admission_token_async",
+        "documents.search.views.acquire_rag_admission_token_async",
         new=AsyncMock(return_value=admission_token),
     ), patch(
-        "document_ai.rag.streaming.create_rag_streaming_response_async",
+        "documents.rag.streaming.create_rag_streaming_response_async",
         new=AsyncMock(return_value=stream_response),
     ) as create_stream:
         response = async_to_sync(request_rag)()

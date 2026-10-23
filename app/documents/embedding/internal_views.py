@@ -8,13 +8,12 @@ import threading
 from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_GET
 
-from .admission import AdmissionRejected, EmbeddingPriorityAdmission
+from . import execution
 from .providers.base import EmbeddingBusyError
-from . import embeding_models
-from .registry import get_embedding_provider
-from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
+from .registry import create_embedding_implementation as get_embedding_provider
+from documents.services.embedding_runtime_config import get_active_embedding_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -22,72 +21,11 @@ _ALLOWED_INPUT_TYPES = {"query", "document"}
 _MAX_TEXT_CHARS = 20000
 # Server-side backstop matching EMBEDDING_DOCUMENT_BATCH_MAX_CHUNKS -- the real
 # cap is enforced by the caller (enqueue_embedding_tasks_sync's batch grouping);
-# this just rejects a malformed/oversized request outright.
-_MAX_BATCH_SIZE = 16
+# this just rejects a malformed/oversized request outright. Lives in settings
+# (not here) so llm_installation can read the same limit without importing
+# documents.
+_MAX_BATCH_SIZE = settings.EMBEDDING_MAX_BATCH_SIZE
 
-
-def _get_positive_int_env(name: str, default: int) -> int:
-    raw_value = os.getenv(name, str(default))
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        logger.warning("Invalid %s=%r, falling back to %s", name, raw_value, default)
-        return default
-    if value < 1:
-        logger.warning("%s must be >= 1, falling back to %s", name, default)
-        return default
-    return value
-
-
-def _get_nonnegative_int_env(name: str, default: int) -> int:
-    raw_value = os.getenv(name, str(default))
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        logger.warning("Invalid %s=%r, falling back to %s", name, raw_value, default)
-        return default
-    if value < 0:
-        logger.warning("%s must be >= 0, falling back to %s", name, default)
-        return default
-    return value
-
-
-def _get_nonnegative_float_env(name: str, default: float) -> float:
-    raw_value = os.getenv(name, str(default))
-    try:
-        value = float(raw_value)
-    except (TypeError, ValueError):
-        logger.warning("Invalid %s=%r, falling back to %s", name, raw_value, default)
-        return default
-    if value < 0:
-        logger.warning("%s must be >= 0, falling back to %s", name, default)
-        return default
-    return value
-
-
-# Bounds concurrent model.encode() calls across gunicorn's threads and orders
-# waiting work at the single model admission point: query before document,
-# FIFO within the same request type.
-# Concurrent BGE-M3 encode() calls were stress-tested (dense+sparse output
-# verified against sequential ground truth across many concurrent rounds --
-# see `manage.py check_embedding_concurrency`) with no race conditions found,
-# so this is no longer forced to 1. Gunicorn keeps additional threads for
-# queued requests and healthchecks; re-run check_embedding_concurrency on the
-# target hardware before raising the model concurrency itself.
-_EMBED_CONCURRENCY = _get_positive_int_env("EMBEDDING_MODEL_CONCURRENCY", 2)
-_EMBED_QUEUE_CAPACITY = _get_nonnegative_int_env("EMBEDDING_REQUEST_QUEUE_CAPACITY", 4)
-_EMBED_QUERY_RESERVE = min(
-    _get_nonnegative_int_env("EMBEDDING_QUERY_QUEUE_RESERVE", 1),
-    _EMBED_QUEUE_CAPACITY,
-)
-_EMBED_QUEUE_TIMEOUT = _get_nonnegative_float_env(
-    "EMBEDDING_REQUEST_QUEUE_TIMEOUT_SECONDS", 15.0
-)
-_EMBED_ADMISSION = EmbeddingPriorityAdmission(
-    concurrency=_EMBED_CONCURRENCY,
-    queue_capacity=_EMBED_QUEUE_CAPACITY,
-    query_reserve=_EMBED_QUERY_RESERVE,
-)
 
 # Docker polls /readyz every few seconds. A deep provider healthcheck performs
 # a real model.encode(), so cache the successful result for the active runtime
@@ -150,7 +88,7 @@ def readyz(request):
 
         # The one-time deep probe is a real encode call and therefore shares
         # the same admission limit as /embed/.
-        readiness_lease = _EMBED_ADMISSION.try_acquire()
+        readiness_lease = execution._EMBED_ADMISSION.try_acquire()
         if readiness_lease is None:
             return JsonResponse(
                 {"status": "not_ready", "reason": "embedding_busy"}, status=503
@@ -174,6 +112,7 @@ def readyz(request):
             "status": "ready",
             **info,
             "runtime_fingerprint": runtime_fingerprint,
+            "model_revision": provider.spec.model_revision,
         }
         _set_cached_readiness(runtime_fingerprint, payload)
         return JsonResponse(payload)
@@ -195,42 +134,10 @@ def _token_is_valid(request) -> bool:
     return request.headers.get("Authorization", "") == f"Bearer {expected}"
 
 
-def run_embedding_with_admission(
-    input_type: str,
-    *,
-    text: str | None = None,
-    texts: list[str] | None = None,
-    max_length: int | None = None,
-    **provider_kwargs,
-):
-    """Run one model operation through the process-wide priority admission.
-
-    Both the public internal `/embed/` handler and durable document executor
-    work call this function. Keeping it here preserves the existing singleton
-    and prevents a model-process job from bypassing query priority.
-    """
-
-    from .inference_context import admitted
-    try:
-        lease = _EMBED_ADMISSION.acquire(input_type, timeout=_EMBED_QUEUE_TIMEOUT)
-    except AdmissionRejected as exc:
-        raise EmbeddingBusyError(
-            f"embedding service is busy ({exc.reason})",
-            retry_after_seconds=float(os.getenv("EMBEDDING_BUSY_RETRY_AFTER_SECONDS", "5")),
-        ) from exc
-    token = admitted.set(True)
-    try:
-        if texts is not None:
-            return embeding_models.embed_documents(texts, max_length=max_length, **provider_kwargs)
-        embed_fn = (
-            embeding_models.embed_query
-            if input_type == "query"
-            else embeding_models.embed_document
-        )
-        return [embed_fn(text or "", max_length=max_length, **provider_kwargs)]
-    finally:
-        admitted.reset(token)
-        lease.release()
+def run_embedding_with_admission(*args, **kwargs):
+    """Compatibility facade; inference admission is owned by execution."""
+    from .execution import run_embedding_with_admission as run
+    return run(*args, **kwargs)
 
 
 @csrf_exempt
@@ -285,9 +192,17 @@ def embed(request):
         if len(text) > _MAX_TEXT_CHARS:
             return JsonResponse({"error": f"'text' exceeds {_MAX_TEXT_CHARS} characters."}, status=422)
 
+    from .routing import runtime_identity
+    runtime = get_active_embedding_runtime()
+    execution_identity = runtime_identity(runtime)
+    expected_identity = payload.get("expected_identity")
+    if expected_identity is not None and expected_identity != execution_identity:
+        return JsonResponse({"error": {"code": "EMBEDDING_IDENTITY_MISMATCH",
+                                      "message": "Embedding runtime changed."}}, status=409)
+
     # model_name/backend are deliberately not accepted from the caller -- this
-    # endpoint always uses the server's own active embedding runtime, so app
-    # and embedding-executor can never race on which model/generation to use.
+    # endpoint uses its own active runtime. expected_identity pins the caller's
+    # selection and rejects a deployment transition before inference.
     try:
         # A batch is admitted as ONE "document" job -- a single lease covers
         # the whole model.encode() call no matter how many texts it holds.
@@ -298,7 +213,7 @@ def embed(request):
             max_length=max_length,
         )
     except EmbeddingBusyError as exc:
-        queue_state = _EMBED_ADMISSION.snapshot()
+        queue_state = execution._EMBED_ADMISSION.snapshot()
         logger.warning(
             "Embedding admission rejected: input_type=%s reason=%s state=%s",
             input_type,
@@ -323,7 +238,8 @@ def embed(request):
         logger.exception("Internal %s embedding failed", input_type)
         return JsonResponse({"error": "embedding failed"}, status=500)
 
-    runtime = get_active_embedding_runtime()
+    if runtime_identity(get_active_embedding_runtime()) != execution_identity:
+        return JsonResponse({"error": "embedding runtime changed during execution"}, status=409)
     for result in results:
         if runtime.dimension and len(result.dense_vector) != runtime.dimension:
             logger.error(
@@ -348,6 +264,7 @@ def embed(request):
                     for result in results
                 ],
                 "runtime_fingerprint": runtime.runtime_fingerprint,
+                "execution_identity": execution_identity,
             }
         )
 
@@ -360,5 +277,26 @@ def embed(request):
             "backend": result.backend,
             "dimension": result.dimension,
             "runtime_fingerprint": runtime.runtime_fingerprint,
+            "execution_identity": execution_identity,
         }
     )
+
+
+@require_GET
+def execution_observation(request):
+    if not _token_is_valid(request):
+        return JsonResponse({"error": "unauthorized"}, status=401)
+    if os.getenv("DOTORI_EMBEDDING_MODEL_PROCESS") != "1":
+        return JsonResponse({"error": "not a model-owning process"}, status=503)
+    from .execution_observation import observe_embedding_execution
+    from .routing import runtime_identity
+    runtime = get_active_embedding_runtime()
+    readiness = readyz(request)
+    if readiness.status_code != 200:
+        return JsonResponse({"error": "execution observation unavailable"}, status=503)
+    provider = get_embedding_provider(runtime=runtime)
+    observed = observe_embedding_execution(runtime, provider)
+    if observed is None or runtime_identity(get_active_embedding_runtime()) != runtime_identity(runtime):
+        return JsonResponse({"error": "execution observation unavailable"}, status=503)
+    return JsonResponse({"execution_identity": runtime_identity(runtime),
+                         "observation": observed.model_dump(mode="json")})

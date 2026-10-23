@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
 
-from document_ai.management.commands.server_status import (
+from documents.management.commands.server_status import (
     HEALTHCHECK_FILE_PREFIX,
     HEALTHCHECK_OWNER_EMAIL,
     _embedding_status,
@@ -107,7 +107,7 @@ def test_embedding_status_enabled_matches_operation_mode(
 
     with pytest.MonkeyPatch.context() as capability_patch:
         capability_patch.setattr(
-            "document_ai.services.capability_admission.capability_enabled",
+            "documents.services.capability_admission.capability_enabled",
             lambda _capability_id: expected_enabled,
         )
         status = _embedding_status()
@@ -153,7 +153,6 @@ def test_rag_status_probes_healthy_persisted_config(monkeypatch, tmp_path):
         profile=profile,
         catalog=catalog,
         check_endpoint=False,
-        priority_preset="balanced",
     )
     config_path = tmp_path / "llm_runtime.json"
     write_llm_runtime_config(target=target, profile=profile, catalog=catalog, path=config_path)
@@ -162,11 +161,11 @@ def test_rag_status_probes_healthy_persisted_config(monkeypatch, tmp_path):
     # where this unrelated flag suppressed the health probe.
     monkeypatch.setenv("QUERY_UNDERSTANDING_LLM_ENABLED", "0")
     monkeypatch.setattr(
-        "document_ai.management.commands.server_status.check_endpoint_health",
+        "documents.management.commands.server_status.check_endpoint_health",
         lambda base_url, timeout: EndpointStatus(base_url=base_url, ok=True, check_name="health"),
     )
     monkeypatch.setattr(
-        "document_ai.management.commands.server_status.check_openai_compatible_endpoint",
+        "documents.management.commands.server_status.check_openai_compatible_endpoint",
         lambda base_url, expected_model, timeout: EndpointStatus(base_url=base_url, ok=True, check_name="models"),
     )
 
@@ -205,7 +204,7 @@ def test_rag_status_reports_persisted_oom_without_live_probe(monkeypatch, tmp_pa
     )
     monkeypatch.setenv("LLM_RUNTIME_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(
-        "document_ai.management.commands.server_status.check_endpoint_health",
+        "documents.management.commands.server_status.check_endpoint_health",
         lambda *a, **k: pytest.fail("must not probe an unavailable runtime"),
     )
 

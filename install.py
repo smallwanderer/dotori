@@ -9,6 +9,7 @@ import re
 import json
 import secrets
 import time
+from pathlib import Path
 
 import requests
 
@@ -86,10 +87,9 @@ def run_interactive_command(cmd):
         print(f"{RED}[ERROR] {e}{RESET}")
         return False
 
-# Append app directory to path to allow importing llm_installation/document_ai modules
+# Append app directory to path to allow importing llm_installation/documents modules
 sys.path.append(os.path.join(os.path.dirname(__file__), "app"))
 
-from document_ai.services.rag_runtime_config import load_llm_runtime_config
 from llm_installation.embedding_probe import (
     build_external_embedding_entry,
     load_active_embedding_runtime_summary,
@@ -98,6 +98,7 @@ from llm_installation.embedding_probe import (
     stage_external_embedding_generation,
     suggested_models_for_endpoint,
 )
+from llm_installation.rag_runtime_config import load_llm_runtime_config
 from llm_installation.embedding_footprint import (
     describe_embedding_fit,
     describe_embedding_footprint,
@@ -129,21 +130,21 @@ from installation.deployment import (
     ALL_WORKER_SERVICES,
     DOCUMENT_QUEUE_SERVICES,
     DOCUMENT_RUNTIME_RESTART_SERVICES,
-    build_deployment_plan,
+    build_legacy_module_deployment_plan,
     compose_up_command,
+    deployment_plan_path,
     embedding_runtime_change_command,
     read_deployment_plan,
+    reusable_verified_llm_projection,
     worker_services_for_lifecycle,
     write_deployment_plan,
+    normalize_mode,
 )
-from capabilities.config import capability_config_path, write_capability_config
 
-def select_rag_priority():
-    print_header("RAG LLM Priority")
-    print("Selects the initial embedding model preset. It is also stored as a")
-    print("label on the LLM runtime config, but no longer affects which LLM")
-    print("model gets selected or its runtime settings (those are chosen")
-    print("automatically from hardware, independent of this choice).")
+def select_embedding_preset():
+    print_header("Embedding Model Preset")
+    print("Selects the initial embedding model. The local LLM and its runtime")
+    print("settings are not affected: those are derived from detected hardware.")
     print(f"{BOLD}[1] Speed{RESET}")
     print("    - Lightweight embedding preset, fastest embedding throughput.")
     print(f"{BOLD}[2] Balanced{RESET}")
@@ -424,7 +425,7 @@ def _runtime_start_info(scope="production"):
     return migrated
 
 
-def initialize_llm_runtime_config(mode, priority_mode="balanced", cluster_mode=False, keep_weights=False, scope="production"):
+def initialize_llm_runtime_config(mode, cluster_mode=False, keep_weights=False, scope="production"):
     if mode != "1":
         print(f"{YELLOW}• Skipping LLM runtime detection because Full Local AI RAG mode is not selected.{RESET}")
         return False
@@ -605,8 +606,8 @@ def _print_server_status_report(report):
     print(f"embedding: model={embedding['model']} backend={embedding['backend']} "
           f"dimension={embedding['dimension']} sparse_enabled={embedding['sparse_enabled']}")
     if rag.get("configured"):
-        print(f"rag: model={rag['model']} runtime={rag['runtime']} base_url={rag['base_url']} "
-              f"priority_preset={rag['priority_preset']}")
+        print(f"rag: model={rag['model']} runtime={rag['runtime']} "
+              f"base_url={rag['base_url']}")
         health = rag.get("health_status")
         if health:
             health_color = GREEN if health["ok"] else RED
@@ -687,7 +688,7 @@ def _saved_operation_mode():
     return "2" if env_settings.get("EMBEDDING_MODEL") else "3"
 
 
-def _restore_capability_payload(path, payload):
+def _restore_deployment_payload(path, payload):
     if payload is None:
         path.unlink(missing_ok=True)
         return
@@ -699,6 +700,8 @@ def _restore_capability_payload(path, payload):
 def _deployment_services(plan):
     if not plan:
         return []
+    if isinstance(plan.get("services"), list):
+        return list(dict.fromkeys(plan["services"]))
     services = list(plan.get("core_services") or [])
     services.extend(
         worker.get("compose_service")
@@ -708,8 +711,28 @@ def _deployment_services(plan):
     return list(dict.fromkeys(services))
 
 
-def _restore_previous_deployment(previous_plan, capability_path, capability_payload):
-    _restore_capability_payload(capability_path, capability_payload)
+def _deployment_runtime_payloads(scope):
+    """Read selected runtime declarations for the deployment snapshot."""
+    llm_payload = load_llm_runtime_config(scope=scope)
+    embedding_path = (
+        Path(__file__).resolve().parent
+        / "data"
+        / "config"
+        / "runtime_scopes"
+        / scope
+        / "embedding_runtime.json"
+    )
+    try:
+        embedding_payload = json.loads(embedding_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        embedding_payload = None
+    if not isinstance(embedding_payload, dict):
+        embedding_payload = None
+    return llm_payload, embedding_payload
+
+
+def _restore_previous_deployment(previous_plan, deployment_path, deployment_payload):
+    _restore_deployment_payload(deployment_path, deployment_payload)
     previous_services = _deployment_services(previous_plan)
     if not previous_services:
         return True, ""
@@ -725,7 +748,6 @@ def _restore_previous_deployment(previous_plan, capability_path, capability_payl
 def run_services(
     mode,
     initialize_llm=False,
-    rag_priority="balanced",
     *,
     build_images=False,
     force_recreate=False,
@@ -740,14 +762,30 @@ def run_services(
     manager = RuntimeLifecycleManager()
 
     previous_plan = read_deployment_plan("production")
-    initial_plan = build_deployment_plan(mode, scope="production")
-    capability_path = capability_config_path()
-    previous_capability_payload = (
-        capability_path.read_bytes() if capability_path.exists() else None
+    compatibility_mode = normalize_mode(mode)
+    llm_runtime_payload, embedding_runtime_payload = _deployment_runtime_payloads("production")
+    llm_projection = reusable_verified_llm_projection(
+        previous_plan,
+        llm_runtime_payload,
+        mode=compatibility_mode,
     )
-    write_capability_config(initial_plan.enabled_capabilities, path=capability_path)
-    services = list(initial_plan.enabled_services)
-    if initial_plan.disabled_worker_services:
+    initial_plan = build_legacy_module_deployment_plan(
+        mode,
+        scope="production",
+        llm_runtime_config=llm_runtime_payload,
+        embedding_runtime_config=embedding_runtime_payload,
+        **llm_projection,
+    )
+    active_deployment_path = deployment_plan_path("production")
+    previous_deployment_payload = (
+        active_deployment_path.read_bytes() if active_deployment_path.exists() else None
+    )
+    write_deployment_plan(initial_plan)
+    services = list(initial_plan["services"])
+    disabled_worker_services = tuple(
+        service for service in ALL_WORKER_SERVICES if service not in services
+    )
+    if disabled_worker_services:
         drain_timeout = max(
             1,
             int(os.getenv("DOTORI_CAPABILITY_DRAIN_TIMEOUT_SECONDS", "1800")),
@@ -759,8 +797,8 @@ def run_services(
         if not drained:
             restored, restore_error = _restore_previous_deployment(
                 previous_plan,
-                capability_path,
-                previous_capability_payload,
+                active_deployment_path,
+                previous_deployment_payload,
             )
             print(
                 f"{RED}[ERROR] Document processing could not be drained; "
@@ -774,7 +812,7 @@ def run_services(
             return False
         run_command(
             f"{COMPOSE_COMMAND} stop "
-            + " ".join(initial_plan.disabled_worker_services)
+            + " ".join(disabled_worker_services)
         )
 
     cmd = compose_up_command(
@@ -796,10 +834,8 @@ def run_services(
 
     if process.returncode == 0:
         runtime_ready = False
-        if initialize_llm and initial_plan.mode == "rag":
-            runtime_ready = initialize_llm_runtime_config(
-                mode, priority_mode=rag_priority
-            )
+        if initialize_llm and compatibility_mode == "rag":
+            runtime_ready = initialize_llm_runtime_config(mode)
             if not runtime_ready:
                 current = manager.status("production")
                 runtime_ready = bool(
@@ -813,7 +849,7 @@ def run_services(
                         f"{YELLOW}• Model setup did not produce a new runtime; "
                         f"continuing with the existing healthy runtime.{RESET}"
                     )
-        elif initial_plan.mode == "rag":
+        elif compatibility_mode == "rag":
             # Ordinary starts reuse the active generation and an existing
             # image. Rebuild is an explicit maintenance action.
             info = _runtime_start_info("production")
@@ -834,7 +870,7 @@ def run_services(
             manager.stop("production", remove_container=False)
 
         runtime_spec = None
-        if initial_plan.mode == "rag" and runtime_ready:
+        if compatibility_mode == "rag" and runtime_ready:
             info = _active_runtime_info("production")
             if info:
                 runtime, model_id, generation_id = info
@@ -842,15 +878,65 @@ def run_services(
                     "production", runtime, model_id, generation_id
                 )
 
-        final_plan = build_deployment_plan(
+        # Collect only after services are started. This diagnostic transition does
+        # not promote evidence, downgrade routes, or persist live health in the plan.
+        from installation.execution_observation import (
+            collect_installation_observations, observation_summary,
+        )
+        observation_report = collect_installation_observations(
+            manager, services=services, runtime_spec=runtime_spec,
+        )
+        print("Execution observations: " + json.dumps(
+            observation_summary(observation_report), ensure_ascii=False,
+        ))
+
+        final_llm_payload = load_llm_runtime_config(scope="production")
+        final_projection = reusable_verified_llm_projection(
+            previous_plan,
+            final_llm_payload,
+            mode=compatibility_mode,
+            llm_enabled=runtime_ready,
+        )
+        final_plan = build_legacy_module_deployment_plan(
             mode,
             scope="production",
             runtime=runtime_spec,
             network_access="local",
+            disabled_provider_roles=("llm",)
+            if compatibility_mode == "rag" and not runtime_ready
+            else (),
+            llm_runtime_config=final_llm_payload,
+            embedding_runtime_config=_deployment_runtime_payloads("production")[1],
+            **final_projection,
         )
         write_deployment_plan(final_plan)
 
-        if initial_plan.mode == "rag" and not runtime_ready:
+        if final_plan["generation_id"] != initial_plan["generation_id"]:
+            refresh_command = compose_up_command(
+                COMPOSE_COMMAND,
+                final_plan["services"],
+                build_images=False,
+                force_recreate=True,
+            )
+            refreshed, _stdout, refresh_error = run_command(refresh_command)
+            if not refreshed:
+                restored, restore_error = _restore_previous_deployment(
+                    previous_plan,
+                    active_deployment_path,
+                    previous_deployment_payload,
+                )
+                print(
+                    f"{RED}[ERROR] Services could not be synchronized to the "
+                    f"final deployment revision: {refresh_error}{RESET}"
+                )
+                if not restored:
+                    print(
+                        f"{RED}[ERROR] Previous deployment services could not be "
+                        f"restored: {restore_error}{RESET}"
+                    )
+                return False
+
+        if compatibility_mode == "rag" and not runtime_ready:
             print(
                 f"{YELLOW}[WARN] Dotori core services are healthy, but the "
                 f"local LLM is unavailable. RAG answer generation remains disabled.{RESET}"
@@ -865,16 +951,20 @@ def run_services(
 
         print_header("Startup Complete")
         print(f"• {BOLD}Web application:{RESET} {GREEN}{APP_URL}{RESET}")
-        print(f"• {BOLD}Deployment mode:{RESET} {final_plan.mode} ({final_plan.generation_id})")
-        if final_plan.mode == "rag" and not runtime_ready:
+        print(
+            f"• {BOLD}Installed modules:{RESET} "
+            f"{', '.join(final_plan['selected_modules']) or 'core-only'} "
+            f"({final_plan['generation_id']})"
+        )
+        if compatibility_mode == "rag" and not runtime_ready:
             print(f"• {BOLD}RAG answer generation:{RESET} {YELLOW}disabled (search-only fallback){RESET}")
         print(f"• {BOLD}To pause the services, run:{RESET} {YELLOW}python install.py --stop{RESET}")
         return True
     else:
         restored, restore_error = _restore_previous_deployment(
             previous_plan,
-            capability_path,
-            previous_capability_payload,
+            active_deployment_path,
+            previous_deployment_payload,
         )
         if not restored:
             print(
@@ -1632,7 +1722,7 @@ def main():
         mode = "2"
 
     updates = {}
-    rag_priority = "balanced"
+    embedding_preset = "balanced"
     updates["DOTORI_OPERATION_MODE"] = {
         "1": "rag",
         "2": "search",
@@ -1649,7 +1739,7 @@ def main():
         updates["HF_TOKEN"] = hf_token
 
     if mode == "1":
-        rag_priority = select_rag_priority()
+        embedding_preset = select_embedding_preset()
 
     # Query understanding (QUERY_UNDERSTANDING_*) is an experimental, unfinished
     # feature that's off by default in .env.example regardless of operation
@@ -1666,7 +1756,7 @@ def main():
         if emb_choice == "2":
             change_embedding_runtime_cli(scope="production")
         else:
-            embedding_entry = initialize_embedding_runtime_config(rag_priority)
+            embedding_entry = initialize_embedding_runtime_config(embedding_preset)
             print(
                 f"{GREEN}• Embedding runtime configured from catalog: "
                 f"{embedding_entry.display_name} ({embedding_entry.id}){RESET}"
@@ -1682,7 +1772,6 @@ def main():
         run_services(
             mode,
             initialize_llm=True,
-            rag_priority=rag_priority,
             build_images=True,
         )
     else:

@@ -17,18 +17,18 @@ from django.test import TestCase
 from django.utils import timezone
 
 from config.enums import AIStatus, NodeType
-from document_ai.models import ChunkEmbedding, DocumentChunk, DocumentParseResult
-from document_ai.embedding.executor import (
+from documents.models import ChunkEmbedding, DocumentChunk, DocumentParseResult
+from documents.embedding.executor import (
     EmbeddingDispatchError,
     embed_document_chunks_batch_sync,
     enqueue_embedding_tasks_sync,
 )
-from document_ai.processing.recovery import (
+from documents.processing.recovery import (
     get_embedding_recovery_chunk_ids,
     get_node_ids_for_chunks,
     get_parse_recovery_node_ids,
 )
-from document_ai.tasks import (
+from documents.tasks import (
     _embedding_queue_backpressure,
     embedding_document_with_bge,
     embedding_document_batch_with_bge,
@@ -36,12 +36,26 @@ from document_ai.tasks import (
     recover_document_pipeline_backlog,
     parse_document_with_docling,
 )
-from document_ai.tracing_utils import enqueue_kwargs
+from documents.tracing_utils import enqueue_kwargs
 from files.models import FileBlob, Node
 
 pytestmark = pytest.mark.integration
 
 User = get_user_model()
+
+@pytest.fixture(autouse=True)
+def active_module_plan(tmp_path, monkeypatch):
+    """Exercise transport/recovery against an explicit isolated installation."""
+    from capabilities.deployment import clear_deployment_snapshot_cache
+    from installation.deployment import build_module_deployment_plan, write_deployment_plan
+
+    path = write_deployment_plan(build_module_deployment_plan(["documents"]), repo_root=tmp_path)
+    monkeypatch.setenv("DOTORI_DEPLOYMENT_PLAN_PATH", str(path))
+    clear_deployment_snapshot_cache()
+    yield
+    clear_deployment_snapshot_cache()
+
+
 
 
 class DocumentPipelineRecoveryTests(TestCase):
@@ -61,7 +75,7 @@ class DocumentPipelineRecoveryTests(TestCase):
             ext=".txt",
             node_type=NodeType.FILE,
         )
-        with patch("document_ai.signals.enqueue_parse"):
+        with patch("documents.signals.enqueue_parse"):
             FileBlob.objects.create(
                 node=node,
                 original_name=name,
@@ -204,7 +218,7 @@ class DocumentPipelineRecoveryTests(TestCase):
             status=AIStatus.PENDING,
         )
 
-        with patch("document_ai.orchestration.enqueue_embedding_batch") as dispatch_batch:
+        with patch("documents.orchestration.enqueue_embedding_batch") as dispatch_batch:
             result = enqueue_embedding_tasks_sync(node.id)
 
         chunk.refresh_from_db()
@@ -216,7 +230,7 @@ class DocumentPipelineRecoveryTests(TestCase):
         envelope = enqueue_kwargs(trace_id="trace-envelope-test")
 
         with patch(
-            "document_ai.services.executor_transport.dispatch_executor_job",
+            "documents.services.executor_transport.dispatch_executor_job",
             return_value={"result": {"status": "success", "node_id": 123, "chunk_count": 0}},
         ) as dispatch:
             result = enqueue_embedding_tasks.run(123, **envelope)
@@ -230,9 +244,9 @@ class DocumentPipelineRecoveryTests(TestCase):
             "broker unavailable",
             unpublished_chunk_ids=[10, 11],
         )
-        from document_ai.services.executor_transport import ExecutorDispatchError
+        from documents.services.executor_transport import ExecutorDispatchError
         with patch(
-            "document_ai.services.executor_transport.dispatch_executor_job",
+            "documents.services.executor_transport.dispatch_executor_job",
             side_effect=ExecutorDispatchError(str(failure)),
         ), patch.object(
             enqueue_embedding_tasks,
@@ -261,7 +275,7 @@ class DocumentPipelineRecoveryTests(TestCase):
         )
 
         with patch(
-            "document_ai.embedding.internal_views.run_embedding_with_admission"
+            "documents.embedding.execution.run_embedding_with_admission"
         ) as run_embedding:
             result = embed_document_chunks_batch_sync([chunk.id])
 
@@ -289,12 +303,12 @@ class DocumentPipelineRecoveryTests(TestCase):
         )
         DocumentChunk.objects.filter(pk=failed_chunk.pk).update(created_at=timezone.now() - timedelta(hours=1))
 
-        with patch("document_ai.processing.recovery.get_parse_recovery_node_ids", return_value=[parse_node.id]), patch(
-            "document_ai.processing.recovery.get_embedding_recovery_chunk_ids",
+        with patch("documents.processing.recovery.get_parse_recovery_node_ids", return_value=[parse_node.id]), patch(
+            "documents.processing.recovery.get_embedding_recovery_chunk_ids",
             return_value=[failed_chunk.id],
-        ), patch("document_ai.processing.recovery.enqueue_parse") as parse_delay, patch(
-            "document_ai.processing.recovery.enqueue_embedding"
-        ) as enqueue_delay, patch("document_ai.processing.recovery.recovery_redis_client") as mock_redis_ctor:
+        ), patch("documents.processing.recovery.enqueue_parse") as parse_delay, patch(
+            "documents.processing.recovery.enqueue_embedding"
+        ) as enqueue_delay, patch("documents.processing.recovery.recovery_redis_client") as mock_redis_ctor:
             # Redis 락 항상 성공 (중복 없음)
             mock_redis_ctor.return_value.set.return_value = True
             result = recover_document_pipeline_backlog()
@@ -363,12 +377,12 @@ class DocumentPipelineRecoveryTests(TestCase):
             created_at=timezone.now() - timedelta(hours=1)
         )
 
-        with patch("document_ai.processing.recovery.get_parse_recovery_node_ids", return_value=[parse_node.id]), patch(
-            "document_ai.processing.recovery.get_embedding_recovery_chunk_ids",
+        with patch("documents.processing.recovery.get_parse_recovery_node_ids", return_value=[parse_node.id]), patch(
+            "documents.processing.recovery.get_embedding_recovery_chunk_ids",
             return_value=[stale_chunk.id],
-        ), patch("document_ai.processing.recovery.enqueue_parse") as parse_delay, patch(
-            "document_ai.processing.recovery.enqueue_embedding"
-        ) as enqueue_delay, patch("document_ai.processing.recovery.recovery_redis_client") as mock_redis_ctor:
+        ), patch("documents.processing.recovery.enqueue_parse") as parse_delay, patch(
+            "documents.processing.recovery.enqueue_embedding"
+        ) as enqueue_delay, patch("documents.processing.recovery.recovery_redis_client") as mock_redis_ctor:
             # Redis SET NX 실패 → 락이 이미 존재 (중복 큐잉 방지)
             mock_redis_ctor.return_value.set.return_value = None
             result = recover_document_pipeline_backlog()
@@ -405,13 +419,13 @@ class DocumentPipelineRecoveryTests(TestCase):
             created_at=timezone.now() - timedelta(hours=1)
         )
 
-        with patch("document_ai.processing.recovery.get_parse_recovery_node_ids", return_value=[parse_node.id]), patch(
-            "document_ai.processing.recovery.get_embedding_recovery_chunk_ids",
+        with patch("documents.processing.recovery.get_parse_recovery_node_ids", return_value=[parse_node.id]), patch(
+            "documents.processing.recovery.get_embedding_recovery_chunk_ids",
             return_value=[stale_chunk.id],
-        ), patch("document_ai.processing.recovery.enqueue_parse") as parse_delay, patch(
-            "document_ai.processing.recovery.enqueue_embedding"
+        ), patch("documents.processing.recovery.enqueue_parse") as parse_delay, patch(
+            "documents.processing.recovery.enqueue_embedding"
         ) as enqueue_delay, patch(
-            "document_ai.processing.recovery.recovery_redis_client",
+            "documents.processing.recovery.recovery_redis_client",
             side_effect=Exception("connection refused"),
         ):
             result = recover_document_pipeline_backlog()
@@ -429,13 +443,13 @@ class DocumentPipelineRecoveryTests(TestCase):
         parse_node = self._create_file_node("lazy-redis-failure.txt")
 
         with patch(
-            "document_ai.processing.recovery.get_parse_recovery_node_ids",
+            "documents.processing.recovery.get_parse_recovery_node_ids",
             return_value=[parse_node.id],
         ), patch(
-            "document_ai.processing.recovery.get_embedding_recovery_chunk_ids",
+            "documents.processing.recovery.get_embedding_recovery_chunk_ids",
             return_value=[],
-        ), patch("document_ai.processing.recovery.enqueue_parse") as enqueue_parse, patch(
-            "document_ai.processing.recovery.recovery_redis_client"
+        ), patch("documents.processing.recovery.enqueue_parse") as enqueue_parse, patch(
+            "documents.processing.recovery.recovery_redis_client"
         ) as redis_client:
             redis_client.return_value.set.side_effect = ConnectionError("redis down")
             result = recover_document_pipeline_backlog()
@@ -453,15 +467,15 @@ class DocumentPipelineRecoveryTests(TestCase):
         )
 
         with patch(
-            "document_ai.processing.recovery.get_parse_recovery_node_ids",
+            "documents.processing.recovery.get_parse_recovery_node_ids",
             return_value=[parse_node.id],
         ), patch(
-            "document_ai.processing.recovery.get_embedding_recovery_chunk_ids",
+            "documents.processing.recovery.get_embedding_recovery_chunk_ids",
             return_value=[],
         ), patch(
-            "document_ai.processing.recovery.enqueue_parse",
+            "documents.processing.recovery.enqueue_parse",
             side_effect=ConnectionError("broker publish failed"),
-        ), patch("document_ai.processing.recovery.recovery_redis_client") as redis_client:
+        ), patch("documents.processing.recovery.recovery_redis_client") as redis_client:
             redis_client.return_value.set.return_value = True
             result = recover_document_pipeline_backlog()
 
@@ -485,7 +499,7 @@ class DocumentPipelineRecoveryTests(TestCase):
         {"DOCUMENT_AI_EMBED_QUEUE_BACKPRESSURE_LIMIT": "3"},
     )
     def test_embedding_queue_depth_controls_parse_backpressure(self):
-        with patch("document_ai.orchestration.broker_redis_client") as redis_client:
+        with patch("documents.orchestration.broker_redis_client") as redis_client:
             redis_client.return_value.llen.return_value = 2
             self.assertEqual(_embedding_queue_backpressure(), (False, 2, 3))
 
@@ -494,7 +508,7 @@ class DocumentPipelineRecoveryTests(TestCase):
 
     def test_parse_backpressure_retries_without_consuming_failure_budget(self):
         with patch(
-            "document_ai.tasks._embedding_queue_backpressure",
+            "documents.tasks._embedding_queue_backpressure",
             return_value=(True, 32, 32),
         ), patch.object(
             parse_document_with_docling,

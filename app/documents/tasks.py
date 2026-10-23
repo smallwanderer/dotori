@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import logging
-import random
-import time
-import threading
 
 from celery import shared_task
 from capabilities.admission import CapabilityAdmissionError
-from capabilities.work_dispatch import WorkContractError, validate_followups
-from capabilities.work_registry import WORK_REGISTRY, get_work_definition, require_registered_work
+from orchestration.celery_adapter import (
+    _DISPATCH_SLOTS, executor_envelope, publish_executor_followups, dispatch_or_retry,
+)
 
-from document_ai.orchestration import (
+from documents.orchestration import (
     WorkKind,
     embedding_queue_backpressure as _embedding_queue_backpressure,
     enqueue_embedding_batch,
@@ -20,152 +18,67 @@ from document_ai.orchestration import (
     enqueue_registered_work,
     get_work_capability,
 )
-from document_ai.services.environment import get_positive_int_env as _get_positive_int_env
+from documents.services.environment import get_positive_int_env as _get_positive_int_env
 
 from config.tracing import get_trace_id, new_trace_id, set_trace_id
 
 logger = logging.getLogger(__name__)
-_DISPATCH_SLOTS = {
-    queue: threading.BoundedSemaphore(1)
-    for queue in {definition.queue for definition in WORK_REGISTRY.values()}
-}
+
+
+@shared_task(name="documents.tasks.embed_document_scoped", queue="embed", bind=True,
+             acks_late=True, reject_on_worker_lost=True)
+def embed_document_scoped(self, schema, command, manifest, **identity):
+    envelope = executor_envelope(**identity)
+    return dispatch_or_retry(self, "embed_document", envelope=envelope,
+        payload={"schema": schema, "command": command, "manifest": manifest})
 
 
 # Compatibility names for extensions/tests that historically imported these
-# helpers from tasks.py. Their real ownership remains document_ai.rag and they
+# helpers from tasks.py. Their real ownership remains documents.rag and they
 # are lazy so a queue-only orchestrator does not import the RAG stack at boot.
 def _build_rag_context(*args, **kwargs):
-    from document_ai.rag.generation import _build_rag_context as implementation
+    from documents.rag.generation import _build_rag_context as implementation
 
     return implementation(*args, **kwargs)
 
 
 def _extract_llm_final_content(*args, **kwargs):
-    from document_ai.rag.generation import _extract_llm_final_content as implementation
+    from documents.rag.generation import _extract_llm_final_content as implementation
 
     return implementation(*args, **kwargs)
 
 
-def _executor_envelope(
-    *,
-    job_id: str | None,
-    parent_job_id: str | None,
-    trace_id: str | None,
-    enqueued_at: str | None,
-    work_kind: str | None,
-    envelope_version: int | None,
-) -> dict:
-    from document_ai.orchestration import TASK_ENVELOPE_VERSION
-    from config.tracing import get_trace_id, new_trace_id
-
-    if not job_id:
-        from celery import current_task
-        from uuid import uuid4
-
-        # Messages published before envelope v1 carry Celery's immutable task
-        # id. Direct compatibility calls have no request object, so they get a
-        # one-off identity only for that local invocation.
-        job_id = getattr(getattr(current_task, "request", None), "id", None) or str(uuid4())
-    return {
-        "job_id": job_id,
-        "parent_job_id": parent_job_id,
-        "trace_id": trace_id or get_trace_id() or new_trace_id(),
-        "enqueued_at": enqueued_at,
-        "work_kind": work_kind,
-        "envelope_version": envelope_version or TASK_ENVELOPE_VERSION,
-    }
+def _executor_envelope(**kwargs):
+    return executor_envelope(**kwargs)
 
 
 def _publish_executor_followups(response: dict) -> None:
-    followups = response.get("followups", [])
-    validate_followups(followups)
-    for followup in followups:
-        enqueue_registered_work(
-            followup["work_kind"], followup["payload"],
-            job_id=followup["job_id"],
-            parent_job_id=followup.get("parent_job_id"),
-        )
+    return publish_executor_followups(response, publish=enqueue_registered_work)
 
 
 def _dispatch_or_retry(task, kind: WorkKind, *, envelope: dict, payload: dict) -> dict:
-    from document_ai.services.capability_admission import (
-        CapabilityAdmissionError,
-        require_capability,
+    from documents.processing.capability_state import finalize_capability_rejection
+    from documents.services.executor_transport import dispatch_executor_job
+
+    return dispatch_or_retry(
+        task, kind, envelope=envelope, payload=payload,
+        on_rejected=finalize_capability_rejection,
+        dispatch=dispatch_executor_job, publish_followups=_publish_executor_followups,
     )
-    from document_ai.services.executor_transport import ExecutorDispatchError, dispatch_executor_job
-
-    try:
-        require_capability(get_work_capability(kind))
-        try:
-            require_registered_work(kind.value)
-        except ValueError as exc:
-            raise CapabilityAdmissionError(
-                get_work_capability(kind), "CAPABILITY_UNAVAILABLE", str(exc), retryable=True
-            ) from exc
-    except CapabilityAdmissionError as exc:
-        from document_ai.processing.capability_state import finalize_capability_rejection
-
-        finalize_capability_rejection(
-            kind.value,
-            payload,
-            error_code=exc.code,
-            message=str(exc),
-        )
-        return {
-            "status": "failed",
-            "error_code": exc.code,
-            "error": str(exc),
-            "retryable": False,
-        }
-
-    headers = dict(getattr(task.request, "headers", None) or {})
-    deadline = headers.setdefault("executor_deadline", time.time() + 1800)
-    envelope = {**envelope, "deadline_at": deadline, "attempt": (getattr(task.request, "retries", 0) or 0) + 1}
-    if time.time() >= deadline:
-        return {"status": "failed", "error": "Executor deadline exceeded; inspect receipt before recovery"}
-
-    def retry(exc, delay=5):
-        # Admission, response loss and publication retries are bounded by the
-        # original deadline, not the domain execution failure budget.
-        raise task.retry(exc=exc, countdown=min(delay + random.uniform(0, 1), max(0, deadline - time.time())),
-                         headers=headers, max_retries=100000)
-
-    slot = _DISPATCH_SLOTS[get_work_definition(kind.value).queue]
-    if not slot.acquire(blocking=False):
-        retry(ExecutorDispatchError("Transport slot busy"))
-    try:
-        try:
-            response = dispatch_executor_job(kind, envelope=envelope, payload=payload)
-        except ExecutorDispatchError as exc:
-            if exc.retryable:
-                retry(exc, exc.retry_after_seconds or 5)
-            return {"status": "failed", "error": str(exc)}
-        try:
-            _publish_executor_followups(response)
-        except WorkContractError as exc:
-            logger.error("Executor returned an invalid followup: %s", exc)
-            return {"status": "failed", "error_code": "INVALID_FOLLOWUP", "error": str(exc), "retryable": False}
-        except CapabilityAdmissionError as exc:
-            if not exc.retryable:
-                logger.warning("Executor followup admission rejected: %s", exc)
-                return {"status": "failed", "error_code": exc.code, "error": str(exc), "retryable": False}
-            retry(exc)
-        except Exception as exc:
-            # Replay reads the durable parent and republishes identical child IDs.
-            retry(exc)
-    finally:
-        slot.release()
-    return response.get("result") or {"status": "success"}
 
 
-@shared_task(queue="parse")
+# Task names are pinned explicitly: queued messages, WORK_REGISTRY.task_name
+# and persisted deployment_plan.json work_routes all reference these exact
+# strings, so renaming the module must not silently rename the task.
+@shared_task(name="documents.tasks.recover_document_pipeline_backlog", queue="parse")
 def recover_document_pipeline_backlog() -> dict:
-    from document_ai.processing.recovery import recover_document_pipeline_backlog_sync
+    from documents.processing.recovery import recover_document_pipeline_backlog_sync
 
     return recover_document_pipeline_backlog_sync()
 
 
 @shared_task(
+    name="documents.tasks.parse_document_with_docling",
     queue="parse",
     bind=True,
     max_retries=2,
@@ -222,7 +135,7 @@ def parse_document_with_docling(
     )
 
 
-@shared_task(queue="embed", bind=True, acks_late=True, reject_on_worker_lost=True)
+@shared_task(name="documents.tasks.run_quality_evaluation_task", queue="embed", bind=True, acks_late=True, reject_on_worker_lost=True)
 def run_quality_evaluation_task(
     self,
     run_uid: str,
@@ -234,7 +147,7 @@ def run_quality_evaluation_task(
     envelope_version: int | None = None,
 ) -> dict:
     """Runs a workspace quality-profile evaluation (WorkspaceQualityEvaluationRun)
-    and persists its metrics. Defined here rather than in document_ai.search.evaluation
+    and persists its metrics. Defined here rather than in documents.search.evaluation
     because Celery's autodiscover_tasks() only imports each app's tasks.py module."""
     return _dispatch_or_retry(
         self,
@@ -252,6 +165,7 @@ def run_quality_evaluation_task(
 
 
 @shared_task(
+    name="documents.tasks.enqueue_embedding_tasks",
     queue="embed",
     bind=True,
     max_retries=3,
@@ -289,6 +203,7 @@ def enqueue_embedding_tasks(
 
 
 @shared_task(
+    name="documents.tasks.embedding_document_with_bge",
     queue="embed",
     bind=True,
     autoretry_for=(Exception,),
@@ -304,7 +219,7 @@ def embedding_document_with_bge(
     Celery 태스크: 임베딩 → DB 저장 오케스트레이션
     node_id를 받아 파일 경로를 조회하고, 임베딩 후 결과를 DB에 저장
     """
-    from document_ai.orchestration import TaskEnvelope
+    from documents.orchestration import TaskEnvelope
 
     envelope = TaskEnvelope.create(WorkKind.EMBED_DOCUMENT_BATCH, job_id=self.request.id, trace_id=trace_id, enqueued_at=enqueued_at)
     return _dispatch_or_retry(
@@ -316,6 +231,7 @@ def embedding_document_with_bge(
 
 
 @shared_task(
+    name="documents.tasks.embedding_document_batch_with_bge",
     queue="embed",
     bind=True,
     autoretry_for=(Exception,),
@@ -354,7 +270,7 @@ def embedding_document_batch_with_bge(
     )
 
 
-@shared_task(queue="query")
+@shared_task(name="documents.tasks.parse_user_query", queue="query")
 def parse_user_query(
     query: str,
     mode: str = "search",
@@ -369,7 +285,7 @@ def parse_user_query(
     사용자 질의를 LLM 기반 QueryDSL 후보로 파싱하고 query_engine에서 검증/ORM 컴파일합니다.
     규칙 기반 QueryAnalyzer는 사용하지 않으며, 실패 시 원 질의를 semantic query로 보존합니다.
     """
-    from document_ai.query_understanding.parser_service import parse_user_query_sync
+    from documents.query_understanding.parser_service import parse_user_query_sync
 
     _ = (enqueued_at, job_id, parent_job_id, work_kind, envelope_version)
     set_trace_id(trace_id or new_trace_id())

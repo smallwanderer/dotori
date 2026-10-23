@@ -80,7 +80,7 @@ def get_llm_runtime_config_path(
     if configured_path:
         return Path(configured_path)
     resolved_scope = scope or os.getenv("RUNTIME_SCOPE", "production")
-    root = repo_root or Path(__file__).resolve().parents[3]
+    root = repo_root or Path(__file__).resolve().parents[2]
     return root / "data" / "config" / "runtime_scopes" / resolved_scope / "llm_runtime.json"
 
 
@@ -111,7 +111,7 @@ def get_llm_runtime_status_path(
     if configured_runtime:
         return Path(configured_runtime).with_name("runtime_status.json")
     resolved_scope = scope or os.getenv("RUNTIME_SCOPE", "production")
-    root = repo_root or Path(__file__).resolve().parents[3]
+    root = repo_root or Path(__file__).resolve().parents[2]
     return (
         root
         / "data"
@@ -172,7 +172,6 @@ class ServerRAGTarget:
     health_status: EndpointStatus | None = None
     smoke_status: SmokeTestStatus | None = None
     diagnostics: dict[str, Any] | None = None
-    priority_preset: str = "balanced"
     selection_mode: str = "automatic"
     selection_reason_code: str = ""
     runtime_policy_input: dict[str, Any] | None = None
@@ -219,7 +218,6 @@ def target_from_persisted_config() -> ServerRAGTarget | None:
         reason=target.get("reason") or "Loaded from persisted LLM runtime config.",
         fallback_used=bool(target.get("fallback_used", False)),
         diagnostics=config.get("diagnostics") if isinstance(config.get("diagnostics"), dict) else None,
-        priority_preset=target.get("priority_preset") or "balanced",
         selection_mode=target.get("selection_mode") or "automatic",
         selection_reason_code=target.get("selection_reason_code") or "",
         runtime_policy_input=(

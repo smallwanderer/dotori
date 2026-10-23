@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.conf import settings
 
-from document_ai.parsers.config import (
+from documents.parsers.config import (
     get_embedding_backend,
     get_embedding_max_tokens,
     get_embedding_model,
@@ -18,8 +18,16 @@ from .providers.bgem3 import (
     validate_text as _validate_text,
 )
 from .providers.base import EmbeddingResult
-from .registry import get_embedding_provider
-from document_ai.services.embedding_runtime_config import EmbeddingRuntimeSnapshot
+from .registry import (
+    _is_embedding_model_process, create_embedding_implementation, get_embedding_client,
+)
+
+
+def get_embedding_provider(**kwargs):
+    """Legacy patch surface; production calls resolve through explicit execution APIs."""
+    factory = create_embedding_implementation if _is_embedding_model_process() else get_embedding_client
+    return factory(**kwargs)
+from documents.services.embedding_runtime_config import EmbeddingRuntimeSnapshot
 
 
 def _embed_with_bgem3_hybrid(
@@ -136,7 +144,7 @@ def embed_query(
     from .inference_context import admitted
 
     if _is_embedding_model_process() and not admitted.get():
-        from .internal_views import run_embedding_with_admission
+        from .execution import run_embedding_with_admission
         return run_embedding_with_admission(
             "query", text=query, model_name=model_name, backend=backend,
             runtime=runtime, max_length=max_length,

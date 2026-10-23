@@ -15,17 +15,17 @@ from config.enums import AIStatus, FileOperation
 from config.tracing import get_trace_id
 from capabilities.registry import DOCUMENT_EXTRACT, DOCUMENT_SEMANTIC_SEARCH
 from capabilities.input_resolver import InputResolutionError
-from document_ai.models import DocumentChunk, DocumentParseResult, RAGJob
-from document_ai.performance import elapsed_ms, put_metric
-from document_ai.orchestration import enqueue_embedding, enqueue_parse
-from document_ai.services.embedding_runtime_config import get_active_embedding_runtime
-from document_ai.services.result_access import ResultAccessError, get_document_text
-from document_ai.services.capability_admission import (
+from documents.models import DocumentChunk, DocumentParseResult, RAGJob
+from documents.performance import elapsed_ms, put_metric
+from documents.orchestration import enqueue_embedding, enqueue_parse
+from documents.services.embedding_runtime_config import get_active_embedding_runtime
+from documents.services.result_access import ResultAccessError, get_document_text
+from documents.services.capability_admission import (
     CapabilityAdmissionError,
     require_capability,
 )
-from document_ai.tracing_utils import enqueue_kwargs
-from document_ai.processing.input_routing import resolve_blob_work
+from documents.tracing_utils import enqueue_kwargs
+from documents.processing.input_routing import resolve_blob_work
 from files.models import FileOperationLog, Node, NodeType, UserStorage
 from files.services import file_service
 from files.services.access import can_modify_node, can_modify_subtree

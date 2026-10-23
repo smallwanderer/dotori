@@ -7,10 +7,23 @@ import pytest
 from celery.exceptions import Retry
 from django.test import RequestFactory
 
-from document_ai import executor_views, tasks
-from document_ai.orchestration import WorkKind
-from document_ai.models import ExecutorJobReceipt
-from document_ai.services.executor_jobs import claim_execution, fail_execution
+from capabilities.deployment import clear_deployment_snapshot_cache
+from capabilities.modules import DOCUMENTS_MODULE
+from documents import executor_views, tasks
+from documents.orchestration import WorkKind
+from documents.models import ExecutorJobReceipt
+from documents.services.executor_jobs import claim_execution, fail_execution
+from installation.deployment import build_module_deployment_plan, write_deployment_plan
+
+
+@pytest.fixture(autouse=True)
+def active_module_plan(tmp_path, monkeypatch):
+    plan = build_module_deployment_plan([DOCUMENTS_MODULE])
+    path = write_deployment_plan(plan, repo_root=tmp_path)
+    monkeypatch.setenv("DOTORI_DEPLOYMENT_PLAN_PATH", str(path))
+    clear_deployment_snapshot_cache()
+    yield
+    clear_deployment_snapshot_cache()
 
 
 def envelope(job="job"):
@@ -20,7 +33,7 @@ def envelope(job="job"):
 def test_followup_publish_failure_retries_parent_with_original_deadline():
     deadline = time.time() + 300
     task = SimpleNamespace(request=SimpleNamespace(headers={"executor_deadline": deadline}, retries=0), retry=Mock(side_effect=Retry()))
-    with patch("document_ai.services.executor_transport.dispatch_executor_job", return_value={"result": {"status": "success"}}), patch.object(tasks, "_publish_executor_followups", side_effect=RuntimeError("Redis disconnected")):
+    with patch("documents.services.executor_transport.dispatch_executor_job", return_value={"result": {"status": "success"}}), patch.object(tasks, "_publish_executor_followups", side_effect=RuntimeError("Redis disconnected")):
         with pytest.raises(Retry):
             tasks._dispatch_or_retry(task, WorkKind.PARSE_DOCUMENT, envelope=envelope(), payload={"node_id": 1})
     assert task.retry.call_args.kwargs["headers"]["executor_deadline"] == deadline
@@ -34,7 +47,7 @@ def test_invalid_followup_fails_without_retrying_parent():
         "result": {"status": "success"},
         "followups": [{"work_kind": "unknown_work", "payload": {"node_id": 1}, "job_id": "child"}],
     }
-    with patch("document_ai.services.executor_transport.dispatch_executor_job", return_value=response):
+    with patch("documents.services.executor_transport.dispatch_executor_job", return_value=response):
         result = tasks._dispatch_or_retry(task, WorkKind.PARSE_DOCUMENT, envelope=envelope(), payload={"node_id": 1})
     assert result["error_code"] == "INVALID_FOLLOWUP"
     assert result["retryable"] is False
@@ -45,7 +58,7 @@ def test_parse_slot_busy_does_not_block_embed_dispatch():
     task = SimpleNamespace(request=SimpleNamespace(headers={}, retries=0), retry=Mock(side_effect=Retry()))
     tasks._DISPATCH_SLOTS["parse"].acquire()
     try:
-        with patch("document_ai.services.executor_transport.dispatch_executor_job", return_value={"result": {"status": "success"}}) as dispatch:
+        with patch("documents.services.executor_transport.dispatch_executor_job", return_value={"result": {"status": "success"}}) as dispatch:
             assert tasks._dispatch_or_retry(task, WorkKind.PLAN_DOCUMENT_EMBEDDING, envelope=envelope(), payload={"node_id": 1})["status"] == "success"
             dispatch.assert_called_once()
     finally:
@@ -81,7 +94,7 @@ def test_planning_receipt_failure_rolls_back_domain_write(settings, monkeypatch)
     def plan(_):
         ExecutorJobReceipt.objects.create(job_id="domain-write", work_kind="test", target_key="test")
         return {"status": "success"}, []
-    with patch("document_ai.services.executor_snapshot.capture_snapshot", return_value=({}, {})), patch.object(executor_views, "_execute_embedding", side_effect=plan), patch.object(executor_views, "finish_execution", side_effect=RuntimeError("commit interrupted")):
+    with patch("documents.services.executor_snapshot.capture_snapshot", return_value=({}, {})), patch("documents.processing.work_handlers._execute_embedding", side_effect=plan), patch("orchestration.receipts.finish_execution", side_effect=RuntimeError("commit interrupted")):
         response = executor_views.execute_job(request)
     assert response.status_code == 503
     assert not ExecutorJobReceipt.objects.filter(job_id="domain-write").exists()
@@ -96,9 +109,9 @@ def test_invalid_planning_followup_cannot_commit_success_receipt(settings, monke
     body["work_kind"] = "plan_document_embedding"
     request = RequestFactory().post("/", json.dumps(body), content_type="application/json", HTTP_AUTHORIZATION="Bearer token")
     invalid = [{"work_kind": "unknown_work", "payload": {"node_id": 1}, "job_id": "child"}]
-    with patch("document_ai.services.executor_snapshot.capture_snapshot", return_value=({}, {})), patch.object(
-        executor_views, "_execute_embedding", return_value=({"status": "success"}, invalid)
-    ), patch.object(executor_views, "finish_execution") as finish:
+    with patch("documents.services.executor_snapshot.capture_snapshot", return_value=({}, {})), patch(
+        "documents.processing.work_handlers._execute_embedding", return_value=({"status": "success"}, invalid)
+    ), patch("orchestration.receipts.finish_execution") as finish:
         response = executor_views.execute_job(request)
     assert response.status_code == 503
     finish.assert_not_called()
@@ -118,8 +131,8 @@ def test_executor_busy_leaves_status_thread_available(settings):
 
 
 def test_response_loss_replay_reads_receipt_without_reexecuting():
-    from document_ai.services.executor_transport import dispatch_executor_job
-    with patch("document_ai.services.executor_transport.read_executor_job", return_value={"status": "succeeded", "result": {"status": "success"}}), patch("document_ai.services.executor_transport.requests.post") as post:
+    from documents.services.executor_transport import dispatch_executor_job
+    with patch("orchestration.transport.read_executor_job", return_value={"status": "succeeded", "result": {"status": "success"}}), patch("orchestration.transport.requests.post") as post:
         result = dispatch_executor_job(WorkKind.PARSE_DOCUMENT, envelope={**envelope(), "attempt": 2}, payload={"node_id": 1})
     assert result["status"] == "succeeded"
     post.assert_not_called()
@@ -128,13 +141,13 @@ def test_response_loss_replay_reads_receipt_without_reexecuting():
 def test_extract_only_parse_does_not_create_embedding_followup():
     task_envelope = envelope()
     with patch(
-        "document_ai.services.capability_admission.capability_enabled",
+        "documents.services.capability_admission.capability_enabled",
         return_value=False,
     ), patch(
-        "document_ai.processing.parsing.get_parser_for_execution",
+        "documents.processing.parsing.get_parser_for_execution",
         return_value=object(),
     ), patch(
-        "document_ai.processing.parsing.execute_parse_node",
+        "documents.processing.parsing.execute_parse_node",
         return_value={"status": "success", "node_id": 1, "chunk_count": 2},
     ):
         result, followups = executor_views._execute_parser(task_envelope)
@@ -145,7 +158,7 @@ def test_extract_only_parse_does_not_create_embedding_followup():
 
 def test_stale_snapshot_prevents_domain_persistence(monkeypatch):
     """An executor must reject work whose document/runtime changed in flight."""
-    from document_ai.services import executor_snapshot
+    from documents.services import executor_snapshot
 
     task_envelope = envelope()
     expected_source = {"payload": task_envelope["payload"], "revision": 1}
@@ -167,13 +180,17 @@ def test_stale_snapshot_prevents_domain_persistence(monkeypatch):
 
 @pytest.mark.django_db
 def test_extract_only_snapshot_does_not_require_embedding_runtime(tmp_path, monkeypatch):
-    from capabilities.config import write_capability_config
-    from capabilities.registry import DOCUMENT_EXTRACT
-    from document_ai.services import executor_snapshot
+    from capabilities.deployment import clear_deployment_snapshot_cache
+    from capabilities.modules import DOCUMENTS_MODULE
+    from documents.services import executor_snapshot
+    from installation.deployment import build_module_deployment_plan, write_deployment_plan
 
-    config_path = tmp_path / "capabilities.json"
-    write_capability_config([DOCUMENT_EXTRACT], path=config_path)
-    monkeypatch.setenv("DOTORI_CAPABILITIES_CONFIG_PATH", str(config_path))
+    plan = build_module_deployment_plan(
+        [DOCUMENTS_MODULE], disabled_provider_roles=("embedding", "llm")
+    )
+    plan_path = write_deployment_plan(plan, repo_root=tmp_path)
+    monkeypatch.setenv("DOTORI_DEPLOYMENT_PLAN_PATH", str(plan_path))
+    clear_deployment_snapshot_cache()
     monkeypatch.setattr(
         executor_snapshot,
         "load_embedding_runtime",
@@ -189,7 +206,7 @@ def test_extract_only_snapshot_does_not_require_embedding_runtime(tmp_path, monk
 def test_legacy_message_uses_celery_request_id():
     tasks.parse_document_with_docling.push_request(id="legacy-fixed-id")
     try:
-        with patch("document_ai.tasks._embedding_queue_backpressure", return_value=(False, 0, 1)), patch("document_ai.services.executor_transport.dispatch_executor_job", return_value={"result": {"status": "success"}}) as dispatch:
+        with patch("documents.tasks._embedding_queue_backpressure", return_value=(False, 0, 1)), patch("documents.services.executor_transport.dispatch_executor_job", return_value={"result": {"status": "success"}}) as dispatch:
             tasks.parse_document_with_docling(1)
     finally:
         tasks.parse_document_with_docling.pop_request()

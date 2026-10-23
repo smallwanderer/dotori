@@ -25,10 +25,6 @@ APP_ROOT = REPO_ROOT / "app"
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-from document_ai.services.rag_runtime_config import (  # noqa: E402
-    load_llm_runtime_config,
-    normalize_serving_profile,
-)
 from llm_installation.calibration import (  # noqa: E402
     CALIBRATION_SCHEMA_VERSION,
     WorkloadItem,
@@ -36,6 +32,10 @@ from llm_installation.calibration import (  # noqa: E402
     select_serving_concurrency,
     summarize_step,
     workload_sha256,
+)
+from llm_installation.rag_runtime_config import (  # noqa: E402
+    load_llm_runtime_config,
+    normalize_serving_profile,
 )
 from llm_installation.config_store import (  # noqa: E402
     stage_calibration_runtime_generation,
@@ -388,18 +388,17 @@ def _run_batches(
     return records
 
 
-def _active_runtime_identity(payload: dict) -> tuple[str, str, str, str, dict]:
+def _active_runtime_identity(payload: dict) -> tuple[str, str, str, dict]:
     target = payload.get("target") if isinstance(payload, dict) else None
     if not isinstance(target, dict):
         raise ValueError("No active LLM runtime target is configured")
     runtime = str(target.get("runtime") or "")
     model = str(target.get("model") or "")
     generation_id = str(target.get("generation_id") or "")
-    preset = str(target.get("priority_preset") or "balanced")
     profile = normalize_serving_profile(target.get("serving_profile"))
     if runtime not in {"llama.cpp", "vllm"} or not model or not generation_id:
         raise ValueError("Calibration requires an active managed llama.cpp or vLLM runtime")
-    return runtime, model, generation_id, preset, profile
+    return runtime, model, generation_id, profile
 
 
 def _restore_interrupted_calibration(
@@ -410,7 +409,7 @@ def _restore_interrupted_calibration(
 ) -> dict:
     """Restore the pre-calibration generation left by a terminated runner."""
     for _ in range(16):
-        runtime, model, generation_id, _preset, profile = _active_runtime_identity(payload)
+        runtime, model, generation_id, profile = _active_runtime_identity(payload)
         if profile.get("calibration_status") != "running":
             return payload
         restore_generation_id = str(
@@ -475,7 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workload", required=True, type=Path, help="JSONL workload file")
     parser.add_argument(
         "--url",
-        default="http://127.0.0.1:8000/api/document-ai/v1/rag/stream/",
+        default="http://127.0.0.1:8000/api/v1/rag/stream/",
     )
     parser.add_argument("--scope", choices=sorted(SCOPE_CONFIG), default="production")
     parser.add_argument("--warmup-rounds", type=int, default=1)
@@ -521,7 +520,7 @@ def main() -> int:
         payload=active_payload,
         manager=manager,
     )
-    runtime, model, original_generation_id, preset, serving_profile = (
+    runtime, model, original_generation_id, serving_profile = (
         _active_runtime_identity(active_payload)
     )
     safe_ceiling = int(serving_profile.get("safe_concurrency_ceiling") or 1)
@@ -565,7 +564,6 @@ def main() -> int:
             "runtime": runtime,
             "model": model,
             "source_generation_id": original_generation_id,
-            "priority_preset": preset,
             "safe_concurrency_ceiling": safe_ceiling,
             "context_length": serving_profile.get("context_length"),
             "source_config_sha256": _payload_sha256(active_payload),
@@ -693,15 +691,13 @@ def main() -> int:
             )
             if step_summary["failed"] or not step_summary["metrics_complete"]:
                 break
-            partial_selection = select_serving_concurrency(
-                steps, priority_preset=preset
-            )
+            partial_selection = select_serving_concurrency(steps)
             if not partial_selection["decisions"][-1]["accepted"]:
                 break
 
         if not steps:
             raise RuntimeError("No concurrency candidate completed measurement")
-        selection = select_serving_concurrency(steps, priority_preset=preset)
+        selection = select_serving_concurrency(steps)
         first_decision = selection["decisions"][0]
         if not first_decision["accepted"]:
             raise RuntimeError(

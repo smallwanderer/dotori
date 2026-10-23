@@ -6,7 +6,7 @@
 *.log
 
 data/
-docs/references/
+dotori-docs/references/
 
 **/__pycache__/
 **/*.py[cod]

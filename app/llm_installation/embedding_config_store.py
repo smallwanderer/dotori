@@ -34,8 +34,13 @@ def build_embedding_runtime_payload(
     if raw_max_tokens is None:
         raw_max_tokens = _entry_value(entry, "max_tokens", 8192)
 
-    return {
-        "schema_version": 1,
+    functions = _entry_value(entry, "functions", []) or []
+    functions = [
+        item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+        for item in functions
+    ]
+    payload = {
+        "schema_version": 2,
         "scope": scope,
         "catalog_id": _entry_value(entry, "id"),
         "catalog_revision": _entry_value(entry, "revision"),
@@ -58,8 +63,19 @@ def build_embedding_runtime_payload(
             if (isinstance(entry, Mapping) and "languages" in entry) or hasattr(entry, "languages")
             else []
         ),
+        "functions": functions,
         "resolved_at": datetime.now(timezone.utc).isoformat(),
     }
+    options = _entry_value(entry, "provider_options", {}) or {}
+    if options:
+        payload["provider_options"] = options
+    tokenizer_options = _entry_value(entry, "tokenizer_options", {}) or {}
+    if hasattr(tokenizer_options, "model_dump"):
+        tokenizer_options = tokenizer_options.model_dump(exclude_unset=True)
+    if tokenizer_options:
+        payload["tokenizer_options"] = tokenizer_options
+    return payload
+
 
 
 def write_embedding_runtime_generation(
@@ -77,7 +93,7 @@ def write_embedding_runtime_generation(
     payload = build_embedding_runtime_payload(
         scope=scope, generation_id=generation_id, entry=entry
     )
-    # Validate and populate the fingerprint without importing document_ai.
+    # Validate and populate the fingerprint without importing documents.
     unsigned = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )

@@ -4,8 +4,9 @@ from django.utils import timezone
 from pgvector.django import CosineDistance, L2Distance, MaxInnerProduct
 
 from config.enums import AIStatus
-from document_ai.embedding.providers.base import EmbeddingResult
-from document_ai.models import ChunkEmbedding
+from documents.embedding.providers.base import EmbeddingResult
+from documents.models import ChunkEmbedding
+from documents.embedding.persistence import serving_provenance
 
 from .base import EmbeddingStoreSpec
 
@@ -76,7 +77,7 @@ class PgVectorChunkEmbeddingStore:
             raise ValueError("Active embedding store expects sparse vectors, but embedding returned none.")
 
     def save_chunk_embedding(self, *, chunk, embedding: EmbeddingResult, status: str = AIStatus.COMPLETED) -> None:
-        from document_ai.services.executor_snapshot import validate_execution
+        from documents.services.executor_snapshot import validate_execution
         validate_execution()
         self.validate_embedding(embedding)
         vector_defaults = {field: None for field in DIMENSION_FIELD_MAP.values()}
@@ -89,10 +90,16 @@ class PgVectorChunkEmbeddingStore:
                 "embedded_at": timezone.now(),
                 "status": status,
                 "error_message": "",
+                "provenance": serving_provenance(chunk, self),
             },
         )
+        # Segment vectors share the chunk's runtime; invalidate on replacement.
+        chunk.segment_embeddings.all().delete()
 
     def mark_chunk_embedding_failed(self, *, chunk, error_message: str, status: str = AIStatus.FAILED) -> None:
+        # Work failure is not evidence that an existing completed vector is invalid.
+        if ChunkEmbedding.objects.filter(chunk=chunk, status=AIStatus.COMPLETED).exists():
+            return
         ChunkEmbedding.objects.update_or_create(
             chunk=chunk,
             defaults={
@@ -105,20 +112,20 @@ class PgVectorChunkEmbeddingStore:
         )
 
     def completed_embedding_exists(self, *, chunk_id_ref):
-        return ChunkEmbedding.objects.filter(
+        from documents.embedding.persistence import valid_serving_rows
+        return valid_serving_rows(ChunkEmbedding.objects.filter(
             chunk_id=chunk_id_ref,
             status=AIStatus.COMPLETED,
-        )
+        ), self)
 
     def completed_chunk_ids(self):
-        return ChunkEmbedding.objects.filter(
-            status=AIStatus.COMPLETED,
-            chunk__parse_result__embedding_generation_id=self.spec.generation_id,
-            chunk__parse_result__embedding_runtime_fingerprint=self.runtime_fingerprint,
-        ).values_list("chunk_id", flat=True)
+        from documents.embedding.persistence import valid_serving_rows
+        return valid_serving_rows(ChunkEmbedding.objects.filter(
+            status=AIStatus.COMPLETED), self).values_list("chunk_id", flat=True)
 
     def base_queryset(self):
-        return (
+        from documents.embedding.persistence import valid_serving_rows
+        return valid_serving_rows((
             ChunkEmbedding.objects.select_related(
                 "chunk",
                 "chunk__parse_result",
@@ -126,12 +133,9 @@ class PgVectorChunkEmbeddingStore:
             )
             .filter(
                 status=AIStatus.COMPLETED,
-                chunk__status=AIStatus.COMPLETED,
-                chunk__parse_result__embedding_generation_id=self.spec.generation_id,
-                chunk__parse_result__embedding_runtime_fingerprint=self.runtime_fingerprint,
                 chunk__parse_result__node__trashed=False,
             )
-        )
+        ), self)
 
     def distance_annotation(self, query_vector):
         if self.spec.distance_strategy == "cosine":

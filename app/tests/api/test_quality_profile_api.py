@@ -6,10 +6,11 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from document_ai.rag.generation import _build_generation_prompts
-from document_ai.rag.prompt_profiles import get_effective_prompt_policy
-from document_ai.search.profiles import get_effective_generation_config
-from workspaces.models import WorkspaceMembership, WorkspaceQualityProfileRevision
+from documents.models import WorkspaceQualityProfileRevision
+from documents.rag.generation import _build_generation_prompts
+from documents.rag.prompt_profiles import get_effective_prompt_policy
+from documents.search.profiles import get_effective_generation_config
+from workspaces.models import WorkspaceMembership
 from workspaces.services import create_team_workspace
 
 
@@ -82,7 +83,10 @@ class QualityProfileApiTests(TestCase):
 
     # -- basic envelope -----------------------------------------------------
 
-    def test_get_creates_workspace_scoped_active_profile(self):
+    def test_get_reports_server_defaults_without_creating_a_row(self):
+        """A workspace that never customized anything stays off this table
+        entirely -- the envelope reports the module's own defaults (version
+        0, note "Server defaults") without materializing an active row."""
         self.login_in_workspace(self.admin)
 
         response = self.client.get(f"{BASE}/")
@@ -91,16 +95,14 @@ class QualityProfileApiTests(TestCase):
         body = response.json()
         self.assertTrue(body["ok"])
         self.assertEqual(body["workspace_uid"], str(self.workspace.uid))
-        self.assertEqual(body["active"]["version"], 1)
+        self.assertEqual(body["active"]["version"], 0)
+        self.assertEqual(body["active"]["note"], "Server defaults")
         self.assertIsNone(body["draft"])
         self.assertIn("candidate_multiplier", body["schema"]["retrieval"])
         self.assertIn("temperature", body["schema"]["generation"])
         self.assertEqual(
-            WorkspaceQualityProfileRevision.objects.filter(
-                workspace=self.workspace,
-                status=WorkspaceQualityProfileRevision.STATUS_ACTIVE,
-            ).count(),
-            1,
+            WorkspaceQualityProfileRevision.objects.filter(workspace=self.workspace).count(),
+            0,
         )
 
     def test_member_can_read_but_cannot_change_profile(self):
@@ -183,7 +185,9 @@ class QualityProfileApiTests(TestCase):
         applied = self.apply(expected_revision=1, allow_unverified=True, note="manual verification")
         self.assertEqual(applied.status_code, 200)
         body = applied.json()
-        self.assertEqual(body["active"]["version"], 2)
+        # No prior active row existed (server defaults only), so this first
+        # applied draft becomes version 1, not 2.
+        self.assertEqual(body["active"]["version"], 1)
         self.assertEqual(body["active"]["retrieval"]["effective"]["search_top_k"], 9)
         self.assertEqual(body["active"]["validation"]["state"], "unverified")
         self.assertIsNone(body["draft"])
@@ -217,8 +221,8 @@ class QualityProfileApiTests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"]["code"], "EVALUATION_REQUIRED")
 
-    @patch("document_ai.search.views.profile_threshold_to_retriever", return_value=0.123)
-    @patch("document_ai.search.views.search_documents_sync", return_value=([], {"result_count": 0}))
+    @patch("documents.search.views.profile_threshold_to_retriever", return_value=0.123)
+    @patch("documents.search.views.search_documents_sync", return_value=([], {"result_count": 0}))
     def test_active_profile_is_used_by_normal_search(self, search_documents, _threshold):
         self.login_in_workspace(self.admin)
         self.client.get(f"{BASE}/")
@@ -230,7 +234,7 @@ class QualityProfileApiTests(TestCase):
         )
         self.apply(expected_revision=1, allow_unverified=True, note="manual verification")
 
-        response = self.request_json("post", "/api/document-ai/v1/search/", {"query": "workspace profile"})
+        response = self.request_json("post", "/api/v1/search/", {"query": "workspace profile"})
 
         self.assertEqual(response.status_code, 200)
         kwargs = search_documents.call_args.kwargs

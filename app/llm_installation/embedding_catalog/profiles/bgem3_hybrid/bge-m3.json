@@ -10,5 +10,20 @@
   "query_prefix": "",
   "document_prefix": "",
   "availability": "supported",
-  "priority": 100
+  "priority": 100,
+  "functions": [
+    {
+      "function_id": "text.embed",
+      "preferred_role": "embedding",
+      "verification": "contract_verified",
+      "artifact_ids": [
+        "bge-m3-hybrid"
+      ],
+      "backend_ids": [
+        "bgem3_hybrid"
+      ],
+      "adapter_contract": "dotori-internal-embed-v1",
+      "evidence_ref": "text-embed-bge-m3-hybrid-cpu-20261002"
+    }
+  ]
 }

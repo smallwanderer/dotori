@@ -88,7 +88,7 @@ def test_deployment_json_records_only_active_execution_roles(tmp_path):
 
     search = build_deployment_plan("search").as_dict()
     assert set(search["execution_roles"]) == {"parser", "embedding"}
-    assert set(search["work_routes"]) == {"parse_document", "plan_document_embedding", "embed_document_batch", "evaluate_retrieval"}
+    assert set(search["work_routes"]) == {"parse_document", "embed_document", "plan_document_embedding", "embed_document_batch", "evaluate_retrieval"}
 
     rag = build_deployment_plan("rag", runtime=_runtime(tmp_path)).as_dict()
     assert set(rag["execution_roles"]) == {"parser", "embedding", "llm"}

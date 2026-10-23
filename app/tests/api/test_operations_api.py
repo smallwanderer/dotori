@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from config.enums import AIStatus, FileOperation, NodeType
-from document_ai.models import (
+from documents.models import (
     DocumentChunk,
     DocumentParseResult,
     RAGJob,
@@ -130,7 +130,7 @@ class OperationsApiTests(TestCase):
 
     @override_settings(LOGIN_REQUIRED=True)
     def test_operator_endpoints_reject_anonymous_member_and_unverified_staff(self):
-        url = reverse("document_ai:operation-metrics")
+        url = reverse("documents:operation-metrics")
         assert_api_error(self, self.client.get(url), status=401, code="AUTHENTICATION_REQUIRED")
 
         self.client.force_login(self.member)
@@ -149,7 +149,7 @@ class OperationsApiTests(TestCase):
         self.client.force_login(self.operator)
 
         response = self.client.get(
-            reverse("document_ai:operation-metrics"), {"window": "24h"}
+            reverse("documents:operation-metrics"), {"window": "24h"}
         )
 
         self.assertEqual(response.status_code, 200)
@@ -176,10 +176,10 @@ class OperationsApiTests(TestCase):
         self.client.force_login(self.operator)
 
         events = self.client.get(
-            reverse("document_ai:operation-events"), {"window": "24h", "limit": 10}
+            reverse("documents:operation-events"), {"window": "24h", "limit": 10}
         )
         trace = self.client.get(
-            reverse("document_ai:operation-trace", kwargs={"trace_id": shared_trace})
+            reverse("documents:operation-trace", kwargs={"trace_id": shared_trace})
         )
 
         self.assertEqual(events.status_code, 200)
@@ -200,16 +200,16 @@ class OperationsApiTests(TestCase):
     def test_invalid_window_and_unknown_trace_use_common_errors(self):
         self.client.force_login(self.operator)
         invalid_window = self.client.get(
-            reverse("document_ai:operation-metrics"), {"window": "30d"}
+            reverse("documents:operation-metrics"), {"window": "30d"}
         )
         missing_trace = self.client.get(
-            reverse("document_ai:operation-trace", kwargs={"trace_id": "missing-trace"})
+            reverse("documents:operation-trace", kwargs={"trace_id": "missing-trace"})
         )
 
         assert_api_error(self, invalid_window, status=400, code="INVALID_REQUEST")
         assert_api_error(self, missing_trace, status=404, code="NOT_FOUND")
 
-    @patch("document_ai.operation_views.build_operation_status")
+    @patch("documents.operation_views.build_operation_status")
     def test_status_is_operator_only_and_returns_service_sections(self, build_status):
         build_status.return_value = {
             "generated_at": timezone.now().isoformat(),
@@ -220,7 +220,7 @@ class OperationsApiTests(TestCase):
         }
         self.client.force_login(self.operator)
 
-        response = self.client.get(reverse("document_ai:operation-status"))
+        response = self.client.get(reverse("documents:operation-status"))
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["services"]["app"]["available"])
@@ -229,35 +229,35 @@ class OperationsApiTests(TestCase):
         snapshot = ResourceSnapshot.objects.create(service="disk:uploads", disk_free_mb=2048)
         self.client.force_login(self.operator)
 
-        response = self.client.get(reverse("document_ai:operation-resources"))
+        response = self.client.get(reverse("documents:operation-resources"))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["snapshots"][0]["disk_free_mb"], 2048)
 
         collection = SimpleNamespace(rows=[snapshot], skipped=[])
         with patch(
-            "document_ai.operation_views.collect_resource_snapshots",
+            "documents.operation_views.collect_resource_snapshots",
             return_value=collection,
         ):
             collected = self.client.post(
-                reverse("document_ai:collect-operation-resources"), data={}
+                reverse("documents:collect-operation-resources"), data={}
             )
         self.assertEqual(collected.status_code, 200)
         self.assertEqual(collected.json()["snapshots"][0]["service"], "disk:uploads")
 
     def test_operator_route_contract(self):
         self.assertEqual(
-            reverse("document_ai:operation-status"),
-            "/api/document-ai/v1/operations/status/",
+            reverse("documents:operation-status"),
+            "/api/v1/operations/status/",
         )
         self.assertEqual(
-            reverse("document_ai:operation-metrics"),
-            "/api/document-ai/v1/operations/metrics/",
+            reverse("documents:operation-metrics"),
+            "/api/v1/operations/metrics/",
         )
         self.assertEqual(
-            reverse("document_ai:operation-events"),
-            "/api/document-ai/v1/operations/events/",
+            reverse("documents:operation-events"),
+            "/api/v1/operations/events/",
         )
         self.assertEqual(
-            reverse("document_ai:operation-resources"),
-            "/api/document-ai/v1/operations/resources/",
+            reverse("documents:operation-resources"),
+            "/api/v1/operations/resources/",
         )
