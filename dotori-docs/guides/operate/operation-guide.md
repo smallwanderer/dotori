@@ -63,6 +63,12 @@ Dotori 스택은 다음 컴포넌트로 구성됩니다. 각 컴포넌트는 Doc
 
 ---
 
+## 처음 사용하거나 업데이트할 때
+
+- [첫 문서로 시작하기](../use/first-document.md)에서 업로드부터 검색·질의응답까지 확인합니다.
+- 데이터 위치와 보관 대상은 [백업과 데이터 보관](./backup-and-storage.md)을 참고합니다.
+- 코드 버전을 올릴 때는 [업데이트 가이드](./upgrading.md)를 따릅니다. 설정만 바꾸는 경우와 이미지·DB를 바꾸는 경우는 절차가 다릅니다.
+
 ## 환경변수 반영
 
 `.env`의 값 대부분은 컨테이너 재시작이 있어야 반영됩니다. 예를 들어 `LOGIN_REQUIRED`를 직접 `.env`에서 수정한 경우 `python install.py --restart`로 재시작해야 하며, `python install.py --login enable|disable` 명령을 사용하면 값 갱신과 재시작 확인을 한 번에 처리할 수 있습니다.
